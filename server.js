@@ -19,42 +19,61 @@ const auth = new GoogleAuth({
 
 app.post('/api/chat', async (req, res) => {
     try {
-        const { message, history } = req.body; // Получаем сообщение и историю
+        const { message, history } = req.body;
         if (!message) return res.status(400).json({ reply: "Пустое сообщение" });
 
         const client = await auth.getClient();
         const accessToken = (await client.getAccessToken()).token;
 
-        // ШАГ 1: ПОИСК В БАЗЕ (на основе последнего вопроса)
+        // ШАГ 1: ЖЕСТКИЙ ПОИСК В БАЗЕ (вытягиваем сами куски законов)
         const searchUrl = `https://discoveryengine.googleapis.com/v1alpha/projects/${process.env.PROJECT_ID}/locations/${process.env.LOCATION_ID}/collections/default_collection/dataStores/${process.env.DATA_STORE_ID}/servingConfigs/default_config:search`;
 
         const searchRes = await fetch(searchUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-            body: JSON.stringify({ query: message, pageSize: 3, contentSearchSpec: { summarySpec: { summaryResultCount: 3 } } })
+            body: JSON.stringify({ 
+                query: message, 
+                pageSize: 5, // Берем 5 кусков текста для надежности
+                contentSearchSpec: { 
+                    snippetSpec: { returnSnippet: true }, // Запрашиваем точные выдержки
+                    summarySpec: { summaryResultCount: 3 } 
+                } 
+            })
         });
 
         const searchData = await searchRes.json();
-        let contextText = searchData.summary?.summaryText || "В базе НПА информации не найдено.";
+        
+        // Надежно собираем найденный текст из базы
+        let contextText = "";
+        if (searchData.results && searchData.results.length > 0) {
+            const snippets = searchData.results.map(r => {
+                let text = r.document?.derivedStructData?.snippets?.[0]?.snippet || "";
+                return text.replace(/<[^>]*>?/gm, ''); // Убираем HTML-теги для чистоты
+            }).filter(t => t.length > 0);
+            
+            if (snippets.length > 0) {
+                contextText = snippets.join("\n\n---\n\n");
+            }
+        }
+        
+        // Если база ничего не нашла
+        if (!contextText.trim()) {
+            contextText = "В БАЗЕ НЕТ ИНФОРМАЦИИ.";
+        }
 
-        // ШАГ 2: ФОРМИРУЕМ ИСТОРИЮ ДЛЯ GEMINI
-        // Мы берем системную инструкцию и добавляем туда историю диалога
-        const systemInstruction = `Ты — Мыйзамчи, дружелюбный и мудрый юридический помощник по праву Кыргызской Республики.
-Твои правила общения:
+        // Выводим в консоль Render, чтобы ты видел, нашел ли он закон
+        console.log("🔍 Найденный контекст для вопроса:", contextText.substring(0, 200) + "...");
 
-Будь человечным: Избегай канцелярита и слишком сухих формулировок. Говори как опытный, но понятный юрист.
+        // ШАГ 2: СТРОГАЯ ИНСТРУКЦИЯ (Режим NotebookLM)
+        const systemInstruction = `Ты — Мыйзамчи, образовательный ИИ-помощник для студентов и юристов по праву Кыргызской Республики.
+Твоя ГЛАВНАЯ задача — отвечать СТРОГО на основе текста, который передан тебе в блоке "Контекст из базы законов".
 
-Краткость — сестра таланта: Если вопрос простой, отвечай коротко (1-3 предложения). Не выдавай огромные простыни текста, если тебя об этом не просили.
- Про юмор тоже не забудь, шути иногда
+ЖЕСТКИЕ ПРАВИЛА:
+1. ЗАПРЕЩЕНО выдумывать статьи законов, сроки, штрафы или процедуры.
+2. Если в "Контексте из базы" НЕТ ответа на вопрос или написано "В БАЗЕ НЕТ ИНФОРМАЦИИ", ты ОБЯЗАН ответить: "К сожалению, в моей загруженной базе законов пока нет точной информации по этому вопросу."
+3. Если информация в контексте есть, отвечай кратко (1-4 предложения), понятно и структурированно.
+4. Будь дружелюбным, но помни, что юридическая точность важнее болтовни. Не добавляй от себя факты, которых нет в контексте.`;
 
-Релевантность: Давай ровно столько информации, сколько нужно для ответа. Если нужно процитировать статью закона — делай это кратко.
-
-Структура: Используй списки и жирный шрифт только для самого важного.
-
-Контекст КР: Всегда основывайся только на законодательстве Кыргызстана.
-но иногда просто болтай для разнообразия`;
-
-        // Превращаем историю из нашего формата в формат Gemini
         const contents = [];
         if (history && history.length > 0) {
             history.forEach(msg => {
@@ -65,7 +84,7 @@ app.post('/api/chat', async (req, res) => {
             });
         }
 
-        // Добавляем текущий вопрос с контекстом из базы
+        // Передаем контекст как железобетонный факт
         contents.push({
             role: 'user',
             parts: [{ text: `Контекст из базы законов:\n${contextText}\n\nВопрос пользователя: ${message}` }]
@@ -78,8 +97,10 @@ app.post('/api/chat', async (req, res) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 systemInstruction: { parts: [{ text: systemInstruction }] },
-                contents: contents, // Отправляем всю цепочку сообщений
-                generationConfig: { temperature: 0.3 }
+                contents: contents,
+                generationConfig: { 
+                    temperature: 0.1 // Снизили фантазию почти до нуля!
+                }
             })
         });
 
@@ -90,9 +111,9 @@ app.post('/api/chat', async (req, res) => {
         res.json({ reply: finalReply });
 
     } catch (error) {
-        console.error("Ошибка:", error);
-        res.status(500).json({ reply: "Произошла ошибка памяти сервера." });
+        console.error("❌ Ошибка:", error);
+        res.status(500).json({ reply: "Произошла ошибка связи с базой законов." });
     }
 });
 
-app.listen(PORT, () => console.log(`✅ Miyzamchi теперь с памятью на порту ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Miyzamchi RAG-режим включен на порту ${PORT}`));
