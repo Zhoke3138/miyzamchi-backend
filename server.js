@@ -9,6 +9,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+// Инициализация авторизации Google Cloud для доступа к Discovery Engine
 const auth = new GoogleAuth({
     credentials: {
         client_email: process.env.CLIENT_EMAIL,
@@ -25,7 +26,9 @@ app.post('/api/chat', async (req, res) => {
         const client = await auth.getClient();
         const accessToken = (await client.getAccessToken()).token;
 
-        // ШАГ 1: ЖЕСТКИЙ ПОИСК В БАЗЕ (вытягиваем сами куски законов)
+        // ==========================================
+        // ШАГ 1: ПОИСК В БАЗЕ (Google Discovery Engine)
+        // ==========================================
         const searchUrl = `https://discoveryengine.googleapis.com/v1alpha/projects/${process.env.PROJECT_ID}/locations/${process.env.LOCATION_ID}/collections/default_collection/dataStores/${process.env.DATA_STORE_ID}/servingConfigs/default_config:search`;
 
         const searchRes = await fetch(searchUrl, {
@@ -33,9 +36,9 @@ app.post('/api/chat', async (req, res) => {
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
             body: JSON.stringify({ 
                 query: message, 
-                pageSize: 5, // Берем 5 кусков текста для надежности
+                pageSize: 5,
                 contentSearchSpec: { 
-                    snippetSpec: { returnSnippet: true }, // Запрашиваем точные выдержки
+                    snippetSpec: { returnSnippet: true },
                     summarySpec: { summaryResultCount: 3 } 
                 } 
             })
@@ -43,12 +46,12 @@ app.post('/api/chat', async (req, res) => {
 
         const searchData = await searchRes.json();
         
-        // Надежно собираем найденный текст из базы
+        // Собираем контекст из найденных фрагментов
         let contextText = "";
         if (searchData.results && searchData.results.length > 0) {
             const snippets = searchData.results.map(r => {
                 let text = r.document?.derivedStructData?.snippets?.[0]?.snippet || "";
-                return text.replace(/<[^>]*>?/gm, ''); // Убираем HTML-теги для чистоты
+                return text.replace(/<[^>]*>?/gm, ''); // Очистка HTML для чистой передачи в Gemini
             }).filter(t => t.length > 0);
             
             if (snippets.length > 0) {
@@ -56,25 +59,28 @@ app.post('/api/chat', async (req, res) => {
             }
         }
         
-        // Если база ничего не нашла
+        // Если база пуста, даем сигнал ИИ не блокироваться, а работать как генератор шаблонов
         if (!contextText.trim()) {
-            contextText = "В БАЗЕ НЕТ ИНФОРМАЦИИ.";
+            contextText = "Специфических документов в локальной базе не найдено. Можно генерировать текст документа, но номера статей нужно оставлять пустыми [в скобках].";
         }
 
-        // Выводим в консоль Render, чтобы ты видел, нашел ли он закон
-        console.log("🔍 Найденный контекст для вопроса:", contextText.substring(0, 200) + "...");
+        console.log("🔍 Найденный контекст:", contextText.substring(0, 150) + "...");
 
-        // ШАГ 2: СТРОГАЯ ИНСТРУКЦИЯ (Режим NotebookLM)
+        // ==========================================
+        // ШАГ 2: НАСТРОЙКА ИИ (Режим NotebookLM с защитой от галлюцинаций)
+        // ==========================================
         const systemInstruction = `Ты — Мыйзамчи, образовательный ИИ-помощник для студентов и юристов по праву Кыргызской Республики.
-Твоя ГЛАВНАЯ задача — отвечать СТРОГО на основе текста, который передан тебе в блоке "Контекст из базы законов".
+Твоя задача — помогать составлять юридические документы, иски, официальные письма и консультировать, опираясь на логику права.
 
-ЖЕСТКИЕ ПРАВИЛА:
-1. ЗАПРЕЩЕНО выдумывать статьи законов, сроки, штрафы или процедуры.
-2. Если в "Контексте из базы" НЕТ ответа на вопрос или написано "В БАЗЕ НЕТ ИНФОРМАЦИИ", ты ОБЯЗАН ответить: "К сожалению, в моей загруженной базе законов пока нет точной информации по этому вопросу."
-3. Если информация в контексте есть, отвечай кратко (1-4 предложения), понятно и структурированно.
-4. Будь дружелюбным, но помни, что юридическая точность важнее болтовни. Не добавляй от себя факты, которых нет в контексте.`;
+ЖЕСТКОЕ ПРАВИЛО ФАКТОВ (АНТИ-ГАЛЛЮЦИНАЦИЯ):
+1. Тебе КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО выдумывать номера статей, точные сроки, суммы штрафов или названия нормативных актов, если их нет в блоке "Контекст из базы законов".
+2. Если в "Контексте" есть нужная статья — цитируй её уверенно.
+3. Если пользователь просит составить документ (например, иск или ответ абоненту), а нужных статей в базе нет, ты ОБЯЗАН написать полный, качественный текст документа, но вместо выдуманных статей использовать заглушки в квадратных скобках. Например: "в соответствии со статьей [укажите нужную статью] Гражданского кодекса КР" или ссылаться на право в общих чертах ("согласно законодательству КР").
+4. Не отказывайся писать документ из-за отсутствия статей в базе. Пиши структуру, аргументацию и фабулу, оставляя места для точных ссылок на закон пустыми.`;
 
         const contents = [];
+        
+        // Подгружаем историю переписки
         if (history && history.length > 0) {
             history.forEach(msg => {
                 contents.push({
@@ -84,7 +90,7 @@ app.post('/api/chat', async (req, res) => {
             });
         }
 
-        // Передаем контекст как железобетонный факт
+        // Передаем контекст и текущий вопрос
         contents.push({
             role: 'user',
             parts: [{ text: `Контекст из базы законов:\n${contextText}\n\nВопрос пользователя: ${message}` }]
@@ -99,7 +105,7 @@ app.post('/api/chat', async (req, res) => {
                 systemInstruction: { parts: [{ text: systemInstruction }] },
                 contents: contents,
                 generationConfig: { 
-                    temperature: 0.1 // Снизили фантазию почти до нуля!
+                    temperature: 0.25 // Баланс: достаточно для красивого письма, но не дает выдумывать статьи
                 }
             })
         });
@@ -112,8 +118,8 @@ app.post('/api/chat', async (req, res) => {
 
     } catch (error) {
         console.error("❌ Ошибка:", error);
-        res.status(500).json({ reply: "Произошла ошибка связи с базой законов." });
+        res.status(500).json({ reply: "Произошла ошибка при обработке запроса. Сервер временно недоступен." });
     }
 });
 
-app.listen(PORT, () => console.log(`✅ Miyzamchi RAG-режим включен на порту ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Образовательный ИИ-помощник Miyzamchi запущен на порту ${PORT}`));
