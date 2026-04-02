@@ -1,126 +1,167 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { GoogleAuth } = require('google-auth-library');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const { GEMINI_API_KEY, PINECONE_API_KEY, PINECONE_HOST } = process.env;
 
-// Инициализация авторизации Google Cloud для доступа к Discovery Engine
-const auth = new GoogleAuth({
-    credentials: {
-        client_email: process.env.CLIENT_EMAIL,
-        private_key: process.env.PRIVATE_KEY.replace(/\\n/g, '\n')
-    },
-    scopes: ['https://www.googleapis.com/auth/cloud-platform']
-});
+// Проверка наличия ключей
+if (!GEMINI_API_KEY || !PINECONE_API_KEY || !PINECONE_HOST) {
+    console.error("❌ ОШИБКА: Не заданы ключи GEMINI_API_KEY, PINECONE_API_KEY или PINECONE_HOST в файле .env");
+    process.exit(1);
+}
+
+// Инициализация Gemini SDK
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+// Вспомогательная функция для генерации вектора
+async function getEmbedding(text) {
+    try {
+        const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
+        const result = await embeddingModel.embedContent(text);
+        const vector = result.embedding.values;
+        return vector;
+    } catch (error) {
+        console.error("❌ Ошибка при получении вектора (embedding):", error.message);
+        throw error;
+    }
+}
+
+// Вспомогательная функция поиска в Pinecone
+async function searchPinecone(vector) {
+    try {
+        const response = await fetch(`${PINECONE_HOST}/query`, {
+            method: 'POST',
+            headers: {
+                'Api-Key': PINECONE_API_KEY,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                vector,
+                topK: 3,
+                includeMetadata: true
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Pinecone API error: ${response.status} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        return data.matches || [];
+    } catch (error) {
+        console.error("❌ Ошибка при запросе к Pinecone:", error.message);
+        throw error;
+    }
+}
 
 app.post('/api/chat', async (req, res) => {
     try {
         const { message, history } = req.body;
-        if (!message) return res.status(400).json({ reply: "Пустое сообщение" });
-
-        const client = await auth.getClient();
-        const accessToken = (await client.getAccessToken()).token;
-
-        // ==========================================
-        // ШАГ 1: ПОИСК В БАЗЕ (Google Discovery Engine)
-        // ==========================================
-        const searchUrl = `https://discoveryengine.googleapis.com/v1alpha/projects/${process.env.PROJECT_ID}/locations/${process.env.LOCATION_ID}/collections/default_collection/dataStores/${process.env.DATA_STORE_ID}/servingConfigs/default_config:search`;
-
-        const searchRes = await fetch(searchUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` },
-            body: JSON.stringify({ 
-                query: message, 
-                pageSize: 100, // Берем максимум фрагментов
-                contentSearchSpec: { 
-                    snippetSpec: { returnSnippet: true },
-                    summarySpec: { summaryResultCount: 5 } 
-                } 
-            })
-        });
-
-        const searchData = await searchRes.json();
         
-        // Собираем контекст из найденных фрагментов
-        let contextText = "";
-        if (searchData.results && searchData.results.length > 0) {
-            const snippets = searchData.results.map(r => {
-                let text = r.document?.derivedStructData?.snippets?.[0]?.snippet || "";
-                return text.replace(/<[^>]*>?/gm, ''); // Очистка HTML
-            }).filter(t => t.length > 0);
+        if (!message) {
+            return res.status(400).json({ reply: "Пустое сообщение" });
+        }
+
+        console.log(`\n💬 Новый запрос: "${message}"`);
+
+        // 1. Формирование автономного запроса, если есть история диалога
+        let standaloneQuestion = message;
+        const chatModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+        if (history && history.length > 0) {
+            const historyText = history.map(h => `${h.role === 'user' ? 'Пользователь' : 'Miyzamchi'}: ${h.text}`).join('\n');
+            const standalonePrompt = `История диалога:\n${historyText}\n\nПоследний вопрос пользователя: "${message}"\nТвоя задача: превратить последний вопрос пользователя в полный юридический запрос, чтобы он был понятен сам по себе без истории. Верни ТОЛЬКО перефразированный запрос без объяснений.`;
             
-            if (snippets.length > 0) {
-                contextText = snippets.join("\n\n---\n\n");
+            try {
+                const rewriteResult = await chatModel.generateContent(standalonePrompt);
+                const rewritten = rewriteResult.response.text().trim();
+                if (rewritten && rewritten.length < 500) {
+                    standaloneQuestion = rewritten;
+                    console.log(`🤖 Перефразированный запрос: "${standaloneQuestion}"`);
+                }
+            } catch (err) {
+                console.error("⚠️ Ошибка перефразирования вопроса, использую оригинал:", err.message);
             }
         }
-        
-        if (!contextText.trim()) {
-            contextText = "Локальная база не выдала релевантных документов.";
-        }
 
-        console.log(`🔍 Найдено фрагментов: ${searchData.results?.length || 0}`);
+        // 2. Получение вектора для запроса
+        const queryEmbedding = await getEmbedding(standaloneQuestion);
 
-        // ==========================================
-        // ШАГ 2: УМНАЯ ИНСТРУКЦИЯ (Гибридный режим NotebookLM)
-        // ==========================================
-        const systemInstruction = `Ты — Мыйзамчи, продвинутый образовательный ИИ-помощник для студентов и юристов по праву Кыргызской Республики.
-Твоя задача — давать глубокие, точные и структурированные юридические консультации, объединяя данные из локальной базы с твоими собственными знаниями законодательства КР.
+        // 3. Поиск 3 релевантных статей в Pinecone
+        const matches = await searchPinecone(queryEmbedding);
 
-АЛГОРИТМ ТВОЕЙ РАБОТЫ (СТРОГО):
-1. ИЗУЧИ КОНТЕКСТ: Сначала ищи ответ в блоке "Контекст из базы законов". Если там есть нужная статья из правильного кодекса — цитируй и анализируй её.
-2. ИСПОЛЬЗУЙ ВНУТРЕННЮЮ ПАМЯТЬ (ГЛАВНОЕ ПРАВИЛО): Если в "Контексте" выдалась нерелевантная информация (например, просят ГК КР, а в контексте статьи из УК КР) ИЛИ контекст пуст, НО ты точно знаешь эту статью из своих базовых знаний законодательства Кыргызской Республики — ТЫ ОБЯЗАН ОТВЕТИТЬ! Не смей писать "в источнике информация отсутствует". Достань статью из своей памяти и полностью ее распиши.
-3. ПРОЗРАЧНОСТЬ ДЛЯ СТУДЕНТОВ: Если ты взял текст статьи из своей памяти (потому что локальный поиск не справился), ОБЯЗАТЕЛЬНО начни ответ с фразы курсивом: *(Примечание: локальный поиск не нашел нужный документ, ответ сгенерирован на основе встроенных знаний ИИ о праве КР. Рекомендуется сверить с актуальной редакцией).*
-4. СТИЛЬ ОТВЕТА: Делай полный юридический разбор. Объясняй смысл нормы, выделяй главные пункты списком, пиши профессионально.
-5. АНТИ-ГАЛЛЮЦИНАЦИЯ: Используй внутреннюю память только для реальных, существующих законов КР. Если пользователь просит выдуманный закон — честно скажи, что такого закона не существует.
-6. ДОКУМЕНТЫ: Если просят составить иск или письмо, пиши полный текст, используя свои знания юриспруденции.`;
-
-        const contents = [];
-        
-        // Подгружаем историю переписки
-        if (history && history.length > 0) {
-            history.forEach(msg => {
-                contents.push({
-                    role: msg.role === 'user' ? 'user' : 'model',
-                    parts: [{ text: msg.text }]
-                });
+        let contextText = "";
+        if (matches && matches.length > 0) {
+            const snippets = matches.map((match, index) => {
+                const md = match.metadata || {};
+                const codexName = md.doc_title || md.codex || md.Code || md.Title || "Неизвестный кодекс/закон";
+                const articleNum = md.article || md.Article || md.article_number || md.статья || "Не указана";
+                const text = md.text || md.content || "[Текст отсутствует]";
+                
+                return `--- Источник ${index + 1} ---\nКодекс/Закон: ${codexName}\nСтатья: ${articleNum}\nТекст статьи:\n${text}`;
             });
+            contextText = snippets.join("\n\n");
+            console.log(`🔍 Найдено ${matches.length} статей в Pinecone. Начинаю потоковую генерацию ответа...`);
+        } else {
+            console.log(`🔍 В Pinecone не найдено релевантных статей. Начинаю потоковую генерацию пустого ответа...`);
         }
 
-        // Передаем контекст и текущий вопрос
-        contents.push({
-            role: 'user',
-            parts: [{ text: `Контекст из базы законов:\n${contextText}\n\nВопрос пользователя: ${message}` }]
+        // 4. Генерация потокового финального ответа (Stream) с использованием gemini-1.5-flash
+        const systemInstruction = `Ты — юридический ассистент "Мыйзамчи", эксперт по законодательству Кыргызской Республики.
+
+ТВОЯ ГЛАВНАЯ ЗАДАЧА:
+Отвечать на вопрос пользователя строго опираясь на предоставленный тебе "Релевантный контекст из базы данных (Pinecone)".
+
+ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
+1. Если контекст предоставлен, ты ДОЛЖЕН ответить на основе этого контекста.
+2. В своем ответе ты ОБЯЗАН ссылаться на название кодекса/закона и номер статьи, которые указаны в контексте (например: "Согласно статье 15 Гражданского кодекса КР...").
+3. Если текущего контекста недостаточно для ответа или база не вернула результатов, ты ДОЛЖЕН честно сказать: "К сожалению, в моей текущей базе знаний нет прямого ответа на этот вопрос", и не выдумывать законы.
+4. Отвечай вежливо, четким, структурированным и понятным юридическим языком.
+5. Не указывай "Источник 1", "Источник 2" напрямую, интегрируй ссылки на статьи в текст своего ответа естественно.`;
+
+        const finalModel = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash",
+            systemInstruction: systemInstruction,
+            generationConfig: { temperature: 0.3 }
         });
 
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+        const promptText = `Релевантный контекст из базы данных (Pinecone):\n${contextText ? contextText : "В базе ничего не найдено."}\n\nВопрос пользователя: ${message}`;
 
-        const geminiRes = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                systemInstruction: { parts: [{ text: systemInstruction }] },
-                contents: contents,
-                generationConfig: { 
-                    temperature: 0.3 // Низкая температура для точности в терминах, но достаточная для генерации хорошего разбора из памяти
-                }
-            })
-        });
+        // Настройка заголовков для Server-Sent Events (SSE)
+        res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
 
-        const geminiData = await geminiRes.json();
-        if (!geminiRes.ok) throw new Error(JSON.stringify(geminiData));
+        // Генерируем ответ в потоковом формате
+        const result = await finalModel.generateContentStream(promptText);
 
-        const finalReply = geminiData.candidates[0].content.parts[0].text;
-        res.json({ reply: finalReply });
+        for await (const chunk of result.stream) {
+            const chunkText = chunk.text();
+            res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+        }
+        
+        // Сигнал об окончании потока
+        res.write(`data: [DONE]\n\n`);
+        res.end();
 
     } catch (error) {
-        console.error("❌ Ошибка:", error);
-        res.status(500).json({ reply: "Произошла ошибка при обработке запроса. Сервер временно недоступен." });
+        console.error("❌ Глобальная ошибка обработки /api/chat:", error);
+        if (!res.headersSent) {
+            res.status(500).json({ reply: "Произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте позже." });
+        } else {
+            res.end();
+        }
     }
 });
 
-app.listen(PORT, () => console.log(`✅ Образовательный ИИ-помощник Miyzamchi (Smart Mode) запущен на порту ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`✅ Сервер Miyzamchi запущен на порту ${PORT}`);
+    console.log(`🤖 Модели: text-embedding-004 (векторы), gemini-1.5-flash (ответы - Потоковый режим SSE)`);
+});
