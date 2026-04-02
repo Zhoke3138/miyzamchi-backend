@@ -12,22 +12,41 @@ const { GEMINI_API_KEY, PINECONE_API_KEY, PINECONE_HOST } = process.env;
 
 // Проверка наличия ключей
 if (!GEMINI_API_KEY || !PINECONE_API_KEY || !PINECONE_HOST) {
-    console.error("❌ ОШИБКА: Не заданы ключи GEMINI_API_KEY, PINECONE_API_KEY или PINECONE_HOST в файле .env");
+    console.error("❌ ОШИБКА: Не заданы ключи GEMINI_API_KEY, PINECONE_API_KEY или PINECONE_HOST в панели окружения.");
     process.exit(1);
 }
+
+// Защита от лишних слэшей в конце URL Pinecone (частая ошибка)
+const cleanPineconeHost = PINECONE_HOST.replace(/\/$/, '');
 
 // Инициализация Gemini SDK
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// Вспомогательная функция для генерации вектора
+// 🛡️ УМНАЯ ФУНКЦИЯ ЭМБЕДДИНГА (С АВТОМАТИЧЕСКИМ ПЕРЕКЛЮЧЕНИЕМ МОДЕЛЕЙ)
 async function getEmbedding(text) {
+    const primaryModelName = process.env.EMBEDDING_MODEL || "text-embedding-004";
+    const fallbackModelName = "embedding-001";
+
     try {
-        const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
+        // Попытка 1: Использование основной модели
+        const embeddingModel = genAI.getGenerativeModel({ model: primaryModelName });
         const result = await embeddingModel.embedContent(text);
-        const vector = result.embedding.values;
-        return vector;
+        return result.embedding.values;
     } catch (error) {
-        console.error("❌ Ошибка при получении вектора (embedding):", error.message);
+        console.warn(`⚠️ Ошибка основной модели (${primaryModelName}): ${error.message}`);
+
+        // Попытка 2: Если основная упала (например, 404), переключаемся на резервную
+        if (primaryModelName !== fallbackModelName) {
+            console.log(`🔄 Авто-переключение на резервную модель: ${fallbackModelName}...`);
+            try {
+                const fallbackModel = genAI.getGenerativeModel({ model: fallbackModelName });
+                const result = await fallbackModel.embedContent(text);
+                return result.embedding.values;
+            } catch (fallbackError) {
+                console.error("❌ Ошибка резервной модели эмбеддингов:", fallbackError.message);
+                throw fallbackError;
+            }
+        }
         throw error;
     }
 }
@@ -35,7 +54,7 @@ async function getEmbedding(text) {
 // Вспомогательная функция поиска в Pinecone
 async function searchPinecone(vector) {
     try {
-        const response = await fetch(`${PINECONE_HOST}/query`, {
+        const response = await fetch(`${cleanPineconeHost}/query`, {
             method: 'POST',
             headers: {
                 'Api-Key': PINECONE_API_KEY,
@@ -64,7 +83,7 @@ async function searchPinecone(vector) {
 app.post('/api/chat', async (req, res) => {
     try {
         const { message, history } = req.body;
-        
+
         if (!message) {
             return res.status(400).json({ reply: "Пустое сообщение" });
         }
@@ -78,7 +97,7 @@ app.post('/api/chat', async (req, res) => {
         if (history && history.length > 0) {
             const historyText = history.map(h => `${h.role === 'user' ? 'Пользователь' : 'Miyzamchi'}: ${h.text}`).join('\n');
             const standalonePrompt = `История диалога:\n${historyText}\n\nПоследний вопрос пользователя: "${message}"\nТвоя задача: превратить последний вопрос пользователя в полный юридический запрос, чтобы он был понятен сам по себе без истории. Верни ТОЛЬКО перефразированный запрос без объяснений.`;
-            
+
             try {
                 const rewriteResult = await chatModel.generateContent(standalonePrompt);
                 const rewritten = rewriteResult.response.text().trim();
@@ -104,16 +123,16 @@ app.post('/api/chat', async (req, res) => {
                 const codexName = md.doc_title || md.codex || md.Code || md.Title || "Неизвестный кодекс/закон";
                 const articleNum = md.article || md.Article || md.article_number || md.статья || "Не указана";
                 const text = md.text || md.content || "[Текст отсутствует]";
-                
+
                 return `--- Источник ${index + 1} ---\nКодекс/Закон: ${codexName}\nСтатья: ${articleNum}\nТекст статьи:\n${text}`;
             });
             contextText = snippets.join("\n\n");
             console.log(`🔍 Найдено ${matches.length} статей в Pinecone. Начинаю потоковую генерацию ответа...`);
         } else {
-            console.log(`🔍 В Pinecone не найдено релевантных статей. Начинаю потоковую генерацию пустого ответа...`);
+            console.log(`🔍 В Pinecone не найдено релевантных статей. Начинаю генерацию ответа без контекста...`);
         }
 
-        // 4. Генерация потокового финального ответа (Stream) с использованием gemini-1.5-flash
+        // 4. Генерация потокового финального ответа (Stream)
         const systemInstruction = `Ты — юридический ассистент "Мыйзамчи", эксперт по законодательству Кыргызской Республики.
 
 ТВОЯ ГЛАВНАЯ ЗАДАЧА:
@@ -146,7 +165,7 @@ app.post('/api/chat', async (req, res) => {
             const chunkText = chunk.text();
             res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
         }
-        
+
         // Сигнал об окончании потока
         res.write(`data: [DONE]\n\n`);
         res.end();
@@ -156,6 +175,9 @@ app.post('/api/chat', async (req, res) => {
         if (!res.headersSent) {
             res.status(500).json({ reply: "Произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте позже." });
         } else {
+            // Если заголовки уже отправлены (поток начался), нужно корректно закрыть его
+            res.write(`data: ${JSON.stringify({ text: "\n\n[Ошибка связи, генерация прервана]" })}\n\n`);
+            res.write(`data: [DONE]\n\n`);
             res.end();
         }
     }
@@ -163,5 +185,5 @@ app.post('/api/chat', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`✅ Сервер Miyzamchi запущен на порту ${PORT}`);
-    console.log(`🤖 Модели: text-embedding-004 (векторы), gemini-1.5-flash (ответы - Потоковый режим SSE)`);
+    console.log(`🤖 Модели: Автоматический выбор вектора, gemini-1.5-flash (ответы - Потоковый режим SSE)`);
 });
