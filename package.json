@@ -1,6 +1,13 @@
 {
+  "name": "miyzamchi-backend",
+  "version": "1.0.0",
+  "description": "Miyzamchi AI Legal Assistant Backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "@google/generative-ai": "latest",
     "@pinecone-database/pinecone": "^7.1.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
