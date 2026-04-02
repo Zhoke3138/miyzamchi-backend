@@ -18,41 +18,14 @@ if (!GEMINI_API_KEY || !PINECONE_API_KEY || !PINECONE_HOST) {
 const cleanPineconeHost = PINECONE_HOST.replace(/\/$/, '');
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// Переменная для авто-найденной модели эмбеддингов
-let AUTO_EMBEDDING_MODEL = "text-embedding-004"; 
-
-// 🛡️ АВТО-ОПРЕДЕЛЕНИЕ МОДЕЛЕЙ (Сам найдет то, что работает)
-async function discoverModels() {
-    console.log("🔍 Подключаюсь к Google для поиска доступных моделей...");
-    try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`);
-        const data = await response.json();
-        
-        if (data.models) {
-            // Ищем модели, которые поддерживают векторы (embedContent)
-            const embedModels = data.models.filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('embedContent'));
-            if (embedModels.length > 0) {
-                // Берем самую новую доступную модель
-                AUTO_EMBEDDING_MODEL = embedModels[embedModels.length - 1].name.replace('models/', '');
-                console.log(`✅ Автоматически выбрана модель эмбеддингов: ${AUTO_EMBEDDING_MODEL}`);
-            } else {
-                console.warn("⚠️ Google не вернул модели эмбеддингов для этого ключа.");
-            }
-        } else if (data.error) {
-            console.error("❌ Ошибка API Google при поиске моделей:", data.error.message);
-        }
-    } catch (error) {
-        console.error("⚠️ Не удалось выполнить авто-поиск моделей:", error.message);
-    }
-}
-
+// 🛡️ ЖЕСТКО ЗАДАЕМ МОДЕЛЬ НА 768 ИЗМЕРЕНИЙ
 async function getEmbedding(text) {
     try {
-        const embeddingModel = genAI.getGenerativeModel({ model: AUTO_EMBEDDING_MODEL });
+        const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
         const result = await embeddingModel.embedContent(text);
         return result.embedding.values;
     } catch (error) {
-        console.error(`❌ Ошибка получения вектора (модель ${AUTO_EMBEDDING_MODEL}):`, error.message);
+        console.error(`❌ Ошибка получения вектора:`, error.message);
         throw error;
     }
 }
@@ -88,9 +61,8 @@ app.post('/api/chat', async (req, res) => {
 
         console.log(`\n💬 Новый запрос: "${message}"`);
 
-        // 1. Формирование автономного запроса
         let standaloneQuestion = message;
-        // 🔄 ОБНОВЛЕНО: Используем gemini-2.5-flash
+        // Используем твою любимую версию 2.5 для ответов
         const chatModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         if (history && history.length > 0) {
@@ -108,10 +80,10 @@ app.post('/api/chat', async (req, res) => {
             }
         }
 
-        // 2. Получение вектора
+        // 1. Вектор (теперь ровно 768!)
         const queryEmbedding = await getEmbedding(standaloneQuestion);
 
-        // 3. Поиск в Pinecone
+        // 2. Поиск в Pinecone
         const matches = await searchPinecone(queryEmbedding);
 
         let contextText = "";
@@ -128,14 +100,13 @@ app.post('/api/chat', async (req, res) => {
             console.log(`🔍 В базе ничего не найдено.`);
         }
 
-        // 4. Генерация финального ответа
+        // 3. Ответ с SSE (Стриминг)
         const systemInstruction = `Ты — "Мыйзамчи", юридический ИИ-ассистент Кыргызской Республики.
 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
 1. Отвечай СТРОГО опираясь на "Релевантный контекст" ниже.
 2. Обязательно цитируй название кодекса и номер статьи из контекста.
 3. Если контекста нет, честно ответь: "К сожалению, в моей текущей базе знаний нет ответа на этот вопрос". Не выдумывай законы.`;
 
-        // 🔄 ОБНОВЛЕНО: Используем gemini-2.5-flash
         const finalModel = genAI.getGenerativeModel({
             model: "gemini-2.5-flash",
             systemInstruction: systemInstruction,
@@ -168,10 +139,7 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
-// Запускаем авто-поиск перед стартом сервера
-discoverModels().then(() => {
-    app.listen(PORT, () => {
-        console.log(`✅ Сервер Miyzamchi запущен на порту ${PORT}`);
-        console.log(`🤖 Чат-Модель: gemini-2.5-flash | Векторы: Автовыбор`);
-    });
+app.listen(PORT, () => {
+    console.log(`✅ Сервер Miyzamchi запущен на порту ${PORT}`);
+    console.log(`🤖 Чат-Модель: gemini-2.5-flash | Векторы: text-embedding-004 (768)`);
 });
