@@ -50,7 +50,7 @@ async function searchPinecone(vector) {
                 'Api-Key': PINECONE_API_KEY,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ vector, topK: 3, includeMetadata: true })
+            body: JSON.stringify({ vector, topK: 15, includeMetadata: true })
         });
 
         if (!response.ok) {
