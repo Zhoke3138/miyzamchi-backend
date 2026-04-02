@@ -10,48 +10,53 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const { GEMINI_API_KEY, PINECONE_API_KEY, PINECONE_HOST } = process.env;
 
-// Проверка наличия ключей
 if (!GEMINI_API_KEY || !PINECONE_API_KEY || !PINECONE_HOST) {
-    console.error("❌ ОШИБКА: Не заданы ключи GEMINI_API_KEY, PINECONE_API_KEY или PINECONE_HOST в панели окружения.");
+    console.error("❌ ОШИБКА: Не заданы ключи GEMINI_API_KEY, PINECONE_API_KEY или PINECONE_HOST.");
     process.exit(1);
 }
 
-// Защита от лишних слэшей в конце URL Pinecone (частая ошибка)
 const cleanPineconeHost = PINECONE_HOST.replace(/\/$/, '');
-
-// Инициализация Gemini SDK
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// 🛡️ УМНАЯ ФУНКЦИЯ ЭМБЕДДИНГА (С АВТОМАТИЧЕСКИМ ПЕРЕКЛЮЧЕНИЕМ МОДЕЛЕЙ)
-async function getEmbedding(text) {
-    const primaryModelName = process.env.EMBEDDING_MODEL || "text-embedding-004";
-    const fallbackModelName = "embedding-001";
+// Переменная для авто-найденной модели эмбеддингов
+let AUTO_EMBEDDING_MODEL = "text-embedding-004"; 
 
+// 🛡️ АВТО-ОПРЕДЕЛЕНИЕ МОДЕЛЕЙ (Сам найдет то, что работает)
+async function discoverModels() {
+    console.log("🔍 Подключаюсь к Google для поиска доступных моделей...");
     try {
-        // Попытка 1: Использование основной модели
-        const embeddingModel = genAI.getGenerativeModel({ model: primaryModelName });
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`);
+        const data = await response.json();
+        
+        if (data.models) {
+            // Ищем модели, которые поддерживают векторы (embedContent)
+            const embedModels = data.models.filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('embedContent'));
+            if (embedModels.length > 0) {
+                // Берем самую новую доступную модель
+                AUTO_EMBEDDING_MODEL = embedModels[embedModels.length - 1].name.replace('models/', '');
+                console.log(`✅ Автоматически выбрана модель эмбеддингов: ${AUTO_EMBEDDING_MODEL}`);
+            } else {
+                console.warn("⚠️ Google не вернул модели эмбеддингов для этого ключа.");
+            }
+        } else if (data.error) {
+            console.error("❌ Ошибка API Google при поиске моделей:", data.error.message);
+        }
+    } catch (error) {
+        console.error("⚠️ Не удалось выполнить авто-поиск моделей:", error.message);
+    }
+}
+
+async function getEmbedding(text) {
+    try {
+        const embeddingModel = genAI.getGenerativeModel({ model: AUTO_EMBEDDING_MODEL });
         const result = await embeddingModel.embedContent(text);
         return result.embedding.values;
     } catch (error) {
-        console.warn(`⚠️ Ошибка основной модели (${primaryModelName}): ${error.message}`);
-
-        // Попытка 2: Если основная упала (например, 404), переключаемся на резервную
-        if (primaryModelName !== fallbackModelName) {
-            console.log(`🔄 Авто-переключение на резервную модель: ${fallbackModelName}...`);
-            try {
-                const fallbackModel = genAI.getGenerativeModel({ model: fallbackModelName });
-                const result = await fallbackModel.embedContent(text);
-                return result.embedding.values;
-            } catch (fallbackError) {
-                console.error("❌ Ошибка резервной модели эмбеддингов:", fallbackError.message);
-                throw fallbackError;
-            }
-        }
+        console.error(`❌ Ошибка получения вектора (модель ${AUTO_EMBEDDING_MODEL}):`, error.message);
         throw error;
     }
 }
 
-// Вспомогательная функция поиска в Pinecone
 async function searchPinecone(vector) {
     try {
         const response = await fetch(`${cleanPineconeHost}/query`, {
@@ -60,11 +65,7 @@ async function searchPinecone(vector) {
                 'Api-Key': PINECONE_API_KEY,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                vector,
-                topK: 3,
-                includeMetadata: true
-            })
+            body: JSON.stringify({ vector, topK: 3, includeMetadata: true })
         });
 
         if (!response.ok) {
@@ -83,21 +84,18 @@ async function searchPinecone(vector) {
 app.post('/api/chat', async (req, res) => {
     try {
         const { message, history } = req.body;
-
-        if (!message) {
-            return res.status(400).json({ reply: "Пустое сообщение" });
-        }
+        if (!message) return res.status(400).json({ reply: "Пустое сообщение" });
 
         console.log(`\n💬 Новый запрос: "${message}"`);
 
-        // 1. Формирование автономного запроса, если есть история диалога
+        // 1. Формирование автономного запроса
         let standaloneQuestion = message;
-        const chatModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // 🔄 ОБНОВЛЕНО: Используем gemini-2.5-flash
+        const chatModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         if (history && history.length > 0) {
             const historyText = history.map(h => `${h.role === 'user' ? 'Пользователь' : 'Miyzamchi'}: ${h.text}`).join('\n');
-            const standalonePrompt = `История диалога:\n${historyText}\n\nПоследний вопрос пользователя: "${message}"\nТвоя задача: превратить последний вопрос пользователя в полный юридический запрос, чтобы он был понятен сам по себе без истории. Верни ТОЛЬКО перефразированный запрос без объяснений.`;
-
+            const standalonePrompt = `История диалога:\n${historyText}\n\nПоследний вопрос: "${message}"\nСформируй полный юридический запрос из последнего вопроса без объяснений.`;
             try {
                 const rewriteResult = await chatModel.generateContent(standalonePrompt);
                 const rewritten = rewriteResult.response.text().trim();
@@ -106,84 +104,74 @@ app.post('/api/chat', async (req, res) => {
                     console.log(`🤖 Перефразированный запрос: "${standaloneQuestion}"`);
                 }
             } catch (err) {
-                console.error("⚠️ Ошибка перефразирования вопроса, использую оригинал:", err.message);
+                console.error("⚠️ Ошибка перефразирования, использую оригинал.");
             }
         }
 
-        // 2. Получение вектора для запроса
+        // 2. Получение вектора
         const queryEmbedding = await getEmbedding(standaloneQuestion);
 
-        // 3. Поиск 3 релевантных статей в Pinecone
+        // 3. Поиск в Pinecone
         const matches = await searchPinecone(queryEmbedding);
 
         let contextText = "";
         if (matches && matches.length > 0) {
             const snippets = matches.map((match, index) => {
                 const md = match.metadata || {};
-                const codexName = md.doc_title || md.codex || md.Code || md.Title || "Неизвестный кодекс/закон";
-                const articleNum = md.article || md.Article || md.article_number || md.статья || "Не указана";
-                const text = md.text || md.content || "[Текст отсутствует]";
-
-                return `--- Источник ${index + 1} ---\nКодекс/Закон: ${codexName}\nСтатья: ${articleNum}\nТекст статьи:\n${text}`;
+                const codexName = md.doc_title || md.codex || md.Code || md.Title || "Неизвестный источник";
+                const articleNum = md.article || md.Article || md.article_number || md.статья || "";
+                return `--- Источник ${index + 1} ---\nКодекс/Закон: ${codexName}\nСтатья: ${articleNum}\nТекст:\n${md.text || md.content || ""}`;
             });
             contextText = snippets.join("\n\n");
-            console.log(`🔍 Найдено ${matches.length} статей в Pinecone. Начинаю потоковую генерацию ответа...`);
+            console.log(`🔍 Найдено ${matches.length} статей. Начинаю Streaming...`);
         } else {
-            console.log(`🔍 В Pinecone не найдено релевантных статей. Начинаю генерацию ответа без контекста...`);
+            console.log(`🔍 В базе ничего не найдено.`);
         }
 
-        // 4. Генерация потокового финального ответа (Stream)
-        const systemInstruction = `Ты — юридический ассистент "Мыйзамчи", эксперт по законодательству Кыргызской Республики.
-
-ТВОЯ ГЛАВНАЯ ЗАДАЧА:
-Отвечать на вопрос пользователя строго опираясь на предоставленный тебе "Релевантный контекст из базы данных (Pinecone)".
-
+        // 4. Генерация финального ответа
+        const systemInstruction = `Ты — "Мыйзамчи", юридический ИИ-ассистент Кыргызской Республики.
 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
-1. Если контекст предоставлен, ты ДОЛЖЕН ответить на основе этого контекста.
-2. В своем ответе ты ОБЯЗАН ссылаться на название кодекса/закона и номер статьи, которые указаны в контексте (например: "Согласно статье 15 Гражданского кодекса КР...").
-3. Если текущего контекста недостаточно для ответа или база не вернула результатов, ты ДОЛЖЕН честно сказать: "К сожалению, в моей текущей базе знаний нет прямого ответа на этот вопрос", и не выдумывать законы.
-4. Отвечай вежливо, четким, структурированным и понятным юридическим языком.
-5. Не указывай "Источник 1", "Источник 2" напрямую, интегрируй ссылки на статьи в текст своего ответа естественно.`;
+1. Отвечай СТРОГО опираясь на "Релевантный контекст" ниже.
+2. Обязательно цитируй название кодекса и номер статьи из контекста.
+3. Если контекста нет, честно ответь: "К сожалению, в моей текущей базе знаний нет ответа на этот вопрос". Не выдумывай законы.`;
 
+        // 🔄 ОБНОВЛЕНО: Используем gemini-2.5-flash
         const finalModel = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-2.5-flash",
             systemInstruction: systemInstruction,
             generationConfig: { temperature: 0.3 }
         });
 
-        const promptText = `Релевантный контекст из базы данных (Pinecone):\n${contextText ? contextText : "В базе ничего не найдено."}\n\nВопрос пользователя: ${message}`;
+        const promptText = `Релевантный контекст:\n${contextText || "В базе пусто."}\n\nВопрос: ${message}`;
 
-        // Настройка заголовков для Server-Sent Events (SSE)
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
 
-        // Генерируем ответ в потоковом формате
         const result = await finalModel.generateContentStream(promptText);
 
         for await (const chunk of result.stream) {
-            const chunkText = chunk.text();
-            res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+            res.write(`data: ${JSON.stringify({ text: chunk.text() })}\n\n`);
         }
-
-        // Сигнал об окончании потока
         res.write(`data: [DONE]\n\n`);
         res.end();
 
     } catch (error) {
-        console.error("❌ Глобальная ошибка обработки /api/chat:", error);
+        console.error("❌ Глобальная ошибка обработки:", error);
         if (!res.headersSent) {
-            res.status(500).json({ reply: "Произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте позже." });
+            res.status(500).json({ reply: "Произошла ошибка при обработке запроса." });
         } else {
-            // Если заголовки уже отправлены (поток начался), нужно корректно закрыть его
-            res.write(`data: ${JSON.stringify({ text: "\n\n[Ошибка связи, генерация прервана]" })}\n\n`);
+            res.write(`data: ${JSON.stringify({ text: "\n\n[Ошибка связи]" })}\n\n`);
             res.write(`data: [DONE]\n\n`);
             res.end();
         }
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`✅ Сервер Miyzamchi запущен на порту ${PORT}`);
-    console.log(`🤖 Модели: Автоматический выбор вектора, gemini-1.5-flash (ответы - Потоковый режим SSE)`);
+// Запускаем авто-поиск перед стартом сервера
+discoverModels().then(() => {
+    app.listen(PORT, () => {
+        console.log(`✅ Сервер Miyzamchi запущен на порту ${PORT}`);
+        console.log(`🤖 Чат-Модель: gemini-2.5-flash | Векторы: Автовыбор`);
+    });
 });
