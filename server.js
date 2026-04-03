@@ -23,7 +23,7 @@ if (KEYS.length === 0 || !PINECONE_API_KEY || !PINECONE_HOST) {
 
 const cleanPineconeHost = PINECONE_HOST.replace(/\/$/, '');
 
-// --- 🎯 МАРШРУТ ДЛЯ ПИНГА (Для cron-job.org и само-проверки) ---
+// --- 🎯 МАРШРУТ ДЛЯ ПИНГА ---
 app.get('/ping', (req, res) => {
     console.log('📡 Пинг получен. Мыйзамчи бодрствует!');
     res.status(200).send('Бодрствую! ⚖️');
@@ -32,6 +32,25 @@ app.get('/ping', (req, res) => {
 // --- 🛡️ ФУНКЦИЯ ПОЛУЧЕНИЯ ТЕКУЩЕГО КЛЮЧА ---
 function getActiveKey() {
     return KEYS[currentKeyIndex];
+}
+
+// --- 🤝 ОПРЕДЕЛЕНИЕ ТИПА СООБЩЕНИЯ ---
+// Если сообщение — просто приветствие или болталка, не гоняем его через Pinecone
+const GREETING_PATTERNS = [
+    /^(салам|саламатсызбы|сал|привет|хай|здравствуй|здравствуйте|добрый день|добрый вечер|доброе утро|hi|hello|hey|ку)\b/i,
+    /^(как дела|как ты|как жизнь|что делаешь|кандайсың|кандайсыз|жакшымысың|жакшымысыз)\b/i,
+    /^(спасибо|рахмат|благодарю|thanks|thank you)\b/i,
+    /^(пока|до свидания|кош бол|сау бол|bye|goodbye)\b/i,
+    /^(кто ты|что ты|что такое мыйзамчи|ты кто|расскажи о себе)\b/i,
+];
+
+function isCasualMessage(message) {
+    const trimmed = message.trim();
+    // Короткое сообщение (до 30 символов) И совпадает с паттерном
+    if (trimmed.length <= 30) {
+        return GREETING_PATTERNS.some(pattern => pattern.test(trimmed));
+    }
+    return false;
 }
 
 // --- 🧠 ФУНКЦИЯ ВЕКТОРА С РОТАЦИЕЙ КЛЮЧЕЙ ---
@@ -48,7 +67,6 @@ async function getEmbedding(text, retryCount = 0) {
         
         const data = await response.json();
 
-        // Если лимит исчерпан (429) — переключаем ключ
         if (response.status === 429 && retryCount < KEYS.length) {
             console.log(`🛑 Ключ №${currentKeyIndex + 1} исчерпан. Ротируем...`);
             currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
@@ -87,22 +105,27 @@ app.post('/api/chat', async (req, res) => {
 
         console.log(`\n💬 Запрос от пользователя: "${message}"`);
 
-        // 1. Получаем вектор
-        const queryEmbedding = await getEmbedding(message);
-
-        // 2. Ищем в базе
-        const matches = await searchPinecone(queryEmbedding);
-
-        // 3. Собираем контекст из найденных статей
+        // Определяем тип сообщения
+        const casual = isCasualMessage(message);
         let contextText = "";
-        if (matches.length > 0) {
-            contextText = matches.map((match, i) => {
-                const md = match.metadata || {};
-                return `[Источник ${i+1}: ${md.doc_title} | ${md.article_title}]\nТекст статьи:\n${md.text}`;
-            }).join("\n\n");
+
+        if (casual) {
+            // Болталка — пропускаем embedding и Pinecone
+            console.log("🤝 Режим: приветствие/болталка — Pinecone пропущен");
+        } else {
+            // Юридический запрос — полный RAG-пайплайн
+            const queryEmbedding = await getEmbedding(message);
+            const matches = await searchPinecone(queryEmbedding);
+
+            if (matches.length > 0) {
+                contextText = matches.map((match, i) => {
+                    const md = match.metadata || {};
+                    return `[Источник ${i+1}: ${md.doc_title} | ${md.article_title}]\nТекст статьи:\n${md.text}`;
+                }).join("\n\n");
+            }
         }
 
-        // 4. Настраиваем системную инструкцию "Мыйзамчи"
+        // --- Системная инструкция ---
         const systemInstruction = `
 # ИДЕНТИЧНОСТЬ
 Ты — **Мыйзамчи**, юридический ИИ-ассистент Кыргызской Республики. Твоя задача — помогать гражданам понимать законодательство КР просто, точно и практично.
@@ -117,6 +140,12 @@ app.post('/api/chat', async (req, res) => {
 ---
 
 # РЕЖИМЫ ОТВЕТА
+
+## Режим 0 — Приветствие и болталка
+- Если пользователь просто поздоровался, поблагодарил, попрощался или написал что-то неюридическое — отвечай тепло и естественно.
+- Не начинай с юридики. Просто поздоровайся и предложи помощь.
+- Пример: на "Салам!" → "Салам! Кандай жардам бере алам? 😊" или "Привет! Чем могу помочь?"
+- На "кто ты?" → кратко представься и объясни чем помогаешь.
 
 ## Режим 1 — Юридическая консультация
 - Начинай с: "Согласно [статья] [название акта]..."
@@ -137,7 +166,7 @@ app.post('/api/chat', async (req, res) => {
 - Структура: Шапка → Суть требования → Правовое основание → Просительная часть → Подпись
 
 ## Режим 4 — Вопрос вне компетенции
-- Если вопрос не касается законодательства КР: "Этот вопрос выходит за рамки моей специализации. Я работаю только с законодательством Кыргызской Республики."
+- Если вопрос не касается законодательства КР и не является простым общением: "Этот вопрос выходит за рамки моей специализации. Я работаю только с законодательством Кыргызской Республики."
 
 ---
 
@@ -156,7 +185,7 @@ app.post('/api/chat', async (req, res) => {
 ---
 
 # ДИСКЛЕЙМЕР
-Добавляй в конце консультаций (не шаблонов):
+Добавляй в конце юридических консультаций (не шаблонов и не болталки):
 > ⚠️ *Мыйзамчи — ИИ-ассистент информационного характера. Ответ основан на нормах законодательства КР, но не заменяет очную консультацию квалифицированного юриста. В сложных делах обращайтесь к специалисту.*
 
 ---
@@ -166,6 +195,7 @@ app.post('/api/chat', async (req, res) => {
 - Выдумывать номера статей или нормы, которых нет в контексте
 - Давать категоричные прогнозы исхода судебных дел
 - Игнорировать вопрос — всегда отвечай на суть, даже если нет точной нормы
+- Реагировать на приветствие как на юридический запрос
 `;
 
         const genAI = new GoogleGenerativeAI(getActiveKey());
@@ -174,9 +204,12 @@ app.post('/api/chat', async (req, res) => {
             systemInstruction: systemInstruction 
         });
 
-        const promptText = `Релевантный контекст законов:\n${contextText || "Данные не найдены."}\n\nВопрос пользователя: ${message}`;
+        // Формируем промпт в зависимости от типа сообщения
+        const promptText = casual
+            ? `Сообщение пользователя: ${message}`
+            : `Релевантный контекст законов:\n${contextText || "Данные не найдены."}\n\nВопрос пользователя: ${message}`;
 
-        // Настройка потоковой передачи (Streaming)
+        // Streaming
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
@@ -207,8 +240,7 @@ app.listen(PORT, () => {
 });
 
 // --- ⏰ САМО-ПИНАТЕЛЬ (Чтобы Render не засыпал) ---
-// ВАЖНО: Замени ссылку ниже на РЕАЛЬНУЮ ссылку твоего приложения на Render!
-const APP_URL = "https://miyzamchi.onrender.com/ping"; 
+const APP_URL = "https://miyzamchi.onrender.com/ping";
 
 setInterval(async () => {
     try {
