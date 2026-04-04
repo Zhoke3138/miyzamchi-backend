@@ -57,31 +57,30 @@ function isCasualMessage(message) {
     return false;
 }
 
-// --- ФУНКЦИЯ ВЕКТОРА С РОТАЦИЕЙ КЛЮЧЕЙ ---
+// --- ФУНКЦИЯ ВЕКТОРА ЧЕРЕЗ ОФИЦИАЛЬНЫЙ SDK (ЖЕЛЕЗОБЕТОННО) ---
 async function getEmbedding(text, retryCount = 0) {
     const activeKey = getActiveKey();
-    // ИСПРАВЛЕНО: убран лишний дефис перед embedding-001
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=' + activeKey;
+    const genAI = new GoogleGenerativeAI(activeKey);
 
     try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: { parts: [{ text: text.substring(0, 8000) }] } })
-        });
+        // SDK сам формирует правильные ссылки и JSON-тело
+        const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+        const result = await model.embedContent(text.substring(0, 8000));
+        
+        // Гарантированно отрезаем 768 значений, чтобы старая база Pinecone всё поняла
+        return result.embedding.values.slice(0, 768);
 
-        const data = await response.json();
-
-        if (response.status === 429 && retryCount < KEYS.length) {
-            console.log('Ключ ' + (currentKeyIndex + 1) + ' исчерпан. Ротируем...');
+    } catch (error) {
+        const errMsg = error.message || "";
+        
+        // Сохраняем твою логику ротации 6 ключей при перегрузке
+        if (errMsg.includes("429") && retryCount < KEYS.length) {
+            console.log('Ключ ' + (currentKeyIndex + 1) + ' исчерпан. Ротируем вектор...');
             currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
             return getEmbedding(text, retryCount + 1);
         }
-
-        if (!response.ok) throw new Error(data.error?.message || "Ошибка Embedding API");
-        return data.embedding.values.slice(0, 768);
-    } catch (error) {
-        console.error("Ошибка вектора:", error.message);
+        
+        console.error("Ошибка вектора SDK:", errMsg);
         throw error;
     }
 }
