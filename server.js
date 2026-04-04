@@ -33,20 +33,20 @@ function getActiveKey() {
     return KEYS[currentKeyIndex];
 }
 
-// Отдельная функция для агентов — не ломает логику getActiveKey()
+// Отдельная функция для агентов
 function getNextKey() {
     const key = KEYS[currentKeyIndex % KEYS.length];
     currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
     return key;
 }
 
-// --- ОПРЕДЕЛЕНИЕ ТИПА СООБЩЕНИЯ ---
+// --- ИСПРАВЛЕННОЕ ОПРЕДЕЛЕНИЕ ПРИВЕТСТВИЙ (Теперь работает с кириллицей) ---
 const GREETING_PATTERNS = [
-    /^(салам|саламатсызбы|сал|привет|хай|здравствуй|здравствуйте|добрый день|добрый вечер|доброе утро|hi|hello|hey|ку)\b/i,
-    /^(как дела|как ты|как жизнь|что делаешь|кандайсың|кандайсыз|жакшымысың|жакшымысыз)\b/i,
-    /^(спасибо|рахмат|благодарю|thanks|thank you)\b/i,
-    /^(пока|до свидания|кош бол|сау бол|bye|goodbye)\b/i,
-    /^(кто ты|что ты|что такое мыйзамчи|ты кто|расскажи о себе)\b/i,
+    /^(салам|саламатсызбы|сал|привет|хай|здравствуй|здравствуйте|добрый день|добрый вечер|доброе утро|hi|hello|hey|ку)(?:\s|[.,!?;]|$)/i,
+    /^(как дела|как ты|как жизнь|что делаешь|кандайсың|кандайсыз|жакшымысың|жакшымысыз)(?:\s|[.,!?;]|$)/i,
+    /^(спасибо|рахмат|благодарю|thanks|thank you)(?:\s|[.,!?;]|$)/i,
+    /^(пока|до свидания|кош бол|сау бол|bye|goodbye)(?:\s|[.,!?;]|$)/i,
+    /^(кто ты|что ты|что такое мыйзамчи|ты кто|расскажи о себе)(?:\s|[.,!?;]|$)/i,
 ];
 
 function isCasualMessage(message) {
@@ -57,43 +57,58 @@ function isCasualMessage(message) {
     return false;
 }
 
-// --- УМНАЯ ФУНКЦИЯ ВЕКТОРА ЧЕРЕЗ ОФИЦИАЛЬНЫЙ SDK С ФОЛБЭКОМ ---
+// --- УНИВЕРСАЛЬНЫЙ ЧИСТЫЙ FETCH ДЛЯ ВЕКТОРОВ (БЕЗ БАГОВ SDK) ---
 async function getEmbedding(text, retryCount = 0) {
     const activeKey = getActiveKey();
-    const genAI = new GoogleGenerativeAI(activeKey);
 
     try {
-        // Пытаемся использовать современный стандарт
-        const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
-        const result = await model.embedContent(text.substring(0, 8000));
+        // 1. Автоматически узнаем, какая модель доступна для твоего ключа
+        const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${activeKey}`;
+        const listRes = await fetch(listUrl);
+        const listData = await listRes.json();
         
-        // Гарантированно отрезаем 768 значений
-        return result.embedding.values.slice(0, 768);
+        let targetModel = "models/text-embedding-004"; // По умолчанию
+        
+        if (listData.models) {
+            const embedModel = listData.models.find(m => 
+                m.supportedGenerationMethods && 
+                m.supportedGenerationMethods.includes("embedContent")
+            );
+            if (embedModel) {
+                targetModel = embedModel.name; 
+            }
+        }
 
-    } catch (error) {
-        const errMsg = error.message || "";
-        
-        // Ротация при перегрузке (429 Too Many Requests)
-        if (errMsg.includes("429") && retryCount < KEYS.length) {
+        console.log(`🤖 Умный поиск вектора: Google выдал -> ${targetModel}`);
+
+        // 2. Отправляем прямой чистый HTTP-запрос
+        const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:embedContent?key=${activeKey}`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                model: targetModel,
+                content: { parts: [{ text: text.substring(0, 8000) }] } 
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.status === 429 && retryCount < KEYS.length) {
             console.log('Ключ ' + (currentKeyIndex + 1) + ' исчерпан. Ротируем вектор...');
             currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
             return getEmbedding(text, retryCount + 1);
         }
 
-        // Двойной бронежилет: Если сервер Google выдает 404, незаметно переключаемся на старую модель
-        if (errMsg.includes("404") || errMsg.includes("not found")) {
-            try {
-                console.log("text-embedding-004 не найден, переключаюсь на классический embedding-001...");
-                const fallbackModel = genAI.getGenerativeModel({ model: "embedding-001" });
-                const fallbackResult = await fallbackModel.embedContent(text.substring(0, 8000));
-                return fallbackResult.embedding.values.slice(0, 768);
-            } catch (fallbackError) {
-                console.error("Критическая ошибка: Обе векторные модели недоступны.", fallbackError.message);
-                throw fallbackError;
-            }
+        if (!response.ok) {
+            throw new Error(data.error?.message || JSON.stringify(data));
         }
-        
-        console.error("Ошибка вектора SDK:", errMsg);
+
+        // Отрезаем ровно 768 значений для базы
+        return data.embedding.values.slice(0, 768);
+
+    } catch (error) {
+        console.error("Глобальная ошибка вектора:", error.message);
         throw error;
     }
 }
@@ -193,7 +208,6 @@ const systemInstruction = [
     "- Игнорировать вопрос — всегда отвечай на суть, даже если нет точной нормы",
     "- Реагировать на приветствие как на юридический запрос"
 ].join("\n");
-
 
 const RESEARCHER_SYSTEM_PROMPT = `
 Ты — юридический аналитик-исследователь системы Мыйзамчи (Кыргызская Республика).
@@ -425,7 +439,7 @@ const CONSULTANT_SYSTEM_PROMPT = `
 - По коммунальным услугам — претензия в УК/ТСЖ, затем жилинспекция
 `.trim();
 
-// Однократный (не стриминговый) вызов  для агентов
+// Однократный вызов  для агентов
 async function callOnce(apiKey, systemPrompt, userPrompt) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
@@ -483,16 +497,13 @@ async function handleFast(message, history, contextText, res) {
 }
 
 async function handleThinking(message, history, matches, res) {
-    // Формируем сырой контекст
     const rawContext = matches.map((match, i) => {
         const md = match.metadata || {};
         return `[НПА: ${md.doc_title} | ${md.article_title}]\n${md.text}`;
     }).join('\n\n---\n\n');
 
-    // ── СТАТУС 1
     sendStatus(res, `Поиск НПА... найдено ${matches.length} статей`, '🔍');
 
-    // ══ RESEARCHER AGENT
     let filteredContext = rawContext;
     let filteredLines = matches.length;
 
@@ -520,18 +531,14 @@ async function handleThinking(message, history, matches, res) {
 
     console.log(`[THINKING] Researcher: ${matches.length} → ${filteredLines} статей | Consultant: ключ #${currentKeyIndex}`);
 
-    // ── СТАТУС 3
     sendStatus(res, 'Юридический анализ...', '🧠');
     await new Promise(r => setTimeout(r, 600));
 
-    // ── СТАТУС 4
     sendStatus(res, 'Проверка коллизий...', '⚖️');
     await new Promise(r => setTimeout(r, 600));
 
-    // ── СТАТУС 5
     sendStatus(res, 'Написание вердикта...', '✍️');
 
-    // ══ CONSULTANT AGENT
     try {
         const consultantKey = getNextKey();
         const consultantPrompt =
@@ -542,11 +549,10 @@ async function handleThinking(message, history, matches, res) {
             consultantKey,
             CONSULTANT_SYSTEM_PROMPT,
             consultantPrompt,
-            [], // история не передается агенту
+            [], 
             res
         );
 
-        // Источники
         const sources = matches.slice(0, 5).map(m => `${m.metadata.doc_title} — ${m.metadata.article_title}`);
         res.write(`data: ${JSON.stringify({ sources })}\n\n`);
 
@@ -566,7 +572,6 @@ app.post('/api/chat', async (req, res) => {
 
         console.log(`\nЗапрос: "${message}" | Режим: ${mode}`);
 
-        // SSE заголовки
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
@@ -592,6 +597,7 @@ app.post('/api/chat', async (req, res) => {
         else if (mode === 'thinking') {
             const casual = isCasualMessage(message);
             if (casual) {
+                console.log("Режим: приветствие — Pinecone пропущен (Thinking)");
                 await handleFast(message, history, '', res);
             } else {
                 const queryEmbedding = await getEmbedding(message);
@@ -606,7 +612,7 @@ app.post('/api/chat', async (req, res) => {
     } catch (error) {
         console.error("Глобальная ошибка сервера:", error);
         if (!res.headersSent) {
-            res.write(`data: ${JSON.stringify({ text: 'Произошла ошибка. Попробуйте ещё раз.' })}\n\n`);
+            res.write(`data: ${JSON.stringify({ text: 'Произошла ошибка сервера. Пожалуйста, повторите запрос.' })}\n\n`);
             res.write('data: [DONE]\n\n');
         }
         res.end();
