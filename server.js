@@ -60,7 +60,7 @@ function isCasualMessage(message) {
 // --- ФУНКЦИЯ ВЕКТОРА С РОТАЦИЕЙ КЛЮЧЕЙ ---
 async function getEmbedding(text, retryCount = 0) {
     const activeKey = getActiveKey();
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=' + activeKey;
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/-embedding-001:embedContent?key=' + activeKey;
 
     try {
         const response = await fetch(url, {
@@ -412,8 +412,8 @@ const CONSULTANT_SYSTEM_PROMPT = `
 - По коммунальным услугам — претензия в УК/ТСЖ, затем жилинспекция
 `.trim();
 
-// Однократный (не стриминговый) вызов Gemini для агентов
-async function callGeminiOnce(apiKey, systemPrompt, userPrompt) {
+// Однократный (не стриминговый) вызов  для агентов
+async function callOnce(apiKey, systemPrompt, userPrompt) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
         model: "gemini-3-flash-preview",
