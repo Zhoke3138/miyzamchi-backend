@@ -60,7 +60,8 @@ function isCasualMessage(message) {
 // --- ФУНКЦИЯ ВЕКТОРА С РОТАЦИЕЙ КЛЮЧЕЙ ---
 async function getEmbedding(text, retryCount = 0) {
     const activeKey = getActiveKey();
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/-embedding-001:embedContent?key=' + activeKey;
+    // ИСПРАВЛЕНО: убран лишний дефис перед embedding-001
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key=' + activeKey;
 
     try {
         const response = await fetch(url, {
@@ -491,7 +492,7 @@ async function handleThinking(message, history, matches, res) {
             `Вопрос пользователя: "${message}"\n\n` +
             `Статьи НПА для анализа (${matches.length} шт.):\n\n${rawContext}`;
 
-        filteredContext = await callGeminiOnce(
+        filteredContext = await callOnce(
             researcherKey,
             RESEARCHER_SYSTEM_PROMPT,
             researcherPrompt
