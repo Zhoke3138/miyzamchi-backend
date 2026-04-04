@@ -57,27 +57,40 @@ function isCasualMessage(message) {
     return false;
 }
 
-// --- ФУНКЦИЯ ВЕКТОРА ЧЕРЕЗ ОФИЦИАЛЬНЫЙ SDK (ЖЕЛЕЗОБЕТОННО) ---
+// --- УМНАЯ ФУНКЦИЯ ВЕКТОРА ЧЕРЕЗ ОФИЦИАЛЬНЫЙ SDK С ФОЛБЭКОМ ---
 async function getEmbedding(text, retryCount = 0) {
     const activeKey = getActiveKey();
     const genAI = new GoogleGenerativeAI(activeKey);
 
     try {
-        // SDK сам формирует правильные ссылки и JSON-тело
+        // Пытаемся использовать современный стандарт
         const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
         const result = await model.embedContent(text.substring(0, 8000));
         
-        // Гарантированно отрезаем 768 значений, чтобы старая база Pinecone всё поняла
+        // Гарантированно отрезаем 768 значений
         return result.embedding.values.slice(0, 768);
 
     } catch (error) {
         const errMsg = error.message || "";
         
-        // Сохраняем твою логику ротации 6 ключей при перегрузке
+        // Ротация при перегрузке (429 Too Many Requests)
         if (errMsg.includes("429") && retryCount < KEYS.length) {
             console.log('Ключ ' + (currentKeyIndex + 1) + ' исчерпан. Ротируем вектор...');
             currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
             return getEmbedding(text, retryCount + 1);
+        }
+
+        // Двойной бронежилет: Если сервер Google выдает 404, незаметно переключаемся на старую модель
+        if (errMsg.includes("404") || errMsg.includes("not found")) {
+            try {
+                console.log("text-embedding-004 не найден, переключаюсь на классический embedding-001...");
+                const fallbackModel = genAI.getGenerativeModel({ model: "embedding-001" });
+                const fallbackResult = await fallbackModel.embedContent(text.substring(0, 8000));
+                return fallbackResult.embedding.values.slice(0, 768);
+            } catch (fallbackError) {
+                console.error("Критическая ошибка: Обе векторные модели недоступны.", fallbackError.message);
+                throw fallbackError;
+            }
         }
         
         console.error("Ошибка вектора SDK:", errMsg);
