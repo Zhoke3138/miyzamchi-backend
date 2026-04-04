@@ -416,7 +416,7 @@ const CONSULTANT_SYSTEM_PROMPT = `
 async function callGeminiOnce(apiKey, systemPrompt, userPrompt) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+        model: "gemini-3-flash-preview",
         systemInstruction: systemPrompt
     });
     const result = await model.generateContent(userPrompt);
@@ -427,7 +427,7 @@ async function callGeminiOnce(apiKey, systemPrompt, userPrompt) {
 async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, res) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+        model: "gemini-3-flash-preview",
         systemInstruction: systemPrompt
     });
     const chat = model.startChat({ history: history || [] });
@@ -457,7 +457,7 @@ async function handleFast(message, history, contextText, res) {
 
     const genAI = new GoogleGenerativeAI(getActiveKey());
     const chatModel = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+        model: "gemini-3-flash-preview",
         systemInstruction: systemInstruction
     });
     const chat = chatModel.startChat({ history: cleanHistory });
@@ -570,7 +570,7 @@ app.post('/api/chat', async (req, res) => {
                 if (matches.length > 0) {
                     contextText = matches.map((match, i) => {
                         const md = match.metadata || {};
-                        return `[Источник ${i+1}: ${md.doc_title} | ${md.article_title}]\nТекст статьи:\n${md.text}`;
+                        return `[Источник ${i + 1}: ${md.doc_title} | ${md.article_title}]\nТекст статьи:\n${md.text}`;
                     }).join('\n\n');
                 }
             }
