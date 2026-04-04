@@ -61,7 +61,7 @@ function isCasualMessage(message) {
 async function getEmbedding(text, retryCount = 0) {
     const activeKey = getActiveKey();
     // ИСПРАВЛЕНО: убран лишний дефис перед embedding-001
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key=' + activeKey;
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=' + activeKey;
 
     try {
         const response = await fetch(url, {
