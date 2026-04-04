@@ -416,7 +416,7 @@ const CONSULTANT_SYSTEM_PROMPT = `
 async function callOnce(apiKey, systemPrompt, userPrompt) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash",
         systemInstruction: systemPrompt
     });
     const result = await model.generateContent(userPrompt);
@@ -427,7 +427,7 @@ async function callOnce(apiKey, systemPrompt, userPrompt) {
 async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, res) {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash",
         systemInstruction: systemPrompt
     });
     const chat = model.startChat({ history: history || [] });
@@ -457,7 +457,7 @@ async function handleFast(message, history, contextText, res) {
 
     const genAI = new GoogleGenerativeAI(getActiveKey());
     const chatModel = genAI.getGenerativeModel({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash",
         systemInstruction: systemInstruction
     });
     const chat = chatModel.startChat({ history: cleanHistory });
