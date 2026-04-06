@@ -805,7 +805,7 @@ app.listen(PORT, () => {
 });
 
 // --- САМО-ПИНАТЕЛЬ ---
-const APP_URL = "https://miyzamchi.onrender.com/ping";
+const APP_URL = "https://miyzamchi-backend.onrender.com/ping";
 
 setInterval(async () => {
     try {
