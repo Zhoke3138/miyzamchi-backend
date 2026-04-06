@@ -47,6 +47,7 @@ const GREETING_PATTERNS = [
     /^(спасибо|рахмат|благодарю|thanks|thank you)(?:\s|[.,!?;]|$)/i,
     /^(пока|до свидания|кош бол|сау бол|bye|goodbye)(?:\s|[.,!?;]|$)/i,
     /^(кто ты|что ты|что такое мыйзамчи|ты кто|расскажи о себе|кто тебя создал|кто твой создатель|кто разработчик|чей это проект)(?:\s|[.,!?;]|$)/i,
+    /^(продолжай|дальше|пиши дальше|еще|ещё|улан|улантуу|continue|go on)(?:\s|[.,!?;]|$)/i,
 ];
 
 function isCasualMessage(message) {
@@ -666,6 +667,7 @@ async function handleFast(message, history, contextText, res) {
 // РЕЖИМ THINKING
 // ============================================================
 async function handleThinking(message, history, matches, res) {
+    const cleanHistory = sanitizeHistory(history);
     const rawContext = matches.map((match) => {
         const md = match.metadata || {};
         return `[НПА: ${md.doc_title} | ${md.article_title}]\n${md.text}`;
@@ -718,7 +720,7 @@ async function handleThinking(message, history, matches, res) {
             consultantKey,
             CONSULTANT_SYSTEM_PROMPT,
             consultantPrompt,
-            [],
+            cleanHistory,
             res
         );
 
@@ -732,7 +734,7 @@ async function handleThinking(message, history, matches, res) {
         const fallbackKey = getNextKey();
         const fallbackPrompt =
             `Релевантный контекст законов:\n${filteredContext}\n\nВопрос пользователя: ${message}`;
-        await streamGeminiResponse(fallbackKey, systemInstruction, fallbackPrompt, [], res);
+        await streamGeminiResponse(fallbackKey, systemInstruction, fallbackPrompt, cleanHistory, res);
     }
 }
 
@@ -758,7 +760,7 @@ app.post('/api/chat', async (req, res) => {
                 console.log("Режим: приветствие — Pinecone пропущен");
             } else {
                 const queryEmbedding = await getEmbedding(message);
-                const matches = await searchPinecone(queryEmbedding, 3);
+                const matches = await searchPinecone(queryEmbedding, 8);
                 if (matches.length > 0) {
                     contextText = matches.map((match, i) => {
                         const md = match.metadata || {};
@@ -775,7 +777,7 @@ app.post('/api/chat', async (req, res) => {
                 await handleFast(message, history, '', res);
             } else {
                 const queryEmbedding = await getEmbedding(message);
-                const matches = await searchPinecone(queryEmbedding, 15);
+                const matches = await searchPinecone(queryEmbedding, 25);
                 await handleThinking(message, history, matches, res);
             }
         }
