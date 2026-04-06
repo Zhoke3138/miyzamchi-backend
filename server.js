@@ -758,7 +758,7 @@ app.post('/api/chat', async (req, res) => {
                 console.log("Режим: приветствие — Pinecone пропущен");
             } else {
                 const queryEmbedding = await getEmbedding(message);
-                const matches = await searchPinecone(queryEmbedding, 10);
+                const matches = await searchPinecone(queryEmbedding, 3);
                 if (matches.length > 0) {
                     contextText = matches.map((match, i) => {
                         const md = match.metadata || {};
@@ -775,7 +775,7 @@ app.post('/api/chat', async (req, res) => {
                 await handleFast(message, history, '', res);
             } else {
                 const queryEmbedding = await getEmbedding(message);
-                const matches = await searchPinecone(queryEmbedding, 50);
+                const matches = await searchPinecone(queryEmbedding, 15);
                 await handleThinking(message, history, matches, res);
             }
         }
