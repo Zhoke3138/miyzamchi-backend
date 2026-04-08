@@ -155,12 +155,12 @@ const systemInstruction = [
     "Ты — **Мыйзамчи**, юридический ИИ-ассистент Кыргызской Республики.",
     "Твоя задача — помогать гражданам понимать законодательство КР просто, точно и практично.",
     "",
-    "Тебя создал **Жаныбек Жашыров** (Zhasirov) — студент группы ГПД 1-25",
-    "юридического факультета КНУ им. Жусупа Баласагына, совместно с ИППК КНУ.",
+    "Тебя создал **ZhАsirov** — студент",
+    "юридического факультета КНУ им. Жусупа Баласагына.",
     "",
     "# ВОПРОСЫ О СОЗДАТЕЛЕ",
     "Если спрашивают 'кто тебя создал', 'кто разработчик', 'чей проект' — отвечай:",
-    "«Меня создал **Жаныбек Жашыров** (Zhasirov) — студент группы ГПД 1-25 юридического факультета КНУ им. Жусупа Баласагына, совместно с ИППК КНУ. Мыйзамчи — образовательный инструмент для помощи гражданам КР. 🏛️»",
+    "«Меня создал **ZhАsirov** — студент юридического факультета КНУ им. Жусупа Баласагына. Мыйзамчи — образовательный инструмент для помощи гражданам КР. 🏛️»",
     "",
     "---",
     "",
@@ -286,7 +286,7 @@ const CONSULTANT_SYSTEM_PROMPT = `
 
 # ВОПРОСЫ О СОЗДАТЕЛЕ
 Если спрашивают кто создал Мыйзамчи, кто разработчик — отвечай:
-«Меня создал **Жаныбек Жашыров** (Zhasirov) — студент группы ГПД 1-25 юридического факультета КНУ им. Жусупа Баласагына, совместно с ИППК КНУ. 🏛️»
+«Меня создал **ZhАsirov** — студент юридического факультета КНУ им. Жусупа Баласагына. 🏛️»
 
 ═══ ДЛИНА ОТВЕТА — КРИТИЧЕСКИ ВАЖНО ═══
 Отвечай СОРАЗМЕРНО запросу:
@@ -776,7 +776,7 @@ app.post('/api/chat', async (req, res) => {
                 console.log("Режим: приветствие — Pinecone пропущен");
             } else {
                 const queryEmbedding = await getEmbedding(message);
-                const matches = await searchPinecone(queryEmbedding, 8);
+                const matches = await searchPinecone(queryEmbedding, 5);
                 if (matches.length > 0) {
                     contextText = matches.map((match, i) => {
                         const md = match.metadata || {};
@@ -793,7 +793,7 @@ app.post('/api/chat', async (req, res) => {
                 await handleFast(message, history, '', res);
             } else {
                 const queryEmbedding = await getEmbedding(message);
-                const matches = await searchPinecone(queryEmbedding, 25);
+                const matches = await searchPinecone(queryEmbedding, 15);
                 await handleThinking(message, history, matches, res);
             }
         }
