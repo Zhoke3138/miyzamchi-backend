@@ -647,12 +647,14 @@ async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, r
     }
 }
 
+// 🛡️ ОБНОВЛЕНО: Лимит истории до 10 сообщений
 function sanitizeHistory(history) {
-    return Array.isArray(history)
+    const clean = Array.isArray(history)
         ? history
             .filter(msg => msg?.role && msg?.parts?.[0]?.text?.trim())
             .map(msg => ({ role: msg.role, parts: [{ text: msg.parts[0].text }] }))
         : [];
+    return clean.slice(-10); // Берем только 10 последних реплик
 }
 
 // ============================================================
