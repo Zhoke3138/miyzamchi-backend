@@ -757,14 +757,24 @@ async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, r
     }
 }
 
-// 🛡️ ОБНОВЛЕНО: Лимит истории до 10 сообщений
+// 🛡️ ОБНОВЛЕНО: Лимит истории до 10 сообщений с гарантией первого сообщения от 'user'
 function sanitizeHistory(history) {
-    const clean = Array.isArray(history)
-        ? history
-            .filter(msg => msg?.role && msg?.parts?.[0]?.text?.trim())
-            .map(msg => ({ role: msg.role, parts: [{ text: msg.parts[0].text }] }))
-        : [];
-    return clean.slice(-10); // Берем только 10 последних реплик
+    if (!Array.isArray(history)) return [];
+
+    // 1. Фильтруем пустые сообщения
+    let clean = history
+        .filter(msg => msg?.role && msg?.parts?.[0]?.text?.trim())
+        .map(msg => ({ role: msg.role, parts: [{ text: msg.parts[0].text }] }));
+
+    // 2. Обрезаем до 10 последних сообщений
+    clean = clean.slice(-10);
+
+    // 3. ЖЕЛЕЗОБЕТОННАЯ ПРОВЕРКА: Удаляем первое сообщение, если это не 'user'
+    while (clean.length > 0 && clean[0].role !== 'user') {
+        clean.shift();
+    }
+
+    return clean;
 }
 
 // ============================================================
