@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
+app.set('trust proxy', 1); // Доверие к прокси Render
 
 // --- HELMET (безопасность HTTP-заголовков) ---
 app.use(helmet({
@@ -160,9 +161,9 @@ function isAcademicRequest(message) {
 
 // --- КЭШИРОВАНИЕ ЭМБЕДДИНГОВ ---
 const embeddingCache = new Map();
-const EMBEDDING_MODEL = "models/text-embedding-004";
+const EMBEDDING_MODEL = "models/gemini-embedding-001"; // НОВАЯ АКТУАЛЬНАЯ МОДЕЛЬ
 
-// --- УНИВЕРСАЛЬНЫЙ FETCH ДЛЯ ВЕКТОРОВ (REST API) ---
+// --- УНИВЕРСАЛЬНЫЙ FETCH ДЛЯ ВЕКТОРОВ ---
 async function getEmbedding(text, retryCount = 0) {
     const cacheKey = text.substring(0, 8000);
     if (embeddingCache.has(cacheKey)) {
@@ -180,7 +181,8 @@ async function getEmbedding(text, retryCount = 0) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 model: EMBEDDING_MODEL,
-                content: { parts: [{ text: text.substring(0, 8000) }] }
+                content: { parts: [{ text: text.substring(0, 8000) }] },
+                outputDimensionality: 768 // КРИТИЧНО: сжимаем до 768 для совместимости с текущим Pinecone!
             })
         });
 
@@ -198,9 +200,10 @@ async function getEmbedding(text, retryCount = 0) {
             throw new Error(data.error?.message || JSON.stringify(data));
         }
 
+        // Мы запрашиваем 768 размерность, поэтому slice(0, 768) сработает идеально
         const embedding = data.embedding.values.slice(0, 768);
 
-        // LRU Cache: удаляем самую старую запись, если превышен лимит
+        // Лимит кэша (LRU)
         if (embeddingCache.size >= 200) {
             embeddingCache.delete(embeddingCache.keys().next().value);
         }
@@ -757,19 +760,17 @@ async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, r
     }
 }
 
-// 🛡️ ОБНОВЛЕНО: Лимит истории до 10 сообщений с гарантией первого сообщения от 'user'
+// 🛡️ ОБНОВЛЕНО: Лимит истории с гарантией первого сообщения от 'user'
 function sanitizeHistory(history) {
     if (!Array.isArray(history)) return [];
 
-    // 1. Фильтруем пустые сообщения
     let clean = history
         .filter(msg => msg?.role && msg?.parts?.[0]?.text?.trim())
         .map(msg => ({ role: msg.role, parts: [{ text: msg.parts[0].text }] }));
 
-    // 2. Обрезаем до 10 последних сообщений
     clean = clean.slice(-10);
 
-    // 3. ЖЕЛЕЗОБЕТОННАЯ ПРОВЕРКА: Удаляем первое сообщение, если это не 'user'
+    // ЖЕЛЕЗОБЕТОННАЯ ПРОВЕРКА: Удаляем первые сообщения, пока не встретим 'user'
     while (clean.length > 0 && clean[0].role !== 'user') {
         clean.shift();
     }
