@@ -656,26 +656,40 @@ function sanitizeHistory(history) {
 }
 
 // ============================================================
-// РЕЖИМ FAST
+// РЕЖИМ FAST (Теперь с бронежилетом от 503 ошибок)
 // ============================================================
-async function handleFast(message, history, contextText, res) {
+async function handleFast(message, history, contextText, res, retryCount = 0) {
     const promptText = contextText
         ? `Релевантный контекст законов:\n${contextText}\n\nВопрос пользователя: ${message}`
         : `Сообщение пользователя: ${message}`;
 
     const cleanHistory = sanitizeHistory(history);
 
-    const genAI = new GoogleGenerativeAI(getActiveKey());
-    const chatModel = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
-        systemInstruction: systemInstruction
-    });
-    const chat = chatModel.startChat({ history: cleanHistory });
-    const result = await chat.sendMessageStream(promptText);
+    try {
+        const currentKey = getNextKey();
+        const genAI = new GoogleGenerativeAI(currentKey);
+        const chatModel = genAI.getGenerativeModel({
+            model: "gemini-2.5-flash",
+            systemInstruction: systemInstruction
+        });
+        const chat = chatModel.startChat({ history: cleanHistory });
+        const result = await chat.sendMessageStream(promptText);
 
-    for await (const chunk of result.stream) {
-        const chunkText = chunk.text();
-        if (chunkText) res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+        for await (const chunk of result.stream) {
+            const chunkText = chunk.text();
+            if (chunkText) res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+        }
+    } catch (error) {
+        console.error(`[FAST MODE] Ошибка Google (попытка ${retryCount + 1}):`, error.message);
+
+        if (retryCount >= KEYS.length) {
+            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Извините, серверы нейросети сейчас перегружены из-за высокого спроса. Пожалуйста, повторите свой вопрос через минуту.' })}\n\n`);
+            return;
+        }
+
+        await new Promise(r => setTimeout(r, 1500));
+        console.log(`[FAST MODE] Делаю повторную попытку...`);
+        return handleFast(message, history, contextText, res, retryCount + 1);
     }
 }
 
