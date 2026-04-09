@@ -886,10 +886,14 @@ async function handleThinking(message, history, matches, res) {
 
     } catch (err) {
         console.error('Consultant Agent упал, fallback на Fast:', err.message);
-        const fallbackKey = getNextKey();
-        const fallbackPrompt =
-            `Релевантный контекст законов:\n${filteredContext}\n\nВопрос пользователя: ${message}`;
-        await streamGeminiResponse(fallbackKey, systemInstruction, fallbackPrompt, cleanHistory, res);
+        try {
+            const fallbackKey = getNextKey();
+            const fallbackPrompt = `Релевантный контекст законов:\n${filteredContext}\n\nВопрос пользователя: ${message}`;
+            await streamGeminiResponse(fallbackKey, systemInstruction, fallbackPrompt, cleanHistory, res);
+        } catch (fallbackErr) {
+            console.error('Fallback тоже упал:', fallbackErr.message);
+            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Извините, серверы нейросети Google сейчас сильно перегружены. Пожалуйста, подождите пару минут и попробуйте снова.' })}\n\n`);
+        }
     }
 }
 
@@ -942,11 +946,10 @@ app.post('/api/chat', async (req, res) => {
         res.end();
 
     } catch (error) {
-        console.error("Глобальная ошибка сервера:", error);
-        if (!res.headersSent) {
-            res.write(`data: ${JSON.stringify({ text: 'Произошла ошибка сервера. Повторите запрос.' })}\n\n`);
-            res.write('data: [DONE]\n\n');
-        }
+        console.error("Глобальная ошибка сервера:", error.message);
+        // Отправляем сообщение об ошибке независимо от того, были ли отправлены заголовки
+        res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Произошла системная ошибка (серверы нейросети недоступны). Пожалуйста, повторите запрос.' })}\n\n`);
+        res.write('data: [DONE]\n\n');
         res.end();
     }
 });
