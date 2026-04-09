@@ -13,21 +13,9 @@ app.use(helmet({
     crossOriginResourcePolicy: false
 }));
 
-// --- STRICT CORS ---
-const allowedOrigins = [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'https://miyzamchi.netlify.app'
-];
-app.use(cors({
-    origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(new Error('CORS blocked'));
-        }
-    }
-}));
+// --- CORS (Открыт временно, пока нет финального домена) ---
+app.use(cors());
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ limit: '2mb', extended: true }));
 
@@ -148,26 +136,20 @@ const GREETING_PATTERNS = [
 ];
 
 function isCasualMessage(message) {
-    // Убираем лишние пробелы по краям и переводим в нижний регистр для надежности
     const cleaned = message.trim().toLowerCase();
     
-    // 1. КОМАНДА ПРОДОЛЖЕНИЯ: Если начинается с этих слов — сразу пропускаем Pinecone
-    // Разрешаем писать "продолжай писать" или "продолжай часть 2"
     if (/^(продолжай|дальше|пиши дальше|еще|ещё|улан|улантуу|continue|go on)/.test(cleaned)) {
         return true; 
     }
 
-    // 2. ДЛИНА: Если сообщение длиннее 60 символов — это точно юридический запрос
     if (cleaned.length > 60) {
         return false;
     }
 
-    // 3. ЖЕЛЕЗОБЕТОННЫЙ ФИЛЬТР: Если есть цифры (122) или юридические слова — 100% включаем базу Pinecone
     if (/\d/.test(cleaned) || /(статья|берене|закон|мыйзам|кодекс|ук|гк|тк|ск|кр|суд|сот)/.test(cleaned)) {
         return false;
     }
 
-    // 4. Проверяем точное совпадение с чистыми приветствиями
     return GREETING_PATTERNS.some(pattern => pattern.test(cleaned));
 }
 
@@ -776,9 +758,9 @@ async function handleFast(message, history, contextText, res, retryCount = 0) {
         : `Сообщение пользователя: ${message}`;
 
     const cleanHistory = sanitizeHistory(history);
+    const currentKey = getNextKey(); // ⚡ ИСПРАВЛЕНИЕ БАГА: Вынесено за пределы try
 
     try {
-        const currentKey = getNextKey();
         const genAI = new GoogleGenerativeAI(currentKey);
         const chatModel = genAI.getGenerativeModel({
             model: "gemini-2.5-flash",
