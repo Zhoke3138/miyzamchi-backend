@@ -734,14 +734,25 @@ const ACADEMIC_PROMPT_ADDON = `
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ============================================================
 
-async function callOnce(apiKey, systemPrompt, userPrompt) {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
-        systemInstruction: systemPrompt
-    });
-    const result = await model.generateContent(userPrompt);
-    return result.response.text();
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function callOnce(apiKey, systemPrompt, userPrompt, retryCount = 0) {
+    try {
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({
+            model: "gemini-2.5-flash",
+            systemInstruction: systemPrompt
+        });
+        const result = await model.generateContent(userPrompt);
+        return result.response.text();
+    } catch (error) {
+        if (retryCount < 2) {
+            console.warn(`[callOnce] Ошибка. Ждем 2с и повторяем...`);
+            await delay(2000);
+            return callOnce(getNextKey(), systemPrompt, userPrompt, retryCount + 1);
+        }
+        throw error;
+    }
 }
 
 async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, res) {
@@ -857,6 +868,8 @@ async function handleThinking(message, history, matches, res) {
 
     console.log(`[THINKING] Researcher: ${matches.length} → ${filteredLines} статей | ключ #${currentKeyIndex}`);
 
+    await delay(2000); // ⚡ Пауза 2 секунды перед вторым тяжелым запросом
+
     sendStatus(res, 'Юридический анализ...', '🧠');
     sendStatus(res, 'Проверка коллизий...', '⚖️');
     sendStatus(res, 'Написание вердикта...', '✍️');
@@ -885,14 +898,15 @@ async function handleThinking(message, history, matches, res) {
         res.write(`data: ${JSON.stringify({ sources })}\n\n`);
 
     } catch (err) {
-        console.error('Consultant Agent упал, fallback на Fast:', err.message);
+        console.error('Consultant Agent упал:', err.message);
+        await delay(2000); // ⚡ Пауза перед Fallback
         try {
             const fallbackKey = getNextKey();
             const fallbackPrompt = `Релевантный контекст законов:\n${filteredContext}\n\nВопрос пользователя: ${message}`;
             await streamGeminiResponse(fallbackKey, systemInstruction, fallbackPrompt, cleanHistory, res);
         } catch (fallbackErr) {
             console.error('Fallback тоже упал:', fallbackErr.message);
-            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Извините, серверы нейросети Google сейчас сильно перегружены. Пожалуйста, подождите пару минут и попробуйте снова.' })}\n\n`);
+            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Извините, серверы нейросети сейчас перегружены. Пожалуйста, подождите минуту и попробуйте снова.' })}\n\n`);
         }
     }
 }
