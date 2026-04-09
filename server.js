@@ -158,12 +158,10 @@ function isAcademicRequest(message) {
     return /(курсов[уа]ю|курсовая|реферат|эссе|диплом|дипломн|срс|\bсрс\b|научн[уа]ю?\s*стать)/i.test(message);
 }
 
-// --- КЭШИРОВАНИЕ ЭМБЕДДИНГОВ (LRU, max 200) ---
+// --- КЭШИРОВАНИЕ ЭМБЕДДИНГОВ ---
 const embeddingCache = new Map();
-const EMBEDDING_CACHE_MAX = 200;
-const EMBEDDING_MODEL = "models/text-embedding-004";
 
-// --- УНИВЕРСАЛЬНЫЙ FETCH ДЛЯ ВЕКТОРОВ ---
+// --- УНИВЕРСАЛЬНАЯ ГЕНЕРАЦИЯ ВЕКТОРОВ (ЧЕРЕЗ SDK) ---
 async function getEmbedding(text, retryCount = 0) {
     const cacheKey = text.substring(0, 8000);
     if (embeddingCache.has(cacheKey)) {
@@ -175,19 +173,25 @@ async function getEmbedding(text, retryCount = 0) {
     const activeKey = getActiveKey();
 
     try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/${EMBEDDING_MODEL}:embedContent?key=${activeKey}`;
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: EMBEDDING_MODEL,
-                content: { parts: [{ text: text.substring(0, 8000) }] }
-            })
-        });
+        // Используем официальный SDK вместо ручного fetch
+        const genAI = new GoogleGenerativeAI(activeKey);
+        const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
 
-        const data = await response.json();
+        const result = await model.embedContent(text.substring(0, 8000));
+        const embedding = result.embedding.values.slice(0, 768);
 
-        if (response.status === 429 && retryCount < KEYS.length) {
+        embeddingCache.set(cacheKey, embedding);
+
+        // LRU Cache: удаляем самую старую запись, если превышен лимит
+        if (embeddingCache.size > 200) {
+            embeddingCache.delete(embeddingCache.keys().next().value);
+        }
+
+        return embedding;
+
+    } catch (error) {
+        // Перехват 429 ошибки для умной ротации ключей
+        if (error.message.includes('429') && retryCount < KEYS.length) {
             console.log('Ключ ' + (currentKeyIndex + 1) + ' исчерпан. Ротируем...');
             serverStats.apiErrors++;
             blockKey(activeKey);
@@ -195,19 +199,7 @@ async function getEmbedding(text, retryCount = 0) {
             return getEmbedding(text, retryCount + 1);
         }
 
-        if (!response.ok) {
-            throw new Error(data.error?.message || JSON.stringify(data));
-        }
-
-        const embedding = data.embedding.values.slice(0, 768);
-        if (embeddingCache.size >= EMBEDDING_CACHE_MAX) {
-            embeddingCache.delete(embeddingCache.keys().next().value);
-        }
-        embeddingCache.set(cacheKey, embedding);
-        return embedding;
-
-    } catch (error) {
-        console.error("Ошибка вектора:", error.message);
+        console.error("Ошибка вектора SDK:", error.message);
         throw error;
     }
 }
