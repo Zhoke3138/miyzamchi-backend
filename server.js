@@ -160,8 +160,9 @@ function isAcademicRequest(message) {
 
 // --- КЭШИРОВАНИЕ ЭМБЕДДИНГОВ ---
 const embeddingCache = new Map();
+const EMBEDDING_MODEL = "models/text-embedding-004";
 
-// --- УНИВЕРСАЛЬНАЯ ГЕНЕРАЦИЯ ВЕКТОРОВ (ЧЕРЕЗ SDK) ---
+// --- УНИВЕРСАЛЬНЫЙ FETCH ДЛЯ ВЕКТОРОВ (REST API) ---
 async function getEmbedding(text, retryCount = 0) {
     const cacheKey = text.substring(0, 8000);
     if (embeddingCache.has(cacheKey)) {
@@ -173,25 +174,19 @@ async function getEmbedding(text, retryCount = 0) {
     const activeKey = getActiveKey();
 
     try {
-        // Используем официальный SDK вместо ручного fetch
-        const genAI = new GoogleGenerativeAI(activeKey);
-        const model = genAI.getGenerativeModel({ model: "text-embedding-004" });
+        const url = `https://generativelanguage.googleapis.com/v1beta/${EMBEDDING_MODEL}:embedContent?key=${activeKey}`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: EMBEDDING_MODEL,
+                content: { parts: [{ text: text.substring(0, 8000) }] }
+            })
+        });
 
-        const result = await model.embedContent(text.substring(0, 8000));
-        const embedding = result.embedding.values.slice(0, 768);
+        const data = await response.json();
 
-        embeddingCache.set(cacheKey, embedding);
-
-        // LRU Cache: удаляем самую старую запись, если превышен лимит
-        if (embeddingCache.size > 200) {
-            embeddingCache.delete(embeddingCache.keys().next().value);
-        }
-
-        return embedding;
-
-    } catch (error) {
-        // Перехват 429 ошибки для умной ротации ключей
-        if (error.message.includes('429') && retryCount < KEYS.length) {
+        if (response.status === 429 && retryCount < KEYS.length) {
             console.log('Ключ ' + (currentKeyIndex + 1) + ' исчерпан. Ротируем...');
             serverStats.apiErrors++;
             blockKey(activeKey);
@@ -199,7 +194,22 @@ async function getEmbedding(text, retryCount = 0) {
             return getEmbedding(text, retryCount + 1);
         }
 
-        console.error("Ошибка вектора SDK:", error.message);
+        if (!response.ok) {
+            throw new Error(data.error?.message || JSON.stringify(data));
+        }
+
+        const embedding = data.embedding.values.slice(0, 768);
+
+        // LRU Cache: удаляем самую старую запись, если превышен лимит
+        if (embeddingCache.size >= 200) {
+            embeddingCache.delete(embeddingCache.keys().next().value);
+        }
+
+        embeddingCache.set(cacheKey, embedding);
+        return embedding;
+
+    } catch (error) {
+        console.error("Ошибка вектора:", error.message);
         throw error;
     }
 }
