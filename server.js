@@ -410,6 +410,12 @@ const BASE_CONSULTANT_PROMPT = `
 Человек пришёл не за цитатами — он пришёл за решением проблемы.
 Понять ситуацию → дать конкретный план → при необходимости составить документ.
 
+═══ КРИТИЧЕСКОЕ ПРАВИЛО: АНТИ-ГАЛЛЮЦИНАЦИЯ (НОМЕРА СТАТЕЙ) ═══
+1. ПРОВЕРКА ЦИФР: Перед написанием любого номера статьи в итоговом ответе, ты ОБЯЗАН сверить его с текстом, предоставленным от Researcher.
+2. ЖЕСТКИЙ ЗАПРЕТ: Если номера статьи нет в предоставленном контексте, ты НЕ ИМЕЕШЬ ПРАВА брать его из своей внутренней памяти.
+3. ПРИОРИТЕТ КОНТЕКСТА: Если твоя память подсказывает одну статью (например, ст. 35), а в контексте от Researcher указана другая (например, ст. 37 - Покушение на преступление), ты ОБЯЗАН использовать данные из контекста.
+4. ТОЧНОСТЬ: Юридическая ошибка в цифрах недопустима. Ты работаешь только с теми фактами и номерами, которые лежат в контексте.
+
 ═══ КАК ОПРЕДЕЛИТЬ ЧТО НУЖНО ЧЕЛОВЕКУ ═══
 
 Конфликт / нарушение прав / угрозы →
@@ -934,7 +940,7 @@ app.post('/api/chat', async (req, res) => {
                 console.log("Режим: приветствие — Pinecone пропущен");
             } else {
                 const queryEmbedding = await getEmbedding(message);
-                const matches = await searchPinecone(queryEmbedding, 5);
+                const matches = await searchPinecone(queryEmbedding, 7);
                 if (matches.length > 0) {
                     contextText = matches.map((match, i) => {
                         const md = match.metadata || {};
@@ -951,7 +957,7 @@ app.post('/api/chat', async (req, res) => {
                 await handleFast(message, history, '', res);
             } else {
                 const queryEmbedding = await getEmbedding(message);
-                const matches = await searchPinecone(queryEmbedding, 15);
+                const matches = await searchPinecone(queryEmbedding, 25);
                 await handleThinking(message, history, matches, res);
             }
         }
