@@ -5,8 +5,19 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ limit: '2mb', extended: true }));
+
+// --- RATE LIMITING ---
+const rateLimit = require('express-rate-limit');
+const apiLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { reply: 'Слишком много запросов. Пожалуйста, подождите одну минуту.' }
+});
+app.use('/api/chat', apiLimiter);
 
 const PORT = process.env.PORT || 3000;
 
@@ -74,35 +85,27 @@ function isCasualMessage(message) {
     return GREETING_PATTERNS.some(pattern => pattern.test(cleaned));
 }
 
+// --- КЭШИРОВАНИЕ ЭМБЕДДИНГОВ ---
+const embeddingCache = new Map();
+const EMBEDDING_MODEL = "models/text-embedding-004";
+
 // --- УНИВЕРСАЛЬНЫЙ FETCH ДЛЯ ВЕКТОРОВ ---
 async function getEmbedding(text, retryCount = 0) {
+    const cacheKey = text.substring(0, 8000);
+    if (embeddingCache.has(cacheKey)) {
+        console.log('📦 Эмбеддинг из кэша');
+        return embeddingCache.get(cacheKey);
+    }
+
     const activeKey = getActiveKey();
 
     try {
-        const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${activeKey}`;
-        const listRes = await fetch(listUrl);
-        const listData = await listRes.json();
-
-        let targetModel = "models/text-embedding-004";
-
-        if (listData.models) {
-            const embedModel = listData.models.find(m =>
-                m.supportedGenerationMethods &&
-                m.supportedGenerationMethods.includes("embedContent")
-            );
-            if (embedModel) {
-                targetModel = embedModel.name;
-            }
-        }
-
-        console.log(`🤖 Вектор: ${targetModel}`);
-
-        const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:embedContent?key=${activeKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/${EMBEDDING_MODEL}:embedContent?key=${activeKey}`;
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: targetModel,
+                model: EMBEDDING_MODEL,
                 content: { parts: [{ text: text.substring(0, 8000) }] }
             })
         });
@@ -119,7 +122,9 @@ async function getEmbedding(text, retryCount = 0) {
             throw new Error(data.error?.message || JSON.stringify(data));
         }
 
-        return data.embedding.values.slice(0, 768);
+        const embedding = data.embedding.values.slice(0, 768);
+        embeddingCache.set(cacheKey, embedding);
+        return embedding;
 
     } catch (error) {
         console.error("Ошибка вектора:", error.message);
@@ -735,11 +740,7 @@ async function handleThinking(message, history, matches, res) {
     console.log(`[THINKING] Researcher: ${matches.length} → ${filteredLines} статей | ключ #${currentKeyIndex}`);
 
     sendStatus(res, 'Юридический анализ...', '🧠');
-    await new Promise(r => setTimeout(r, 600));
-
     sendStatus(res, 'Проверка коллизий...', '⚖️');
-    await new Promise(r => setTimeout(r, 600));
-
     sendStatus(res, 'Написание вердикта...', '✍️');
 
     try {
