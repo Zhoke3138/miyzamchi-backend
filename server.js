@@ -1,10 +1,33 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
-app.use(cors());
+
+// --- HELMET (безопасность HTTP-заголовков) ---
+app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: false
+}));
+
+// --- STRICT CORS ---
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://miyzamchi.netlify.app'
+];
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('CORS blocked'));
+        }
+    }
+}));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ limit: '2mb', extended: true }));
 
@@ -34,22 +57,85 @@ if (KEYS.length === 0 || !PINECONE_API_KEY || !PINECONE_HOST) {
 
 const cleanPineconeHost = PINECONE_HOST.replace(/\/$/, '');
 
+// --- ТЕЛЕМЕТРИЯ ---
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'miyzamchi_admin_2026';
+const serverStats = { totalRequests: 0, cacheHits: 0, apiErrors: 0, startTime: Date.now() };
+
 // --- МАРШРУТ ДЛЯ ПИНГА ---
 app.get('/ping', (req, res) => {
     console.log('Пинг получен. Мыйзамчи бодрствует!');
     res.status(200).send('Бодрствую! ');
 });
 
-// --- ФУНКЦИЯ ПОЛУЧЕНИЯ ТЕКУЩЕГО КЛЮЧА ---
-function getActiveKey() {
-    return KEYS[currentKeyIndex];
+// --- HEALTH CHECK ---
+app.get('/health', async (req, res) => {
+    let pineconeStatus = 'Error';
+    try {
+        const zeroVector = new Array(768).fill(0);
+        const pcRes = await fetch(cleanPineconeHost + '/query', {
+            method: 'POST',
+            headers: { 'Api-Key': PINECONE_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vector: zeroVector, topK: 1, includeMetadata: false })
+        });
+        if (pcRes.ok) pineconeStatus = 'Connected';
+    } catch (e) {
+        console.error('Health check Pinecone error:', e.message);
+    }
+    res.json({ status: 'OK', keys_total: KEYS.length, pinecone: pineconeStatus });
+});
+
+// --- СЕКРЕТНАЯ АДМИНКА (ТЕЛЕМЕТРИЯ) ---
+app.get('/api/stats', (req, res) => {
+    if (req.query.key !== ADMIN_SECRET) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+    const uptimeMs = Date.now() - serverStats.startTime;
+    const hours = Math.floor(uptimeMs / 3_600_000);
+    const minutes = Math.floor((uptimeMs % 3_600_000) / 60_000);
+    res.json({
+        uptime: `${hours}ч ${minutes}м`,
+        totalRequests: serverStats.totalRequests,
+        cacheHits: serverStats.cacheHits,
+        apiErrors: serverStats.apiErrors,
+        cacheSize: embeddingCache.size,
+        blockedKeysCount: blockedKeys.size
+    });
+});
+
+// --- УМНАЯ РОТАЦИЯ КЛЮЧЕЙ ---
+const blockedKeys = new Map();
+
+function blockKey(key) {
+    blockedKeys.set(key, Date.now() + 60_000);
+    console.log(`🔒 Ключ заблокирован на 60с (всего заблок: ${blockedKeys.size})`);
 }
 
-// Отдельная функция для агентов
+function isKeyBlocked(key) {
+    const until = blockedKeys.get(key);
+    if (!until) return false;
+    if (Date.now() >= until) {
+        blockedKeys.delete(key);
+        return false;
+    }
+    return true;
+}
+
+function getActiveKey() {
+    for (let i = 0; i < KEYS.length; i++) {
+        const key = KEYS[currentKeyIndex % KEYS.length];
+        if (!isKeyBlocked(key)) return key;
+        currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
+    }
+    return KEYS[currentKeyIndex % KEYS.length];
+}
+
 function getNextKey() {
-    const key = KEYS[currentKeyIndex % KEYS.length];
-    currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
-    return key;
+    for (let i = 0; i < KEYS.length; i++) {
+        const key = KEYS[currentKeyIndex % KEYS.length];
+        currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
+        if (!isKeyBlocked(key)) return key;
+    }
+    return KEYS[currentKeyIndex % KEYS.length];
 }
 
 // --- ОПРЕДЕЛЕНИЕ ПРИВЕТСТВИЙ (БРОНЕЖИЛЕТ) ---
@@ -85,6 +171,11 @@ function isCasualMessage(message) {
     return GREETING_PATTERNS.some(pattern => pattern.test(cleaned));
 }
 
+// --- ОПРЕДЕЛЕНИЕ АКАДЕМИЧЕСКИХ ЗАПРОСОВ ---
+function isAcademicRequest(message) {
+    return /(курсов[уа]ю|курсовая|реферат|эссе|диплом|дипломн|срс|\bсрс\b|научн[уа]ю?\s*стать)/i.test(message);
+}
+
 // --- КЭШИРОВАНИЕ ЭМБЕДДИНГОВ ---
 const embeddingCache = new Map();
 const EMBEDDING_MODEL = "models/text-embedding-004";
@@ -94,6 +185,7 @@ async function getEmbedding(text, retryCount = 0) {
     const cacheKey = text.substring(0, 8000);
     if (embeddingCache.has(cacheKey)) {
         console.log('📦 Эмбеддинг из кэша');
+        serverStats.cacheHits++;
         return embeddingCache.get(cacheKey);
     }
 
@@ -114,6 +206,8 @@ async function getEmbedding(text, retryCount = 0) {
 
         if (response.status === 429 && retryCount < KEYS.length) {
             console.log('Ключ ' + (currentKeyIndex + 1) + ' исчерпан. Ротируем...');
+            serverStats.apiErrors++;
+            blockKey(activeKey);
             currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
             return getEmbedding(text, retryCount + 1);
         }
@@ -132,19 +226,28 @@ async function getEmbedding(text, retryCount = 0) {
     }
 }
 
-// --- ПОИСК В PINECONE ---
+// --- ПОИСК В PINECONE (с таймаутом 4с) ---
 async function searchPinecone(vector, topK = 15) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
     try {
         const response = await fetch(cleanPineconeHost + '/query', {
             method: 'POST',
             headers: { 'Api-Key': PINECONE_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ vector, topK, includeMetadata: true })
+            body: JSON.stringify({ vector, topK, includeMetadata: true }),
+            signal: controller.signal
         });
         const data = await response.json();
         return data.matches || [];
     } catch (error) {
+        if (error.name === 'AbortError') {
+            console.warn('[WARN] Pinecone Timeout (4s)');
+            return [];
+        }
         console.error("Ошибка Pinecone:", error.message);
-        throw error;
+        return [];
+    } finally {
+        clearTimeout(timeout);
     }
 }
 
@@ -285,7 +388,7 @@ const RESEARCHER_SYSTEM_PROMPT = `
 // ============================================================
 // CONSULTANT AGENT
 // ============================================================
-const CONSULTANT_SYSTEM_PROMPT = `
+const BASE_CONSULTANT_PROMPT = `
 Ты — **Мыйзамчи Эксперт**, опытный практикующий юрист Кыргызской Республики.
 Ты не справочник законов — ты живой юрист, который реально помогает людям решить их проблему.
 
@@ -453,7 +556,9 @@ const CONSULTANT_SYSTEM_PROMPT = `
 ГОСПОШЛИНА: имущественные иски **1% от суммы**, не менее **100 сомов**; неимущественные физлиц **500 сомов**; апелляция **50%** от первой инстанции; трудовые споры — работники освобождены.
 
 ПРЕТЕНЗИОННЫЙ ПОРЯДОК: по потребительским спорам — претензия обязательна до суда; срок ответа **10-14 дней**.
+`.trim();
 
+const ACADEMIC_PROMPT_ADDON = `
 ═══ РЕЖИМ АКАДЕМИЧЕСКОГО ПИСЬМА — ЖИВОЙ ЮРИСТ ═══
 
 КОГО ТЫ ИЗОБРАЖАЕШЬ:
@@ -688,6 +793,8 @@ async function handleFast(message, history, contextText, res, retryCount = 0) {
         }
     } catch (error) {
         console.error(`[FAST MODE] Ошибка Google (попытка ${retryCount + 1}):`, error.message);
+        serverStats.apiErrors++;
+        blockKey(currentKey);
 
         if (retryCount >= KEYS.length) {
             res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Извините, серверы нейросети сейчас перегружены из-за высокого спроса. Пожалуйста, повторите свой вопрос через минуту.' })}\n\n`);
@@ -749,9 +856,13 @@ async function handleThinking(message, history, matches, res) {
             `Вопрос пользователя: "${message}"\n\n` +
             `Отфильтрованные релевантные НПА КР:\n\n${filteredContext}`;
 
+        const systemPrompt = isAcademicRequest(message)
+            ? BASE_CONSULTANT_PROMPT + '\n\n' + ACADEMIC_PROMPT_ADDON
+            : BASE_CONSULTANT_PROMPT;
+
         await streamGeminiResponse(
             consultantKey,
-            CONSULTANT_SYSTEM_PROMPT,
+            systemPrompt,
             consultantPrompt,
             cleanHistory,
             res
@@ -775,6 +886,7 @@ async function handleThinking(message, history, matches, res) {
 // ГЛАВНЫЙ МАРШРУТ
 // ============================================================
 app.post('/api/chat', async (req, res) => {
+    serverStats.totalRequests++;
     try {
         const { message, history, mode = 'fast' } = req.body;
         if (!message) return res.status(400).json({ reply: "Пусто" });
