@@ -247,36 +247,49 @@ async function searchPinecone(vector, topK = 15) {
     }
 }
 
-// --- АДАПТИВНЫЙ RETRIEVAL 2.0 (elbow method + ядро/контекст) ---
+function sendStatus(res, text, icon) {
+    if (!res || res.writableEnded) return;
+    res.write(`data: ${JSON.stringify({ protocolStatus: text, icon })}\n\n`);
+}
+
+// --- АДАПТИВНЫЙ RETRIEVAL 2.0 (с реальным стримингом этапов) ---
 // Возвращает: { core: [...], context: [...], all: [...] }
 //   core    — статьи с высоким score (> CORE_THRESHOLD) — Gemini опирается на них
 //   context — статьи среднего score — используются как справка
 //   all     — объединение для логирования и источников
-async function adaptiveRetrieval(query, mode) {
+// Если res передан — шлёт SSE-статусы после каждого реального этапа pipeline
+async function adaptiveRetrieval(query, mode, res = null) {
     // --- Настройки ---
     const maxK = mode === 'thinking' ? 25 : 10;
     const minK = mode === 'thinking' ? 5 : 3;
-    const absoluteMinScore = 0.45;        // ниже этого — точно мусор
-    const coreScoreThreshold = 0.75;      // что считать "ядром"
-    const elbowDropRatio = 0.15;          // 15% падение score = "локоть"
+    const absoluteMinScore = 0.45;
+    const coreScoreThreshold = 0.75;
+    const elbowDropRatio = 0.15;
     
+    const streamStatuses = res && mode === 'thinking';
+    
+    // --- Этап 1: Эмбеддинг запроса ---
+    if (streamStatuses) sendStatus(res, 'Преобразую ваш вопрос в вектор...', '🧬');
     const embedding = await getEmbedding(query);
+    
+    // --- Этап 2: Семантический поиск ---
+    if (streamStatuses) sendStatus(res, `Ищу в базе ${maxK} ближайших статей НПА...`, '🔎');
     const matches = await searchPinecone(embedding, maxK);
     
     if (matches.length === 0) {
+        if (streamStatuses) sendStatus(res, 'База НПА не вернула результатов', '⚠️');
         console.log(`[Retrieval] ${mode} | query: ${query.length} chars | ⚠️ Pinecone пуст`);
         return { core: [], context: [], all: [] };
     }
     
-    // --- Шаг 1: отсекаем ниже абсолютного минимума ---
+    // --- Этап 3: Фильтрация и ранжирование ---
+    if (streamStatuses) sendStatus(res, `Получил ${matches.length} статей, ранжирую по релевантности...`, '📊');
+    
     let candidates = matches.filter(m => (m.score || 0) >= absoluteMinScore);
     
-    // --- Шаг 2: Elbow method — ищем место резкого падения score ---
     if (candidates.length > minK) {
         const scores = candidates.map(m => m.score || 0);
         let elbowIndex = candidates.length;
-        
-        // начинаем поиск разрыва с позиции minK (гарантируем минимум)
         for (let i = minK - 1; i < scores.length - 1; i++) {
             const drop = scores[i] > 0 ? (scores[i] - scores[i + 1]) / scores[i] : 0;
             if (drop > elbowDropRatio) {
@@ -287,12 +300,10 @@ async function adaptiveRetrieval(query, mode) {
         candidates = candidates.slice(0, elbowIndex);
     }
     
-    // --- Шаг 3: гарантия минимума (если отсекли слишком много) ---
     if (candidates.length < minK && matches.length >= minK) {
         candidates = matches.slice(0, minK);
     }
     
-    // --- Шаг 4: разделяем на ядро и контекст ---
     const core = candidates.filter(m => (m.score || 0) >= coreScoreThreshold);
     const context = candidates.filter(m => (m.score || 0) < coreScoreThreshold);
     
@@ -304,11 +315,12 @@ async function adaptiveRetrieval(query, mode) {
         `total: ${candidates.length}/${matches.length}`
     );
     
+    // --- Этап 4: Результат отбора ---
+    if (streamStatuses) {
+        sendStatus(res, `Отобрал ⭐ ${core.length} ключевых и 📚 ${context.length} смежных статей`, '✅');
+    }
+    
     return { core, context, all: candidates };
-}
-
-function sendStatus(res, text, icon) {
-    res.write(`data: ${JSON.stringify({ protocolStatus: text, icon })}\n\n`);
 }
 
 // ============================================================
@@ -797,7 +809,7 @@ async function handleFast(message, history, retrievalResult, res, retryCount = 0
 }
 
 // ============================================================
-// РЕЖИМ THINKING (ОДИН АГЕНТ + ИЕРАРХИЧЕСКИЙ RETRIEVAL)
+// РЕЖИМ THINKING (ОДИН АГЕНТ + РЕАЛЬНЫЙ СТРИМИНГ ЭТАПОВ)
 // ============================================================
 async function handleThinking(message, history, retrievalResult, res) {
     const cleanHistory = sanitizeHistory(history);
@@ -805,11 +817,9 @@ async function handleThinking(message, history, retrievalResult, res) {
     
     const rawContext = formatContextWithHierarchy(core, context);
     
-    sendStatus(res, `Найдено ⭐${core.length} ключевых и 📚${context.length} смежных статей`, '🔍');
-    sendStatus(res, 'Систематизирую нормы и проверяю коллизии...', '⚖️');
-    sendStatus(res, 'Формулирую юридический вердикт...', '✍️');
-
-    console.log(`[THINKING] Consultant получил ⭐${core.length} ключевых + 📚${context.length} смежных = ${all.length} статей | ключ ротации #${currentKeyIndex}`);
+    // Retrieval-статусы (эмбеддинг, поиск, ранжирование) уже ушли к клиенту из adaptiveRetrieval
+    
+    console.log(`[THINKING] Consultant получил ⭐${core.length} + 📚${context.length} = ${all.length} статей | ключ #${currentKeyIndex}`);
 
     try {
         const consultantKey = getNextKey();
@@ -818,12 +828,18 @@ async function handleThinking(message, history, retrievalResult, res) {
             `Контекст — ${all.length} релевантных статей НПА КР (⭐ ${core.length} ключевых + 📚 ${context.length} вспомогательных):\n\n${rawContext}`;
 
         const isL4 = detectL4Request(message);
-        if (isL4) console.log('[THINKING] 🛡️ L4-запрос (судебный документ) — активирован режим отказа от генерации');
+        if (isL4) console.log('[THINKING] 🛡️ L4-запрос активирован');
 
         let systemPrompt = BASE_CONSULTANT_PROMPT;
         if (isAcademicRequest(message)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
         if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
 
+        // --- Этап 5: подготовка к генерации ---
+        sendStatus(res, `Анализирую ${all.length} статей и проверяю коллизии норм...`, '⚖️');
+
+        // --- Этап 6: начало генерации ---
+        sendStatus(res, 'Формулирую юридический вердикт...', '✍️');
+        
         await streamGeminiResponse(
             consultantKey,
             systemPrompt,
@@ -832,7 +848,6 @@ async function handleThinking(message, history, retrievalResult, res) {
             res
         );
 
-        // Источники — в первую очередь ⭐ ключевые
         const sourcesArr = [...core, ...context].slice(0, 5);
         const sources = sourcesArr.map(m =>
             `${m.metadata.doc_title} — ${m.metadata.article_title}`
@@ -841,6 +856,7 @@ async function handleThinking(message, history, retrievalResult, res) {
 
     } catch (err) {
         console.error('Consultant упал:', err.message);
+        sendStatus(res, 'Переключаюсь на резервный канал...', '🔄');
         await delay(2000);
         try {
             const fallbackKey = getNextKey();
@@ -864,9 +880,14 @@ app.post('/api/chat', async (req, res) => {
 
         console.log(`\nЗапрос: "${message}" | Режим: ${mode}`);
 
+        // SSE headers с антибуферизацией Render
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
         res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');   // отключить буферизацию прокси
+        if (typeof res.flushHeaders === 'function') {
+            res.flushHeaders();                      // сразу отправить headers клиенту
+        }
 
         if (mode === 'fast') {
             const casual = isCasualMessage(message);
@@ -885,7 +906,8 @@ app.post('/api/chat', async (req, res) => {
                 console.log("Режим: приветствие — Pinecone пропущен (Thinking)");
                 await handleFast(message, history, { core: [], context: [], all: [] }, res);
             } else {
-                const retrievalResult = await adaptiveRetrieval(message, 'thinking');
+                // res передаётся в adaptiveRetrieval — чтобы шли статусы этапов
+                const retrievalResult = await adaptiveRetrieval(message, 'thinking', res);
                 await handleThinking(message, history, retrievalResult, res);
             }
         }
@@ -895,9 +917,13 @@ app.post('/api/chat', async (req, res) => {
 
     } catch (error) {
         console.error("Глобальная ошибка сервера:", error.message);
-        res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Произошла системная ошибка (серверы нейросети недоступны). Пожалуйста, повторите запрос.' })}\n\n`);
-        res.write('data: [DONE]\n\n');
-        res.end();
+        try {
+            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Произошла системная ошибка (серверы нейросети недоступны). Пожалуйста, повторите запрос.' })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            res.end();
+        } catch (writeErr) {
+            console.error("Не удалось записать ошибку в поток:", writeErr.message);
+        }
     }
 });
 
