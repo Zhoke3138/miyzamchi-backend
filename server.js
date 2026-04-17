@@ -247,32 +247,64 @@ async function searchPinecone(vector, topK = 15) {
     }
 }
 
-// --- АДАПТИВНЫЙ RETRIEVAL ---
+// --- АДАПТИВНЫЙ RETRIEVAL 2.0 (elbow method + ядро/контекст) ---
+// Возвращает: { core: [...], context: [...], all: [...] }
+//   core    — статьи с высоким score (> CORE_THRESHOLD) — Gemini опирается на них
+//   context — статьи среднего score — используются как справка
+//   all     — объединение для логирования и источников
 async function adaptiveRetrieval(query, mode) {
+    // --- Настройки ---
     const maxK = mode === 'thinking' ? 25 : 10;
-    const scoreMultiplier = mode === 'thinking' ? 0.65 : 0.70;
-    const minK = 3;
+    const minK = mode === 'thinking' ? 5 : 3;
+    const absoluteMinScore = 0.45;        // ниже этого — точно мусор
+    const coreScoreThreshold = 0.75;      // что считать "ядром"
+    const elbowDropRatio = 0.15;          // 15% падение score = "локоть"
     
     const embedding = await getEmbedding(query);
     const matches = await searchPinecone(embedding, maxK);
     
-    if (matches.length === 0) return [];
-    
-    const topScore = matches[0].score || 0;
-    const threshold = Math.max(0.5, topScore * scoreMultiplier);
-    
-    let filtered = matches.filter(m => (m.score || 0) >= threshold);
-    if (filtered.length < minK) {
-        filtered = matches.slice(0, minK);
+    if (matches.length === 0) {
+        console.log(`[Retrieval] ${mode} | query: ${query.length} chars | ⚠️ Pinecone пуст`);
+        return { core: [], context: [], all: [] };
     }
     
+    // --- Шаг 1: отсекаем ниже абсолютного минимума ---
+    let candidates = matches.filter(m => (m.score || 0) >= absoluteMinScore);
+    
+    // --- Шаг 2: Elbow method — ищем место резкого падения score ---
+    if (candidates.length > minK) {
+        const scores = candidates.map(m => m.score || 0);
+        let elbowIndex = candidates.length;
+        
+        // начинаем поиск разрыва с позиции minK (гарантируем минимум)
+        for (let i = minK - 1; i < scores.length - 1; i++) {
+            const drop = scores[i] > 0 ? (scores[i] - scores[i + 1]) / scores[i] : 0;
+            if (drop > elbowDropRatio) {
+                elbowIndex = i + 1;
+                break;
+            }
+        }
+        candidates = candidates.slice(0, elbowIndex);
+    }
+    
+    // --- Шаг 3: гарантия минимума (если отсекли слишком много) ---
+    if (candidates.length < minK && matches.length >= minK) {
+        candidates = matches.slice(0, minK);
+    }
+    
+    // --- Шаг 4: разделяем на ядро и контекст ---
+    const core = candidates.filter(m => (m.score || 0) >= coreScoreThreshold);
+    const context = candidates.filter(m => (m.score || 0) < coreScoreThreshold);
+    
+    const topScore = (matches[0].score || 0).toFixed(3);
     console.log(
         `[Retrieval] ${mode} | query: ${query.length} chars | ` +
-        `topScore: ${topScore.toFixed(3)} | threshold: ${threshold.toFixed(3)} | ` +
-        `returned: ${filtered.length}/${matches.length}`
+        `topScore: ${topScore} | ` +
+        `⭐ core: ${core.length} | 📚 context: ${context.length} | ` +
+        `total: ${candidates.length}/${matches.length}`
     );
     
-    return filtered;
+    return { core, context, all: candidates };
 }
 
 function sendStatus(res, text, icon) {
@@ -302,9 +334,10 @@ const systemInstruction = [
     "",
     "# ИСТОЧНИКИ ЗНАНИЙ (строгий приоритет)",
     "1. **Приоритет 1 — Контекст (НПА):** Твои ответы должны основываться ИСКЛЮЧИТЕЛЬНО на предоставленных статьях законов КР. Это единственный источник правовой истины.",
-    "2. **Приоритет 2 — Твои знания:** Используй ТОЛЬКО для структуры документов, объяснения терминов простым языком и общей юридической логики. НИКОГДА не подменяй ими нормы закона и не дополняй контекст выдуманными статьями.",
-    "3. **Если в контексте нет ответа:** Ты ОБЯЗАН прямо сказать: «К сожалению, в моей текущей базе НПА нет информации по этому вопросу. Рекомендую обратиться к юристу или на сайт cbd.minjust.gov.kg.» Не пытайся ответить из общих знаний.",
-    "4. **КАТЕГОРИЧЕСКИЙ ЗАПРЕТ НА ГАЛЛЮЦИНАЦИИ:** Тебе ЗАПРЕЩЕНО выдумывать номера статей, сроки, суммы или нормы, которых нет в предоставленном контексте. Не используй общие знания о праве, если они не подтверждены контекстом.",
+    "2. **⭐ КЛЮЧЕВЫЕ vs 📚 ВСПОМОГАТЕЛЬНЫЕ статьи:** Если в контексте есть статьи с пометкой **[⭐ КЛЮЧЕВАЯ СТАТЬЯ]** — опирайся в первую очередь на них. Статьи с пометкой **[📚 ВСПОМОГАТЕЛЬНАЯ]** используй как дополнительный контекст (смежные нормы, процедурные детали), но НЕ цитируй их как основной ответ на вопрос.",
+    "3. **Приоритет 2 — Твои знания:** Используй ТОЛЬКО для структуры документов, объяснения терминов простым языком и общей юридической логики. НИКОГДА не подменяй ими нормы закона и не дополняй контекст выдуманными статьями.",
+    "4. **Если в контексте нет ответа:** Ты ОБЯЗАН прямо сказать: «К сожалению, в моей текущей базе НПА нет информации по этому вопросу. Рекомендую обратиться к юристу или на сайт cbd.minjust.gov.kg.» Не пытайся ответить из общих знаний.",
+    "5. **КАТЕГОРИЧЕСКИЙ ЗАПРЕТ НА ГАЛЛЮЦИНАЦИИ:** Тебе ЗАПРЕЩЕНО выдумывать номера статей, сроки, суммы или нормы, которых нет в предоставленном контексте. Не используй общие знания о праве, если они не подтверждены контекстом.",
     "",
     "---",
     "",
@@ -381,6 +414,7 @@ const systemInstruction = [
     "",
     "# ЗАПРЕЩЕНО",
     "- Выдумывать номера статей, сроки, суммы или нормы, которых нет в предоставленном контексте — это ГЛАВНОЕ правило",
+    "- Цитировать 📚 ВСПОМОГАТЕЛЬНЫЕ статьи как главный ответ на вопрос — они только справка",
     "- Генерировать готовый текст искового заявления / апелляционной жалобы / кассационной жалобы — только структура + рекомендация к юристу",
     "- Давать советы по законодательству других стран (РФ, Казахстан, Узбекистан и др.) как применимые в КР",
     "- Ссылаться на законы РФ или КЗ без явной оговорки что это НЕ законодательство КР",
@@ -406,6 +440,26 @@ const BASE_CONSULTANT_PROMPT = `
 - Дополнять контекст общими знаниями без явной оговорки «по общей практике»
 Если сомневаешься — лучше честно сказать «не знаю», чем выдумать.
 
+═══ ИЕРАРХИЯ СТАТЕЙ В КОНТЕКСТЕ (ВАЖНО!) ═══
+Контекст, который ты получаешь, может быть разделён на две группы:
+
+**⭐ КЛЮЧЕВЫЕ СТАТЬИ** (помечены тегом [⭐ КЛЮЧЕВАЯ СТАТЬЯ — ...])
+Это статьи с высоким уровнем семантического соответствия вопросу пользователя.
+→ Именно на них ты ДОЛЖЕН опираться при формулировании основного ответа
+→ Эти статьи прямо отвечают на вопрос
+→ Цитируй их как главное правовое основание
+
+**📚 ВСПОМОГАТЕЛЬНЫЕ СТАТЬИ** (помечены тегом [📚 ВСПОМОГАТЕЛЬНАЯ — ...])
+Это статьи со средним уровнем соответствия — смежные нормы, процедурные детали, связанные институты права.
+→ Используй ТОЛЬКО как справочный контекст или для полноты картины
+→ НЕ цитируй их как главный ответ на вопрос пользователя
+→ Упоминай только если они реально уточняют или дополняют ключевые статьи
+→ Если они уводят в сторону от темы — проигнорируй
+
+**Если группы не разделены** (все статьи без тегов ⭐/📚) — анализируй их все как обычно, расставляй приоритеты сам по смыслу.
+
+**Если ⭐ КЛЮЧЕВЫЕ статьи отсутствуют** и есть только 📚 ВСПОМОГАТЕЛЬНЫЕ — это сигнал что в базе нет прямого ответа. Будь честен: можешь дать общее направление по вспомогательным, но обязательно укажи что прямого ответа в базе нет и порекомендуй обратиться к юристу.
+
 ═══ ДЛИНА ОТВЕТА — КРИТИЧЕСКИ ВАЖНО ═══
 Отвечай СОРАЗМЕРНО запросу:
 - Простой вопрос → 2-4 предложения, без лишних заголовков
@@ -419,11 +473,11 @@ const BASE_CONSULTANT_PROMPT = `
 Понять ситуацию → дать конкретный план → при необходимости составить документ.
 
 ═══ ПРАВИЛО АНАЛИЗА КОНТЕКСТА ═══
-Тебе передают массив статей НПА КР из семантического поиска (от 3 до 25 статей).
+Тебе передают массив статей НПА КР из семантического поиска (от 3 до 25 статей, разделённых на ⭐ ключевые и 📚 вспомогательные).
 ТВОЯ ОБЯЗАННОСТЬ:
-1. Прочитай ВСЕ переданные статьи внимательно
-2. Определи, какие из них прямо отвечают на вопрос, какие — регулируют смежные отношения, какие — не по теме
-3. Используй ТОЛЬКО релевантные статьи в ответе
+1. Прочитай ВСЕ переданные статьи внимательно, начиная с ⭐ КЛЮЧЕВЫХ
+2. Основной ответ стройся на ⭐ КЛЮЧЕВЫХ статьях
+3. 📚 ВСПОМОГАТЕЛЬНЫЕ статьи — используй как контекст, не как главный ответ
 4. Если между статьями есть противоречие — укажи его и объясни какая норма приоритетна
 5. Если вопрос сложный — подумай пошагово: что нарушено → какая норма применима → какие сроки → какой порядок действий
 Не торопись с ответом. Сначала разбери контекст, потом пиши.
@@ -470,7 +524,7 @@ const BASE_CONSULTANT_PROMPT = `
 Прямо: что произошло по закону, насколько серьёзно, кто виноват.
 
 ### ⚖️ Правовое основание
-Конкретные статьи НПА КР. Формат: «Согласно ст. X [Акт КР]...»
+Конкретные статьи НПА КР (в первую очередь из ⭐ КЛЮЧЕВЫХ). Формат: «Согласно ст. X [Акт КР]...»
 Коллизии норм — разбери, укажи приоритет.
 
 ### 🗓️ Сроки — ВСЕГДА
@@ -560,7 +614,7 @@ const BASE_CONSULTANT_PROMPT = `
 Этот цикл повторяется, пока документ не будет закончен.
 
 ═══ ПРАВИЛА ═══
-1. Опирайся ИСКЛЮЧИТЕЛЬНО на НПА из предоставленного контекста. Не выдумывай статьи, сроки, суммы.
+1. Опирайся ИСКЛЮЧИТЕЛЬНО на НПА из предоставленного контекста (в первую очередь ⭐ КЛЮЧЕВЫЕ). Не выдумывай статьи, сроки, суммы.
 2. Если нормы нет в контексте — честно скажи: «К сожалению, в моей текущей базе НПА нет информации по этому вопросу.»
 3. Никаких советов по праву РФ, Казахстана и других стран — они НЕ применимы в КР.
 4. Язык = язык вопроса (русский / кыргызский).
@@ -668,10 +722,37 @@ function sanitizeHistory(history) {
     return clean;
 }
 
+// --- Форматирование контекста с иерархией ⭐/📚 ---
+function formatContextWithHierarchy(core, context) {
+    const parts = [];
+    
+    if (core.length > 0) {
+        const coreText = core.map((match) => {
+            const md = match.metadata || {};
+            return `[⭐ КЛЮЧЕВАЯ СТАТЬЯ — ${md.doc_title} | ${md.article_title}]\n${md.text}`;
+        }).join('\n\n---\n\n');
+        parts.push(coreText);
+    }
+    
+    if (context.length > 0) {
+        const contextText = context.map((match) => {
+            const md = match.metadata || {};
+            return `[📚 ВСПОМОГАТЕЛЬНАЯ — ${md.doc_title} | ${md.article_title}]\n${md.text}`;
+        }).join('\n\n---\n\n');
+        parts.push(contextText);
+    }
+    
+    return parts.join('\n\n════════════════════\n\n');
+}
+
 // ============================================================
 // РЕЖИМ FAST
 // ============================================================
-async function handleFast(message, history, contextText, res, retryCount = 0) {
+async function handleFast(message, history, retrievalResult, res, retryCount = 0) {
+    const { core, context } = retrievalResult || { core: [], context: [] };
+    const hasContext = core.length > 0 || context.length > 0;
+    
+    const contextText = hasContext ? formatContextWithHierarchy(core, context) : '';
     const promptText = contextText
         ? `Релевантный контекст законов:\n${contextText}\n\nВопрос пользователя: ${message}`
         : `Сообщение пользователя: ${message}`;
@@ -711,33 +792,30 @@ async function handleFast(message, history, contextText, res, retryCount = 0) {
 
         await new Promise(r => setTimeout(r, 1500));
         console.log(`[FAST MODE] Делаю повторную попытку...`);
-        return handleFast(message, history, contextText, res, retryCount + 1);
+        return handleFast(message, history, retrievalResult, res, retryCount + 1);
     }
 }
 
 // ============================================================
-// РЕЖИМ THINKING (ОДИН АГЕНТ + АДАПТИВНЫЙ TOPK)
+// РЕЖИМ THINKING (ОДИН АГЕНТ + ИЕРАРХИЧЕСКИЙ RETRIEVAL)
 // ============================================================
-async function handleThinking(message, history, matches, res) {
+async function handleThinking(message, history, retrievalResult, res) {
     const cleanHistory = sanitizeHistory(history);
+    const { core, context, all } = retrievalResult;
     
-    // Контекст НПА передаём Consultant напрямую — без Researcher-фильтрации
-    const rawContext = matches.map((match) => {
-        const md = match.metadata || {};
-        return `[НПА: ${md.doc_title} | ${md.article_title}]\n${md.text}`;
-    }).join('\n\n---\n\n');
-
-    sendStatus(res, `Анализирую ${matches.length} статей НПА...`, '🔍');
+    const rawContext = formatContextWithHierarchy(core, context);
+    
+    sendStatus(res, `Найдено ⭐${core.length} ключевых и 📚${context.length} смежных статей`, '🔍');
     sendStatus(res, 'Систематизирую нормы и проверяю коллизии...', '⚖️');
     sendStatus(res, 'Формулирую юридический вердикт...', '✍️');
 
-    console.log(`[THINKING] Consultant получил ${matches.length} статей (адаптивный topK) | ключ ротации #${currentKeyIndex}`);
+    console.log(`[THINKING] Consultant получил ⭐${core.length} ключевых + 📚${context.length} смежных = ${all.length} статей | ключ ротации #${currentKeyIndex}`);
 
     try {
         const consultantKey = getNextKey();
         const consultantPrompt =
             `Вопрос пользователя: "${message}"\n\n` +
-            `Контекст — ${matches.length} релевантных статей НПА КР из семантического поиска:\n\n${rawContext}`;
+            `Контекст — ${all.length} релевантных статей НПА КР (⭐ ${core.length} ключевых + 📚 ${context.length} вспомогательных):\n\n${rawContext}`;
 
         const isL4 = detectL4Request(message);
         if (isL4) console.log('[THINKING] 🛡️ L4-запрос (судебный документ) — активирован режим отказа от генерации');
@@ -754,7 +832,9 @@ async function handleThinking(message, history, matches, res) {
             res
         );
 
-        const sources = matches.slice(0, 5).map(m =>
+        // Источники — в первую очередь ⭐ ключевые
+        const sourcesArr = [...core, ...context].slice(0, 5);
+        const sources = sourcesArr.map(m =>
             `${m.metadata.doc_title} — ${m.metadata.article_title}`
         );
         res.write(`data: ${JSON.stringify({ sources })}\n\n`);
@@ -790,29 +870,23 @@ app.post('/api/chat', async (req, res) => {
 
         if (mode === 'fast') {
             const casual = isCasualMessage(message);
-            let contextText = '';
+            let retrievalResult = { core: [], context: [], all: [] };
 
             if (casual) {
                 console.log("Режим: приветствие — Pinecone пропущен");
             } else {
-                const matches = await adaptiveRetrieval(message, 'fast');
-                if (matches.length > 0) {
-                    contextText = matches.map((match, i) => {
-                        const md = match.metadata || {};
-                        return `[Источник ${i + 1}: ${md.doc_title} | ${md.article_title}]\nТекст статьи:\n${md.text}`;
-                    }).join('\n\n');
-                }
+                retrievalResult = await adaptiveRetrieval(message, 'fast');
             }
-            await handleFast(message, history, contextText, res);
+            await handleFast(message, history, retrievalResult, res);
         }
         else if (mode === 'thinking') {
             const casual = isCasualMessage(message);
             if (casual) {
                 console.log("Режим: приветствие — Pinecone пропущен (Thinking)");
-                await handleFast(message, history, '', res);
+                await handleFast(message, history, { core: [], context: [], all: [] }, res);
             } else {
-                const matches = await adaptiveRetrieval(message, 'thinking');
-                await handleThinking(message, history, matches, res);
+                const retrievalResult = await adaptiveRetrieval(message, 'thinking');
+                await handleThinking(message, history, retrievalResult, res);
             }
         }
 
