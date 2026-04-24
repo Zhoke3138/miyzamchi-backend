@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const path = require('path');
 
 const app = express();
 app.set('trust proxy', 1); // Доверие к прокси Render
@@ -19,6 +20,21 @@ app.use(cors());
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ limit: '2mb', extended: true }));
+
+// ============================================================
+// STATIC + UI ROUTES (Chat UI + Legal IDE)
+// ============================================================
+// Serve static assets (optionally from /public, plus repo root for existing files)
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+app.get('/ide', (req, res) => {
+    res.sendFile(path.join(__dirname, 'ide', 'MIyzamchy Legal IDE.html'));
+});
 
 // --- RATE LIMITING ---
 const rateLimit = require('express-rate-limit');
@@ -322,6 +338,36 @@ async function adaptiveRetrieval(query, mode, res = null) {
     
     return { core, context, all: candidates };
 }
+
+// ============================================================
+// AI РЕДАКТОР (API для IDE)
+// ============================================================
+app.post('/api/edit', async (req, res) => {
+    serverStats.totalRequests++;
+    try {
+        const { text, instruction } = req.body;
+        if (!text || !instruction) {
+            return res.status(400).json({ error: "Missing text or instruction" });
+        }
+
+        const activeKey = getActiveKey();
+        const genAI = new GoogleGenerativeAI(activeKey);
+        const model = genAI.getGenerativeModel({
+            model: "gemini-flash-latest",
+            systemInstruction: "Ты — профессиональный юрист-редактор КР. Твоя задача — переписать предоставленный текст согласно инструкции. Возвращай ТОЛЬКО исправленный текст, без приветствий, без кавычек, без Markdown-форматирования и без объяснений."
+        });
+
+        const prompt = `Инструкция: ${instruction}\n\nТекст для редактирования:\n${text}`;
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text().trim();
+
+        res.json({ result: responseText });
+    } catch (error) {
+        console.error("Ошибка в /api/edit:", error.message);
+        serverStats.apiErrors++;
+        res.status(500).json({ error: "Ошибка при редактировании текста" });
+    }
+});
 
 // ============================================================
 // СИСТЕМНАЯ ИНСТРУКЦИЯ (Быстрый режим)
@@ -741,7 +787,7 @@ function formatContextWithHierarchy(core, context) {
     if (core.length > 0) {
         const coreText = core.map((match) => {
             const md = match.metadata || {};
-            return `[⭐ КЛЮЧЕВАЯ СТАТЬЯ — ${md.doc_title} | ${md.article_title}]\n${md.text}`;
+            return `[⭐ КЛЮЧЕВАЯ СТАТЬЯ — ${md.npa_title} | ${md.article_title}]\nДокумент: ${md.npa_title}\nСтатья: ${md.article_title}\nТекст: ${md.full_text}`;
         }).join('\n\n---\n\n');
         parts.push(coreText);
     }
@@ -749,7 +795,7 @@ function formatContextWithHierarchy(core, context) {
     if (context.length > 0) {
         const contextText = context.map((match) => {
             const md = match.metadata || {};
-            return `[📚 ВСПОМОГАТЕЛЬНАЯ — ${md.doc_title} | ${md.article_title}]\n${md.text}`;
+            return `[📚 ВСПОМОГАТЕЛЬНАЯ — ${md.npa_title} | ${md.article_title}]\nДокумент: ${md.npa_title}\nСтатья: ${md.article_title}\nТекст: ${md.full_text}`;
         }).join('\n\n---\n\n');
         parts.push(contextText);
     }
@@ -850,7 +896,7 @@ async function handleThinking(message, history, retrievalResult, res) {
 
         const sourcesArr = [...core, ...context].slice(0, 5);
         const sources = sourcesArr.map(m =>
-            `${m.metadata.doc_title} — ${m.metadata.article_title}`
+            `${m.metadata.npa_title} — ${m.metadata.article_title}`
         );
         res.write(`data: ${JSON.stringify({ sources })}\n\n`);
 
