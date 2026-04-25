@@ -930,7 +930,12 @@ async function handleThinking(message, history, retrievalResult, res) {
         const sources = sourcesArr.map(m =>
             `${m.metadata.npa_title} — ${m.metadata.article_title}`
         );
-        res.write(`data: ${JSON.stringify({ sources })}\n\n`);
+        const metadata = sourcesArr.map(m => ({
+            npa_title: m.metadata?.npa_title || '',
+            article_title: m.metadata?.article_title || '',
+            full_text: m.metadata?.full_text || ''
+        }));
+        res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
 
     } catch (err) {
         console.error('Consultant упал:', err.message);
@@ -977,6 +982,20 @@ app.post('/api/chat', async (req, res) => {
                 retrievalResult = await adaptiveRetrieval(message, 'fast');
             }
             await handleFast(message, history, retrievalResult, res);
+
+            // Send sources + metadata for fast mode too (if retrieval found anything)
+            if (retrievalResult.all && retrievalResult.all.length > 0) {
+                const sourcesArr = [...(retrievalResult.core || []), ...(retrievalResult.context || [])].slice(0, 5);
+                const sources = sourcesArr.map(m =>
+                    `${m.metadata?.npa_title || 'НПА'} — ${m.metadata?.article_title || ''}`
+                );
+                const metadata = sourcesArr.map(m => ({
+                    npa_title: m.metadata?.npa_title || '',
+                    article_title: m.metadata?.article_title || '',
+                    full_text: m.metadata?.full_text || ''
+                }));
+                res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
+            }
         }
         else if (mode === 'thinking') {
             const casual = isCasualMessage(message);
