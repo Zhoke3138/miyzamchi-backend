@@ -35,6 +35,8 @@ app.get('/', (req, res) => {
 app.get('/ide', (req, res) => {
     res.sendFile(path.join(__dirname, 'ide', 'MIyzamchy Legal IDE.html'));
 });
+// Serve IDE static assets (CSS, JS) from /ide/ path
+app.use('/ide', express.static(path.join(__dirname, 'ide')));
 
 // --- RATE LIMITING ---
 const rateLimit = require('express-rate-limit');
