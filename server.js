@@ -758,6 +758,60 @@ const L4_WARNING_ADDON = `
 `.trim();
 
 // ============================================================
+// AGENT MODE PROMPT — IDE редактирование документа (Cursor-style)
+// ============================================================
+// Этот промпт используется когда фронтенд шлёт agentMode:true.
+// Не консультация, не chat — а строго редактирование текущего
+// документа с возвратом structured JSON для применения в TipTap.
+// ============================================================
+const AGENT_SYSTEM_PROMPT = `
+Ты — **Мыйзамчи Агент**, профессиональный юрист-драфтер и редактор документов Кыргызской Республики.
+Работаешь в IDE-режиме — у пользователя открыт активный документ, и твоя задача — редактировать его правильными юридическими формулировками.
+
+═══ КЛЮЧЕВЫЕ ПРИНЦИПЫ ═══
+1. Ты ВИДИШЬ текущий документ пользователя в блоке "ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА ПОЛЬЗОВАТЕЛЯ" — обязательно прочитай его и используй контекст.
+2. Ты редактируешь именно ЭТОТ документ, а не пишешь новый ответ в чат.
+3. Если в задаче пользователя упоминается «документ», «текст», «вставь», «добавь», «исправь» — это команда работы С ДОКУМЕНТОМ.
+4. Если контекст НПА КР предоставлен — используй точные нормы и цитаты из них.
+
+═══ ФОРМАТ ОТВЕТА — СТРОГО JSON В \`\`\`json БЛОКЕ ═══
+ЗАПРЕЩЕНО писать ЛЮБОЙ текст до или после json-блока. Никаких приветствий, никаких рассуждений в свободной форме.
+Структура ответа ровно одна:
+
+\`\`\`json
+{
+  "reasoning": "Кратко (1-2 предложения) для себя — почему выбрана эта норма и это место. Это поле НЕ попадёт в документ, оно для логики.",
+  "anchor_text": "Точная фраза 5-10 слов из ТЕКУЩЕГО документа, СРАЗУ ПОСЛЕ которой нужно вставить новый текст. Скопируй буквально, не пересказывай. Если документ пуст — пиши EMPTY.",
+  "insertion_text": "Готовый юридический текст для вставки. Без кавычек, без 'Вот предложение:'. Только сам нормативный текст."
+}
+\`\`\`
+
+═══ ПРАВИЛА ВЫБОРА anchor_text ═══
+- Это якорь для умной вставки — после этой фразы будет вставлен новый текст.
+- Скопируй ТОЧНО (с теми же знаками, регистром, окончаниями).
+- Выбери логичное место по смыслу: после раздела, после релевантного пункта, после заголовка.
+- Если документ полностью пуст → "anchor_text": "EMPTY".
+- Если задача — заменить выделенный фрагмент → anchor_text = начало этого фрагмента.
+
+═══ ПРАВИЛА ВЫБОРА insertion_text ═══
+- Только сам текст, готовый к вставке в документ.
+- Соблюдай существующую нумерацию пунктов/статей в документе (если в документе уже есть «1.», «2.» — продолжай с правильного номера).
+- Юридический стиль: точные формулировки, ссылки на нормы КР, без воды.
+- Если ссылаешься на статью НПА — формулируй: «согласно ст. X Закона КР "..."» или «в соответствии с ч. Y ст. X ГК КР».
+
+═══ ИСПОЛЬЗОВАНИЕ КОНТЕКСТА НПА ═══
+- Если в промпте есть блок «Контекст — N релевантных статей НПА КР» — используй ТОЛЬКО эти статьи как источник.
+- Не выдумывай номера статей, сроки, суммы.
+- Если контекста нет — опирайся на свои знания законодательства КР, но избегай конкретных номеров без подтверждения.
+
+═══ ЗАПРЕТЫ ═══
+1. НИКАКИХ свободных текстов вне json-блока.
+2. НИКАКИХ объяснений в insertion_text типа «Это статья X, потому что...» — только сам текст.
+3. НЕ генерируй полный исковой документ с реквизитами — это L4-запрос, скажи в reasoning что нужно к юристу, а insertion_text оставь пустым.
+4. НЕ повторяй то что уже есть в документе.
+`.trim();
+
+// ============================================================
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ============================================================
 
@@ -955,15 +1009,98 @@ async function handleThinking(message, history, retrievalResult, res) {
 }
 
 // ============================================================
+// РЕЖИМ AGENT (IDE Document Editor — Cursor-style)
+// ============================================================
+// Принимает уже-собранный фронтом промпт (содержит документ + задачу),
+// прибавляет лёгкий retrieval НПА для возможных цитат, и отдаёт ответ
+// с системным промптом AGENT_SYSTEM_PROMPT (строгий JSON).
+// История чата сохраняется — агент видит предыдущие правки.
+// ============================================================
+async function handleAgent(message, history, res, retryCount = 0) {
+    const cleanHistory = sanitizeHistory(history);
+
+    // Light retrieval — чтобы агент мог цитировать конкретные нормы НПА.
+    // Не отправляем status-события клиенту (агент-режим тихий).
+    let contextBlock = '';
+    let allMatches = [];
+    try {
+        const isCasual = isCasualMessage(message);
+        if (!isCasual) {
+            const retrieval = await adaptiveRetrieval(message, 'fast'); // 'fast' = top-3 core + top-7 context
+            const { core = [], context = [], all = [] } = retrieval || {};
+            allMatches = all;
+            if (all.length > 0) {
+                const formatted = formatContextWithHierarchy(core, context);
+                contextBlock = `\n\n═══ КОНТЕКСТ — ${all.length} релевантных статей НПА КР (используй для цитирования) ═══\n\n${formatted}\n\n═══ КОНЕЦ КОНТЕКСТА ═══\n`;
+            }
+        }
+    } catch (retErr) {
+        console.warn('[AGENT] Retrieval skipped:', retErr.message);
+    }
+
+    const userPrompt = message + contextBlock;
+
+    console.log(`[AGENT] Готовлю ответ | НПА найдено: ${allMatches.length} | history: ${cleanHistory.length}`);
+
+    const apiKey = getNextKey();
+    try {
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({
+            model: "gemini-flash-latest",
+            systemInstruction: AGENT_SYSTEM_PROMPT,
+            generationConfig: {
+                // Мы хотим валидный JSON — temperature ниже, формат поддерживаем
+                temperature: 0.4,
+                topP: 0.9,
+                maxOutputTokens: 4096
+            }
+        });
+        const chat = model.startChat({ history: cleanHistory });
+        const result = await chat.sendMessageStream(userPrompt);
+
+        for await (const chunk of result.stream) {
+            const chunkText = chunk.text();
+            if (chunkText) res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+        }
+
+        // Источники для цитирования в UI (chip-бейджи под ответом)
+        if (allMatches.length > 0) {
+            const sourcesArr = allMatches.slice(0, 5);
+            const sources = sourcesArr.map(m =>
+                `${m.metadata?.npa_title || 'НПА'} — ${m.metadata?.article_title || ''}`
+            );
+            const metadata = sourcesArr.map(m => ({
+                npa_title: m.metadata?.npa_title || '',
+                article_title: m.metadata?.article_title || '',
+                full_text: m.metadata?.full_text || ''
+            }));
+            res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
+        }
+    } catch (err) {
+        console.error(`[AGENT] Ошибка Gemini (попытка ${retryCount + 1}):`, err.message);
+        serverStats.apiErrors++;
+        blockKey(apiKey);
+
+        if (retryCount >= Math.min(KEYS.length, 3)) {
+            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Серверы AI временно перегружены. Повторите запрос через минуту.' })}\n\n`);
+            return;
+        }
+
+        await delay(1500);
+        return handleAgent(message, history, res, retryCount + 1);
+    }
+}
+
+// ============================================================
 // ГЛАВНЫЙ МАРШРУТ
 // ============================================================
 app.post('/api/chat', async (req, res) => {
     serverStats.totalRequests++;
     try {
-        const { message, history, mode = 'fast' } = req.body;
+        const { message, history, mode = 'fast', agentMode = false } = req.body;
         if (!message) return res.status(400).json({ reply: "Пусто" });
 
-        console.log(`\nЗапрос: "${message}" | Режим: ${mode}`);
+        console.log(`\nЗапрос: "${message.slice(0,80)}${message.length>80?'…':''}" | Режим: ${mode}${agentMode?' [AGENT]':''}`);
 
         // SSE headers с антибуферизацией Render
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -972,6 +1109,18 @@ app.post('/api/chat', async (req, res) => {
         res.setHeader('X-Accel-Buffering', 'no');   // отключить буферизацию прокси
         if (typeof res.flushHeaders === 'function') {
             res.flushHeaders();                      // сразу отправить headers клиенту
+        }
+
+        // ════════════════════════════════════════════════════════════════
+        // AGENT MODE (IDE document editing — Cursor-style)
+        // Перехватываем ДО fast/thinking — нам нужен другой system-prompt
+        // и облегчённый retrieval для цитирования НПА в insertion_text.
+        // ════════════════════════════════════════════════════════════════
+        if (agentMode) {
+            await handleAgent(message, history, res);
+            res.write('data: [DONE]\n\n');
+            res.end();
+            return;
         }
 
         if (mode === 'fast') {
