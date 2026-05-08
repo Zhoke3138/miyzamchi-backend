@@ -49,6 +49,32 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/chat', apiLimiter);
 
+// --- MINJUST API PROXY (CORS Bypass) ---
+app.use('/api/minjust', async (req, res) => {
+    try {
+        const targetUrl = `https://cbd.minjust.gov.kg/api/v1${req.url}`;
+        const response = await fetch(targetUrl, {
+            method: req.method,
+            headers: {
+                'Accept': 'application/json, text/plain, */*',
+                'User-Agent': 'Miyzamchy-Legal-IDE/1.0'
+            }
+        });
+        
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            return res.json(data);
+        } else {
+            const text = await response.text();
+            return res.send(text);
+        }
+    } catch (error) {
+        console.error('[Minjust Proxy] Error:', error.message);
+        res.status(500).json({ error: 'Minjust API Proxy Error', details: error.message });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 
 // --- НАСТРОЙКИ ИЗ RENDER (Environment Variables) ---
