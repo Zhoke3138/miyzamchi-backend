@@ -56,8 +56,8 @@ app.use('/api/minjust', async (req, res) => {
         const response = await fetch(targetUrl, {
             method: req.method,
             headers: {
-                'Accept': 'application/json, text/plain, */*',
-                'User-Agent': 'Miyzamchy-Legal-IDE/1.0'
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         });
         
