@@ -53,35 +53,40 @@ const apiLimiter = rateLimit({
 app.use('/api/chat', apiLimiter);
 
 // --- MINJUST API PROXY (CORS Bypass) ---
-app.use('/api/minjust', async (req, res) => {
-    try {
-        const targetUrl = `https://cbd.minjust.gov.kg/api/v1${req.url}`;
-        const response = await fetch(targetUrl, {
-            method: req.method,
-            headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-        });
-        const text = await response.text();
-        
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-            try {
-                const data = JSON.parse(text);
-                return res.json(data);
-            } catch (err) {
-                console.error('[Minjust Proxy] JSON Parse Error:', err.message);
-                return res.status(500).json({ error: 'Minjust JSON Parse Error', details: text });
-            }
-        } else {
-            console.error('[Minjust Proxy] Received non-JSON response');
-            return res.status(500).send(text);
-        }
-    } catch (error) {
-        console.error('[Minjust Proxy] Error:', error.message);
-        res.status(500).json({ error: 'Minjust API Proxy Error', details: error.message });
+app.get('/api/minjust/*', async (req, res) => {
+  try {
+    // Извлекаем только путь и параметры после /api/minjust
+    const endpoint = req.originalUrl.replace('/api/minjust', '');
+    const targetUrl = `https://cbd.minjust.gov.kg/api/v1${endpoint}`;
+    
+    console.log(`[PROXY] Отправляем запрос на Минюст: ${targetUrl}`);
+
+    const response = await fetch(targetUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': 'https://cbd.minjust.gov.kg/',
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+      }
+    });
+
+    // Читаем ответ как текст, чтобы не крашнуться на .json(), если Минюст вернет HTML
+    const text = await response.text();
+
+    if (!response.ok) {
+      console.error(`[PROXY ERROR] Минюст ответил статусом ${response.status}:`, text);
+      return res.status(response.status).send(text);
     }
+
+    // Если всё ок, отдаем данные на фронтенд
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).send(text);
+
+  } catch (error) {
+    console.error('[PROXY CRITICAL ERROR]:', error.message);
+    res.status(500).json({ error: 'Internal Server Error', details: error.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
