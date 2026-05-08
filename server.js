@@ -53,25 +53,29 @@ const apiLimiter = rateLimit({
 app.use('/api/chat', apiLimiter);
 
 // --- MINJUST API PROXY (CORS Bypass) ---
-app.get('/api/minjust/*', async (req, res) => {
+app.all('/api/minjust/*', async (req, res) => {
   try {
-    // Извлекаем только путь и параметры после /api/minjust
     const endpoint = req.originalUrl.replace('/api/minjust', '');
     const targetUrl = `https://cbd.minjust.gov.kg/api/v1${endpoint}`;
     
     console.log(`[PROXY] Отправляем запрос на Минюст: ${targetUrl}`);
 
-    const response = await fetch(targetUrl, {
-      method: 'GET',
+    const fetchOptions = {
+      method: req.method,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json, text/plain, */*',
         'Referer': 'https://cbd.minjust.gov.kg/',
-        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Content-Type': 'application/json'
       }
-    });
+    };
 
-    // Читаем ответ как текст, чтобы не крашнуться на .json(), если Минюст вернет HTML
+    if (req.method !== 'GET' && req.method !== 'HEAD' && Object.keys(req.body || {}).length > 0) {
+      fetchOptions.body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(targetUrl, fetchOptions);
     const text = await response.text();
 
     if (!response.ok) {
@@ -79,7 +83,6 @@ app.get('/api/minjust/*', async (req, res) => {
       return res.status(response.status).send(text);
     }
 
-    // Если всё ок, отдаем данные на фронтенд
     res.setHeader('Content-Type', 'application/json');
     res.status(200).send(text);
 
