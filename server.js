@@ -16,8 +16,11 @@ app.use(helmet({
 }));
 
 // --- CORS (Открыт временно, пока нет финального домена) ---
-app.use(cors());
-
+app.use(cors({
+    origin: '*', // Для тестов ставим звездочку, потом ограничим
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ limit: '2mb', extended: true }));
 
@@ -60,14 +63,20 @@ app.use('/api/minjust', async (req, res) => {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         });
+        const text = await response.text();
         
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
-            const data = await response.json();
-            return res.json(data);
+            try {
+                const data = JSON.parse(text);
+                return res.json(data);
+            } catch (err) {
+                console.error('[Minjust Proxy] JSON Parse Error:', err.message);
+                return res.status(500).json({ error: 'Minjust JSON Parse Error', details: text });
+            }
         } else {
-            const text = await response.text();
-            return res.send(text);
+            console.error('[Minjust Proxy] Received non-JSON response');
+            return res.status(500).send(text);
         }
     } catch (error) {
         console.error('[Minjust Proxy] Error:', error.message);
