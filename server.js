@@ -52,12 +52,33 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/chat', apiLimiter);
 
-// --- MINJUST API PROXY (CORS Bypass) ---
+// --- MINJUST API PROXY (CORS Bypass & Caching) ---
+const apiCache = new Map();
+const CACHE_TTL = 1000 * 60 * 60; // 1 час
+
 app.all('/api/minjust/*', async (req, res) => {
   try {
     const endpoint = req.originalUrl.replace('/api/minjust', '');
     const targetUrl = `https://cbd.minjust.gov.kg/api/v1${endpoint}`;
     
+    // Генерируем ключ кэша (если POST — берем параметры, если GET — берем endpoint)
+    let cacheKey = `minjust_${req.method}_${endpoint}`;
+    if (req.method === 'POST' && req.body) {
+      cacheKey += `_${req.body.refTypeId || 'any'}_${req.body.refStatusId || 'any'}`;
+    }
+
+    // Проверяем кэш
+    if (apiCache.has(cacheKey)) {
+      const cached = apiCache.get(cacheKey);
+      if (Date.now() - cached.timestamp < CACHE_TTL) {
+        console.log(`[PROXY CACHE HIT] Отдаем из кэша: ${cacheKey}`);
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(200).send(cached.data);
+      } else {
+        apiCache.delete(cacheKey); // Кэш устарел
+      }
+    }
+
     console.log(`[PROXY] Отправляем запрос на Минюст: ${targetUrl}`);
 
     const fetchOptions = {
@@ -82,6 +103,9 @@ app.all('/api/minjust/*', async (req, res) => {
       console.error(`[PROXY ERROR] Минюст ответил статусом ${response.status}:`, text);
       return res.status(response.status).send(text);
     }
+
+    // Сохраняем успешный ответ в кэш
+    apiCache.set(cacheKey, { data: text, timestamp: Date.now() });
 
     res.setHeader('Content-Type', 'application/json');
     res.status(200).send(text);
