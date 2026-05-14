@@ -55,22 +55,34 @@ app.use('/api/chat', apiLimiter);
 // --- MINJUST API PROXY (CORS Bypass & Caching) ---
 const apiCache = new Map();
 const CACHE_TTL = 1000 * 60 * 60; // 1 час
+const MAX_CACHE_SIZE = 200;        // LRU-лимит: не более 200 записей
 
 app.all('/api/minjust/*', async (req, res) => {
   try {
     const endpoint = req.originalUrl.replace('/api/minjust', '');
     const targetUrl = `https://cbd.minjust.gov.kg/api/v1${endpoint}`;
     
-    // Генерируем ключ кэша (если POST — берем параметры, если GET — берем endpoint)
+    // Генерируем ключ кэша.
+    // GET:  ключ = метод + endpoint (включая query-строку из originalUrl)
+    // POST: ключ = метод + endpoint + стабильный JSON всего тела (ключи сортированы,
+    //       чтобы разный порядок свойств давал одинаковый ключ).
     let cacheKey = `minjust_${req.method}_${endpoint}`;
-    if (req.method === 'POST' && req.body) {
-      cacheKey += `_${req.body.refTypeId || 'any'}_${req.body.refStatusId || 'any'}`;
+    if (req.method === 'POST' && req.body && Object.keys(req.body).length > 0) {
+      const sortedBody = Object.keys(req.body).sort().reduce((acc, k) => {
+        acc[k] = req.body[k];
+        return acc;
+      }, {});
+      cacheKey += `_${JSON.stringify(sortedBody)}`;
     }
 
     // Проверяем кэш
     if (apiCache.has(cacheKey)) {
       const cached = apiCache.get(cacheKey);
       if (Date.now() - cached.timestamp < CACHE_TTL) {
+        // LRU: обновляем позицию — удаляем и переставляем в конец Map,
+        // чтобы самая свежая запись не была кандидатом на вытеснение.
+        apiCache.delete(cacheKey);
+        apiCache.set(cacheKey, cached);
         console.log(`[PROXY CACHE HIT] Отдаем из кэша: ${cacheKey}`);
         res.setHeader('Content-Type', 'application/json');
         return res.status(200).send(cached.data);
@@ -104,7 +116,12 @@ app.all('/api/minjust/*', async (req, res) => {
       return res.status(response.status).send(text);
     }
 
-    // Сохраняем успешный ответ в кэш
+    // Сохраняем успешный ответ в кэш (LRU-вытеснение при переполнении)
+    if (apiCache.size >= MAX_CACHE_SIZE) {
+      // Удаляем самую старую запись (первый ключ в Map — наименее недавно использованный)
+      apiCache.delete(apiCache.keys().next().value);
+      console.log(`[PROXY CACHE EVICT] Вытеснена старейшая запись. Размер: ${apiCache.size}`);
+    }
     apiCache.set(cacheKey, { data: text, timestamp: Date.now() });
 
     res.setHeader('Content-Type', 'application/json');
@@ -343,13 +360,19 @@ function sendStatus(res, text, icon) {
 //   context — статьи среднего score — используются как справка
 //   all     — объединение для логирования и источников
 // Если res передан — шлёт SSE-статусы после каждого реального этапа pipeline
-async function adaptiveRetrieval(query, mode, res = null) {
-    // --- Настройки ---
-    const maxK = mode === 'thinking' ? 25 : 10;
-    const minK = mode === 'thinking' ? 5 : 3;
-    const absoluteMinScore = 0.45;
-    const coreScoreThreshold = 0.75;
-    const elbowDropRatio = 0.15;
+async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
+    // --- Настройки (mode задаёт дефолты, opts может переопределить) ---
+    const defaults = {
+        thinking: { maxK: 25, minK: 5 },
+        agent:    { maxK: 15, minK: 4 },   // средний — между fast и thinking
+        fast:     { maxK: 10, minK: 3 }
+    };
+    const base = defaults[mode] || defaults.fast;
+    const maxK = opts.maxK ?? base.maxK;
+    const minK = opts.minK ?? base.minK;
+    const absoluteMinScore = opts.absoluteMinScore ?? 0.45;
+    const coreScoreThreshold = opts.coreScoreThreshold ?? 0.75;
+    const elbowDropRatio = opts.elbowDropRatio ?? 0.15;
     
     const streamStatuses = res && mode === 'thinking';
     
@@ -867,9 +890,17 @@ const AGENT_SYSTEM_PROMPT = `
 - Если ссылаешься на статью НПА — формулируй: «согласно ст. X Закона КР "..."» или «в соответствии с ч. Y ст. X ГК КР».
 
 ═══ ИСПОЛЬЗОВАНИЕ КОНТЕКСТА НПА ═══
-- Если в промпте есть блок «Контекст — N релевантных статей НПА КР» — используй ТОЛЬКО эти статьи как источник.
-- Не выдумывай номера статей, сроки, суммы.
-- Если контекста нет — опирайся на свои знания законодательства КР, но избегай конкретных номеров без подтверждения.
+- Если в промпте есть блок «Контекст — N релевантных статей НПА КР» — это ЕДИНСТВЕННЫЙ источник правовой истины. Используй ТОЛЬКО эти статьи.
+- ⭐ КЛЮЧЕВЫЕ статьи — основной источник; 📚 ВСПОМОГАТЕЛЬНЫЕ — как смежные/процедурные нормы.
+- Цитируй точно: «согласно ст. X Закона КР "..."» — номер статьи и название НПА бери ИЗ КОНТЕКСТА, не из памяти.
+- Если контекста нет — НЕ упоминай конкретных номеров статей. Пиши «согласно действующему законодательству КР» или «в соответствии с соответствующими нормами УК/ГК/ТК КР».
+
+═══ КРИТИЧЕСКОЕ ПРАВИЛО — БЕЗ ГАЛЛЮЦИНАЦИЙ ═══
+1. ЗАПРЕЩЕНО выдумывать номера статей, сроки, суммы, даты принятия НПА.
+2. ЗАПРЕЩЕНО утверждать о смене редакций кодексов («в 1997 это была ст. X, в 2021 стала ст. Y») если этого нет В КОНТЕКСТЕ выше. Реформа УК КР 2021 г. перенумеровала статьи, но БЕЗ КОНТЕКСТА ты точных соответствий не знаешь.
+3. Если автор документа УЖЕ указал номера статей — НЕ оспаривай их без явного подтверждения из контекста. Просто работай с тем что есть.
+4. Если в АНАЛИЗЕ упоминаешь конкретные номера — обязательно добавь в reasoning disclaimer:
+   "⚠️ Рекомендую сверить номера статей с актуальной редакцией на cbd.minjust.gov.kg."
 
 ═══ ЗАПРЕТЫ ═══
 1. НИКАКИХ свободных текстов вне json-блока.
@@ -1083,7 +1114,7 @@ async function handleThinking(message, history, retrievalResult, res) {
 // с системным промптом AGENT_SYSTEM_PROMPT (строгий JSON).
 // История чата сохраняется — агент видит предыдущие правки.
 // ============================================================
-async function handleAgent(message, history, res, retryCount = 0) {
+async function handleAgent(message, history, res, retryCount = 0, userQuery = null) {
     const cleanHistory = sanitizeHistory(history);
 
     // Light retrieval — чтобы агент мог цитировать конкретные нормы НПА.
@@ -1091,9 +1122,24 @@ async function handleAgent(message, history, res, retryCount = 0) {
     let contextBlock = '';
     let allMatches = [];
     try {
-        const isCasual = isCasualMessage(message);
+        // ▸ Для embedding используем КОРОТКИЙ userQuery если он передан фронтом
+        //   (иначе вектор размывается всем текстом документа и retrieval теряет точность).
+        // ▸ Fallback на полный message только если userQuery отсутствует.
+        const queryForEmbedding = (userQuery && userQuery.trim()) || message;
+        const isCasual = isCasualMessage(queryForEmbedding);
         if (!isCasual) {
-            const retrieval = await adaptiveRetrieval(message, 'fast'); // 'fast' = top-3 core + top-7 context
+            // ▸ Адаптивный TopK для агента:
+            //   - короткий запрос (<60 символов, явная узкая просьба) → 8-10 матчей
+            //   - средний запрос (60-200) → 12-15 матчей
+            //   - длинный/комплексный (>200) → 18-22 матча
+            const qLen = queryForEmbedding.length;
+            const adaptiveMaxK = qLen > 200 ? 22 : qLen > 60 ? 15 : 10;
+            const adaptiveMinK = qLen > 200 ? 6  : qLen > 60 ? 4  : 3;
+            console.log(`[AGENT] Adaptive retrieval: query=${qLen}ch → maxK=${adaptiveMaxK} minK=${adaptiveMinK}`);
+            const retrieval = await adaptiveRetrieval(queryForEmbedding, 'agent', null, {
+                maxK: adaptiveMaxK,
+                minK: adaptiveMinK
+            });
             const { core = [], context = [], all = [] } = retrieval || {};
             allMatches = all;
             if (all.length > 0) {
@@ -1154,7 +1200,7 @@ async function handleAgent(message, history, res, retryCount = 0) {
         }
 
         await delay(1500);
-        return handleAgent(message, history, res, retryCount + 1);
+        return handleAgent(message, history, res, retryCount + 1, userQuery);
     }
 }
 
@@ -1164,10 +1210,10 @@ async function handleAgent(message, history, res, retryCount = 0) {
 app.post('/api/chat', async (req, res) => {
     serverStats.totalRequests++;
     try {
-        const { message, history, mode = 'fast', agentMode = false } = req.body;
+        const { message, history, mode = 'fast', agentMode = false, userQuery = null } = req.body;
         if (!message) return res.status(400).json({ reply: "Пусто" });
 
-        console.log(`\nЗапрос: "${message.slice(0,80)}${message.length>80?'…':''}" | Режим: ${mode}${agentMode?' [AGENT]':''}`);
+        console.log(`\nЗапрос: "${message.slice(0,80)}${message.length>80?'…':''}" | Режим: ${mode}${agentMode?' [AGENT]':''}${userQuery?` | userQuery: ${userQuery.slice(0,60)}`:''}`);
 
         // SSE headers с антибуферизацией Render
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -1184,7 +1230,7 @@ app.post('/api/chat', async (req, res) => {
         // и облегчённый retrieval для цитирования НПА в insertion_text.
         // ════════════════════════════════════════════════════════════════
         if (agentMode) {
-            await handleAgent(message, history, res);
+            await handleAgent(message, history, res, 0, userQuery);
             res.write('data: [DONE]\n\n');
             res.end();
             return;
