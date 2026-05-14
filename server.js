@@ -196,9 +196,13 @@ app.get('/api/stats', (req, res) => {
 // --- УМНАЯ РОТАЦИЯ КЛЮЧЕЙ ---
 const blockedKeys = new Map();
 
-function blockKey(key) {
-    blockedKeys.set(key, Date.now() + 60_000);
-    console.log(`🔒 Ключ заблокирован на 60с (всего заблок: ${blockedKeys.size})`);
+// 503 (high demand) — это временный shedding на стороне Google. Блокировка ключа
+// на полную минуту слишком агрессивна: при пике все 5 ключей выпадают разом и
+// пользователь ждёт минуты. Делаем короткое окно (15с) — этого хватает чтобы
+// дать ключу остыть, но не вырубаем всю ротацию надолго.
+function blockKey(key, durationMs = 15_000) {
+    blockedKeys.set(key, Date.now() + durationMs);
+    console.log(`🔒 Ключ заблокирован на ${Math.round(durationMs/1000)}с (всего заблок: ${blockedKeys.size})`);
 }
 
 function isKeyBlocked(key) {
@@ -1034,7 +1038,7 @@ async function handleFast(message, history, retrievalResult, res, retryCount = 0
             return;
         }
 
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 800));
         console.log(`[FAST MODE] Делаю повторную попытку...`);
         return handleFast(message, history, retrievalResult, res, retryCount + 1);
     }
@@ -1210,10 +1214,10 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
 app.post('/api/chat', async (req, res) => {
     serverStats.totalRequests++;
     try {
-        const { message, history, mode = 'fast', agentMode = false, userQuery = null } = req.body;
+        const { message, history, mode = 'fast', agentMode = false, userQuery = null, skipRetrieval = false } = req.body;
         if (!message) return res.status(400).json({ reply: "Пусто" });
 
-        console.log(`\nЗапрос: "${message.slice(0,80)}${message.length>80?'…':''}" | Режим: ${mode}${agentMode?' [AGENT]':''}${userQuery?` | userQuery: ${userQuery.slice(0,60)}`:''}`);
+        console.log(`\nЗапрос: "${message.slice(0,80)}${message.length>80?'…':''}" | Режим: ${mode}${agentMode?' [AGENT]':''}${skipRetrieval?' [skipRAG]':''}${userQuery?` | userQuery: ${userQuery.slice(0,60)}`:''}`);
 
         // SSE headers с антибуферизацией Render
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -1242,6 +1246,8 @@ app.post('/api/chat', async (req, res) => {
 
             if (casual) {
                 console.log("Режим: приветствие — Pinecone пропущен");
+            } else if (skipRetrieval) {
+                console.log("Режим: skipRetrieval=true — Pinecone пропущен (chunk-summarization)");
             } else {
                 retrievalResult = await adaptiveRetrieval(message, 'fast');
             }
@@ -1263,8 +1269,8 @@ app.post('/api/chat', async (req, res) => {
         }
         else if (mode === 'thinking') {
             const casual = isCasualMessage(message);
-            if (casual) {
-                console.log("Режим: приветствие — Pinecone пропущен (Thinking)");
+            if (casual || skipRetrieval) {
+                console.log(`Режим: ${skipRetrieval ? 'skipRetrieval' : 'приветствие'} — Pinecone пропущен (Thinking)`);
                 await handleFast(message, history, { core: [], context: [], all: [] }, res);
             } else {
                 // res передаётся в adaptiveRetrieval — чтобы шли статусы этапов
