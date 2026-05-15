@@ -127,7 +127,6 @@ async function getEmbedding(text, retryCount = 0) {
         });
         const data = await response.json();
         
-        // Добавил переключение ключа и при 503 ошибке!
         if ((response.status === 429 || response.status === 503) && retryCount < KEYS.length) {
             blockKey(activeKey);
             return getEmbedding(text, retryCount + 1);
@@ -161,7 +160,7 @@ function isCasualMessage(message) {
     return GREETING_PATTERNS.some(pattern => pattern.test(cleaned)) && cleaned.length < 50;
 }
 
-// --- ГЛАВНАЯ ФУНКЦИЯ С УМНОЙ РОТАЦИЕЙ (КАК В ВЕБЕ) ---
+// --- ГЛАВНАЯ ФУНКЦИЯ С УМНОЙ И ТИХОЙ РОТАЦИЕЙ ---
 async function getAIAnswer(message, history = [], onProgress = null) {
     try {
         const isCasual = isCasualMessage(message);
@@ -199,13 +198,13 @@ async function getAIAnswer(message, history = [], onProgress = null) {
         const maxRetries = KEYS.length > 0 ? KEYS.length : 3;
 
         while (retries <= maxRetries) {
-            const activeKey = getNextKey(); // БЕРЕМ НОВЫЙ КЛЮЧ ВНУТРИ ЦИКЛА!
+            const activeKey = getNextKey(); 
             try {
                 const genAI = new GoogleGenerativeAI(activeKey);
                 const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
                 
                 const model = genAI.getGenerativeModel({
-                    model: "gemini-1.5-flash", // Оставил стабильную версию
+                    model: "gemini-1.5-flash",
                     systemInstruction: systemPrompt
                 });
 
@@ -215,15 +214,15 @@ async function getAIAnswer(message, history = [], onProgress = null) {
 
             } catch (error) {
                 console.warn(`[Gemini Error] Попытка ${retries + 1} провалена: ${error.message}`);
-                blockKey(activeKey); // Отправляем ключ в карантин на 15 сек!
+                blockKey(activeKey); // Карантин для упавшего ключа на 15 сек
 
                 retries++;
                 if (retries >= maxRetries) {
-                    throw error; // Если убили все 13 ключей — сдаемся
+                    throw error; 
                 }
 
-                if (onProgress) await onProgress(`🔄 Сервер перегружен. Переключаю ключ (попытка ${retries + 1})...`);
-                await new Promise(resolve => setTimeout(resolve, 800)); // Пауза 800мс как в server.js
+                // Ретрай идет молча, юзер в Telegram видит стабильный статус
+                await new Promise(resolve => setTimeout(resolve, 800)); 
             }
         }
 
