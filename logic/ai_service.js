@@ -44,11 +44,11 @@ const systemInstruction = [
     "Твоя задача — помогать гражданам понимать законодательство КР просто, точно и практично, а так же помогать студенческой группе моего создателя ГПД-1-25.",
     "",
     "# ДЛИНА ОТВЕТА — СТРОГОЕ ПРАВИЛО",
-    "Отвечай СОРАЗМЕРНО вопросу. Это критически важно:",
-    "- Простой вопрос (1-2 предложения от пользователя) → ответ 2-5 предложений",
+    "Отвечай СОРАЗМЕРНО вопросу.",
+    "- Простой вопрос (1-2 предложения) → ответ 2-5 предложений",
     "- Средний вопрос (конкретная ситуация) → ответ 1-3 абзаца",
     "- Сложный вопрос (многосоставная ситуация) → структурированный ответ с разделами",
-    "- Запрос на документ → только документ + краткие инструкции",
+    "- Запрос на анализ документа → оцени документ на соответствие нормам, укажи на ошибки и дай рекомендации.",
     "ЗАПРЕЩЕНО растягивать ответ списками и подзаголовками там где достаточно абзаца.",
     "ЗАПРЕЩЕНО повторять одну мысль разными словами.",
     "",
@@ -81,35 +81,20 @@ const systemInstruction = [
 const BASE_CONSULTANT_PROMPT = `
 Ты — **Мыйзамчы Эксперт**, опытный практикующий юрист Кыргызской Республики.
 Ты не справочник законов — ты живой юрист, который реально помогает людям решить их проблему.
-
-═══ АБСОЛЮТНОЕ ПРАВИЛО: ЗАПРЕТ ГАЛЛЮЦИНАЦИЙ ═══
 Твои ответы должны основываться ИСКЛЮЧИТЕЛЬНО на предоставленных статьях законов КР (контексте).
 Если в контексте нет ответа на вопрос — ты ОБЯЗАН прямо сказать: «К сожалению, в моей текущей базе НПА нет информации по этому вопросу.»
-
-═══ ПРАВИЛО ЮРИДИЧЕСКОЙ ИЕРАРХИИ ═══
-Аргументация строго сверху вниз: Кодексы -> Законы -> Подзаконные акты.
-
-═══ ГЛАВНЫЙ ПРИНЦИП ═══
-Человек пришёл не за цитатами — он пришёл за решением проблемы.
-Понять ситуацию → дать конкретный план → при необходимости составить документ.
 `.trim();
 
-// --- МУЛЬТИМЕДИА И AI-ЛОГИКА ---
-
+// --- МУЛЬТИМЕДИА И ПАРСИНГ ---
 async function extractTextFromMedia(mimeType, base64Data) {
     const activeKey = getNextKey();
     const genAI = new GoogleGenerativeAI(activeKey);
     const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-    const prompt = "Извлеки текст из этого медиафайла. Если это голосовое сообщение, сделай точную транскрипцию (переведи голос в текст). Если это фото, распознай весь читаемый текст и опиши суть документа или ситуации. Выведи ТОЛЬКО текст, без вступительных слов.";
-
-    const result = await model.generateContent([
-        prompt,
-        { inlineData: { data: base64Data, mimeType } }
-    ]);
+    const prompt = "Извлеки текст из этого медиафайла. Если это голос, сделай точную транскрипцию. Если фото, распознай весь читаемый текст. Выведи ТОЛЬКО текст, без вступительных слов.";
+    const result = await model.generateContent([ prompt, { inlineData: { data: base64Data, mimeType } } ]);
     return result.response.text();
 }
 
-// --- ПАРСИНГ PDF И WORD ---
 async function extractTextFromDocument(buffer, mimeType, fileName) {
     try {
         if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
@@ -119,11 +104,11 @@ async function extractTextFromDocument(buffer, mimeType, fileName) {
             const result = await mammoth.extractRawText({ buffer: buffer });
             return result.value;
         } else {
-            return "[Ошибка: Формат документа не поддерживается. Пожалуйста, отправьте PDF или Word (.docx)]";
+            return "[Ошибка: Формат не поддерживается. Нужен PDF или Word]";
         }
     } catch (e) {
-        console.error("Ошибка парсинга документа:", e);
-        return "[Ошибка: Не удалось прочитать текст из документа]";
+        console.error("Ошибка парсинга:", e);
+        return "[Ошибка чтения документа]";
     }
 }
 
@@ -174,13 +159,17 @@ function isCasualMessage(message) {
     return GREETING_PATTERNS.some(pattern => pattern.test(cleaned)) && cleaned.length < 50;
 }
 
-async function getAIAnswer(message, history = []) {
+// ДОБАВЛЕН ПАРАМЕТР onProgress ДЛЯ РЕАЛЬНЫХ СТАТУСОВ
+async function getAIAnswer(message, history = [], onProgress = null) {
     try {
         const isCasual = isCasualMessage(message);
         let contextText = '';
 
         if (!isCasual) {
+            if (onProgress) await onProgress('🧮 Векторизую запрос (перевожу в цифры)...');
             const vector = await getEmbedding(message);
+            
+            if (onProgress) await onProgress('🔎 Ищу релевантные статьи в базе Pinecone...');
             const matches = await searchPinecone(vector, 12);
             
             const core = matches.filter(m => (m.score || 0) >= 0.75);
@@ -193,13 +182,15 @@ async function getAIAnswer(message, history = []) {
         }
 
         const promptText = contextText 
-            ? `Контекст законов КР (⭐ ключевые и 📚 вспомогательные статьи):\n\n${contextText}\n\nВопрос пользователя: ${message}`
+            ? `Контекст законов КР:\n\n${contextText}\n\nВопрос пользователя: ${message}`
             : message;
 
         const activeKey = getNextKey();
         const genAI = new GoogleGenerativeAI(activeKey);
         const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
 
+        if (onProgress) await onProgress('⚖️ База найдена. Генерирую юридический ответ...');
+        
         const model = genAI.getGenerativeModel({
             model: "gemini-flash-latest",
             systemInstruction: systemPrompt
@@ -215,7 +206,7 @@ async function getAIAnswer(message, history = []) {
         return result.response.text();
     } catch (error) {
         console.error("AI Logic Error:", error.message);
-        return "Извините, произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте позже через веб-интерфейс или повторите попытку.";
+        return "Извините, произошла ошибка при обработке вашего запроса.";
     }
 }
 
