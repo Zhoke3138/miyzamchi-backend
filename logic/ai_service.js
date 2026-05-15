@@ -204,7 +204,7 @@ async function getAIAnswer(message, history = [], onProgress = null) {
                 const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
                 
                 const model = genAI.getGenerativeModel({
-                    model: "gemini-1.5-flash",
+                    model: "gemini-flash-latest",
                     systemInstruction: systemPrompt
                 });
 
