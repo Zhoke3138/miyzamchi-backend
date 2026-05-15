@@ -1,4 +1,6 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const pdfParse = require('pdf-parse');
+const mammoth = require('mammoth');
 require('dotenv').config();
 
 // --- CONFIG ---
@@ -107,6 +109,24 @@ async function extractTextFromMedia(mimeType, base64Data) {
     return result.response.text();
 }
 
+// --- ПАРСИНГ PDF И WORD ---
+async function extractTextFromDocument(buffer, mimeType, fileName) {
+    try {
+        if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
+            const data = await pdfParse(buffer);
+            return data.text;
+        } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || fileName.endsWith('.docx')) {
+            const result = await mammoth.extractRawText({ buffer: buffer });
+            return result.value;
+        } else {
+            return "[Ошибка: Формат документа не поддерживается. Пожалуйста, отправьте PDF или Word (.docx)]";
+        }
+    } catch (e) {
+        console.error("Ошибка парсинга документа:", e);
+        return "[Ошибка: Не удалось прочитать текст из документа]";
+    }
+}
+
 async function getEmbedding(text, retryCount = 0) {
     const activeKey = getNextKey();
     try {
@@ -199,4 +219,4 @@ async function getAIAnswer(message, history = []) {
     }
 }
 
-module.exports = { getAIAnswer, extractTextFromMedia };
+module.exports = { getAIAnswer, extractTextFromMedia, extractTextFromDocument };
