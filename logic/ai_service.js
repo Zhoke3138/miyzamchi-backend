@@ -170,7 +170,7 @@ async function getAIAnswer(message, history = [], onProgress = null) {
             const vector = await getEmbedding(message);
             
             if (onProgress) await onProgress('🔎 Ищу релевантные статьи в базе Pinecone...');
-            const matches = await searchPinecone(vector, 12);
+            const matches = await searchPinecone(vector, 10);
             
             const core = matches.filter(m => (m.score || 0) >= 0.75);
             const context = matches.filter(m => (m.score || 0) < 0.75 && (m.score || 0) >= 0.5);
