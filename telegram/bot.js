@@ -1,6 +1,7 @@
 const { Telegraf } = require('telegraf');
+const axios = require('axios');
 require('dotenv').config();
-const { getAIAnswer } = require('../logic/ai_service');
+const { getAIAnswer, extractTextFromMedia } = require('../logic/ai_service');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -11,58 +12,110 @@ if (!token) {
 
 const bot = new Telegraf(token);
 
+// --- ПАМЯТЬ ДИАЛОГОВ ---
+const sessions = new Map();
+
+function getHistory(chatId, userId) {
+  const key = `${chatId}_${userId}`;
+  if (!sessions.has(key)) {
+    sessions.set(key, []);
+  }
+  return sessions.get(key);
+}
+
+function saveToHistory(chatId, userId, userText, aiText) {
+  const key = `${chatId}_${userId}`;
+  const history = getHistory(chatId, userId);
+  history.push({ role: 'user', text: userText });
+  history.push({ role: 'assistant', text: aiText });
+  if (history.length > 6) history.splice(0, 2); // Помнит 3 последних вопроса-ответа
+}
+// -----------------------
+
 bot.start((ctx) => {
-  ctx.reply('Привет! Я Miyzamchi — ваш ИИ-ассистент по праву. Задайте мне вопрос!');
+  ctx.reply('Привет! Я Мыйзамчы — ваш ИИ-ассистент по праву. Задайте мне вопрос, отправьте фото документа или запишите голосовое сообщение!');
 });
 
-// Слушатель текстовых сообщений с УМНЫМ анти-спам фильтром
-bot.on('text', async (ctx) => {
-  const text = ctx.message.text.trim();
-  
-  // 1. Проверяем, ответил ли студент прямо на сообщение бота (свайп влево / Reply)
+// Обрабатываем текст, голос и фото
+bot.on(['text', 'voice', 'photo'], async (ctx) => {
+  const isGroup = ctx.chat.type !== 'private';
   const isReplyToBot = ctx.message.reply_to_message && ctx.message.reply_to_message.from.id === ctx.botInfo.id;
-
-  // 2. Умная регулярка: ищет корни слов со всеми окончаниями в начале текста, либо тег @бота
-  const botUsername = ctx.botInfo.username;
-  const triggerRegex = new RegExp(`^(@${botUsername}\\s*|мыйзамч[а-я]*\\s*|мизамч[а-я]*\\s*|бот[а-я]*\\s*|\\/ask\\s*)`, 'i');
+  const botUsername = ctx.botInfo.username || '';
   
-  const match = text.match(triggerRegex);
+  // Умный триггер: реагирует на "Мыйзамчы", "Мыйзамчыга", "Бот", "/ask" и тег @бота
+  const triggerRegex = new RegExp(`^(@${botUsername}\\s*|мыйзамч[а-я]*\\s*|мизамч[а-я]*\\s*|бот[а-я]*\\s*|\\/ask\\s*)`, 'i');
 
-  // Если студент не ответил боту напрямую и не использовал триггер — бот молчит (не спамит в группе)
-  if (!isReplyToBot && !match) {
-    return;
-  }
+  let question = "";
+  let isMedia = false;
+  let fileId = null;
+  let mimeType = "";
 
-  // Вытаскиваем сам вопрос, отрезая слово-триггер (если оно было)
-  let question = text;
-  if (match) {
-    question = text.substring(match[0].length).trim();
-  }
+  // 1. ОПРЕДЕЛЯЕМ ТИП СООБЩЕНИЯ
+  if (ctx.message.text) {
+    const text = ctx.message.text.trim();
+    const match = text.match(triggerRegex);
+    if (isGroup && !isReplyToBot && !match) return; // Анти-спам
+    question = match ? text.substring(match[0].length).trim() : text;
+    if (!question && !isReplyToBot) return ctx.reply('Слушаю! Напишите или наговорите ваш вопрос.', { reply_to_message_id: ctx.message.message_id });
 
-  // Если написали просто "бот" или тегнули, а вопроса нет
-  if (!question) {
-    return ctx.reply('Да? Я слушаю. Напишите свой юридический вопрос.', { reply_to_message_id: ctx.message.message_id });
+  } else if (ctx.message.voice) {
+    if (isGroup && !isReplyToBot) return; // В группе слушаем голос только по Reply к боту
+    isMedia = true;
+    fileId = ctx.message.voice.file_id;
+    mimeType = ctx.message.voice.mime_type || 'audio/ogg';
+
+  } else if (ctx.message.photo) {
+    const caption = ctx.message.caption || "";
+    const match = caption.match(triggerRegex);
+    if (isGroup && !isReplyToBot && !match) return; // Анти-спам для фото
+    question = match ? caption.substring(match[0].length).trim() : caption;
+    isMedia = true;
+    fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id; // Берем картинку лучшего качества
+    mimeType = 'image/jpeg';
   }
 
   try {
-    // Индикация печатания
     await ctx.sendChatAction('typing');
-    
-    // Временное сообщение с привязкой (Reply) к вопросу студента
-    const statusMsg = await ctx.reply('Анализирую законодательство...', { reply_to_message_id: ctx.message.message_id });
+    let statusMsg = null;
 
-    // Получение ответа от ИИ
-    const answer = await getAIAnswer(question);
+    // 2. ОБРАБОТКА МУЛЬТИМЕДИА
+    if (isMedia) {
+      statusMsg = await ctx.reply(ctx.message.voice ? '🎧 Распознаю аудио...' : '👁️ Изучаю фото...', { reply_to_message_id: ctx.message.message_id });
 
-    // Удаляем статус и отправляем финальный ответ с привязкой к автору
+      // Скачиваем файл с серверов Telegram
+      const fileUrl = await ctx.telegram.getFileLink(fileId);
+      const response = await axios.get(fileUrl.href, { responseType: 'arraybuffer' });
+      const base64Data = Buffer.from(response.data).toString('base64');
+
+      // Извлекаем текст
+      const mediaText = await extractTextFromMedia(mimeType, base64Data);
+      
+      // Объединяем подпись к фото и вытащенный текст
+      question = question ? `${question}\n\n[Текст из медиа: ${mediaText}]` : mediaText;
+
+      await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, '🧠 Данные получены. Ищу статьи в законах КР...');
+    } else {
+      statusMsg = await ctx.reply('Анализирую законодательство...', { reply_to_message_id: ctx.message.message_id });
+    }
+
+    // 3. ПАМЯТЬ И ПОИСК
+    const chatId = ctx.message.chat.id;
+    const userId = ctx.message.from.id;
+    const userHistory = getHistory(chatId, userId);
+
+    const answer = await getAIAnswer(question, userHistory);
+    saveToHistory(chatId, userId, question, answer);
+
+    // 4. ОТПРАВКА ОТВЕТА
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
-    await ctx.reply(answer, { 
+    await ctx.reply(answer, {
         parse_mode: 'Markdown',
-        reply_to_message_id: ctx.message.message_id 
+        reply_to_message_id: ctx.message.message_id
     });
+
   } catch (error) {
-    console.error('Ошибка в обработчике сообщений бота:', error);
-    ctx.reply('Произошла ошибка. Пожалуйста, попробуйте позже.', { reply_to_message_id: ctx.message.message_id });
+    console.error('Ошибка в обработчике:', error);
+    ctx.reply('Произошла ошибка при обработке. Возможно, файл слишком большой или сервисы перегружены.', { reply_to_message_id: ctx.message.message_id });
   }
 });
 
