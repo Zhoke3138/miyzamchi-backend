@@ -55,6 +55,10 @@ bot.start((ctx) => ctx.reply(helpMessage, { parse_mode: 'Markdown' }));
 bot.help((ctx) => ctx.reply(helpMessage, { parse_mode: 'Markdown' }));
 
 bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
+  // ЛОГИРОВАНИЕ: Видим в консоли Render, что пришло сообщение
+  const username = ctx.from.username || ctx.from.first_name;
+  console.log(`[Incoming] Сообщение от ${username} в чате ${ctx.chat.id}`);
+
   const isGroup = ctx.chat.type !== 'private';
   const isReplyToBot = ctx.message.reply_to_message && ctx.message.reply_to_message.from.id === ctx.botInfo.id;
   const botUsername = ctx.botInfo.username || '';
@@ -70,7 +74,6 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
 
   if (ctx.message.text) {
     const text = ctx.message.text.trim();
-    // Игнорируем команды старт и хелп в этом блоке
     if (text.startsWith('/start') || text.startsWith('/help')) return;
     
     const match = text.match(triggerRegex);
@@ -105,7 +108,6 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
 
   try {
     await ctx.sendChatAction('typing');
-    
     const initText = isMedia ? '⏳ Получаю файл...' : '⏳ Анализирую ваш вопрос...';
     const statusMsg = await ctx.reply(initText, { reply_to_message_id: ctx.message.message_id });
     
@@ -164,5 +166,31 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     ctx.reply('Произошла ошибка при обработке запроса. Возможно, сервера временно перегружены.', { reply_to_message_id: ctx.message.message_id });
   }
 });
+
+// --- ГЛОБАЛЬНАЯ ЗАЩИТА И УПРЯМЫЙ ЗАПУСК ---
+
+bot.catch((err, ctx) => {
+  console.error(`[Global Error] Ошибка бота в апдейте ${ctx.updateType}:`, err);
+});
+
+async function launchBot(retryCount = 0) {
+  try {
+    console.log(`[Bot] Попытка запуска #${retryCount + 1}...`);
+    await bot.launch();
+    console.log('✅ Telegram бот успешно запущен!');
+  } catch (err) {
+    console.error(`❌ Ошибка запуска бота (попытка ${retryCount + 1}):`, err.message);
+    if (retryCount < 10) {
+      console.log('Пробую перезапустить через 5 секунд...');
+      setTimeout(() => launchBot(retryCount + 1), 5000);
+    }
+  }
+}
+
+launchBot();
+
+// Плавная остановка
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 module.exports = bot;
