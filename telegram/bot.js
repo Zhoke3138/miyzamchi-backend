@@ -15,44 +15,54 @@ bot.start((ctx) => {
   ctx.reply('Привет! Я Miyzamchi — ваш ИИ-ассистент по праву. Задайте мне вопрос!');
 });
 
-// Слушатель текстовых сообщений с анти-спам фильтром
+// Слушатель текстовых сообщений с УМНЫМ анти-спам фильтром
 bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
-  const lowerText = text.toLowerCase();
+  
+  // 1. Проверяем, ответил ли студент прямо на сообщение бота (свайп влево / Reply)
+  const isReplyToBot = ctx.message.reply_to_message && ctx.message.reply_to_message.from.id === ctx.botInfo.id;
 
-  // Проверка триггеров: "мизамчы", "бот", или /ask
-  const triggers = ['мизамчы', 'бот', '/ask'];
-  const matchedTrigger = triggers.find(t => lowerText.startsWith(t));
+  // 2. Умная регулярка: ищет корни слов со всеми окончаниями в начале текста, либо тег @бота
+  const botUsername = ctx.botInfo.username;
+  const triggerRegex = new RegExp(`^(@${botUsername}\\s*|мыйзамч[а-я]*\\s*|мизамч[а-я]*\\s*|бот[а-я]*\\s*|\\/ask\\s*)`, 'i');
+  
+  const match = text.match(triggerRegex);
 
-  if (!matchedTrigger) {
-    // Если триггера нет, игнорируем сообщение (анти-спам для групп)
+  // Если студент не ответил боту напрямую и не использовал триггер — бот молчит (не спамит в группе)
+  if (!isReplyToBot && !match) {
     return;
   }
 
-  // Очистка текста от триггера
-  let question = text.substring(matchedTrigger.length).trim();
-  
-  // Если после триггера пусто, просим задать вопрос
+  // Вытаскиваем сам вопрос, отрезая слово-триггер (если оно было)
+  let question = text;
+  if (match) {
+    question = text.substring(match[0].length).trim();
+  }
+
+  // Если написали просто "бот" или тегнули, а вопроса нет
   if (!question) {
-    return ctx.reply('Да? Я слушаю. Задайте свой вопрос после слова "бот" или через команду /ask.');
+    return ctx.reply('Да? Я слушаю. Напишите свой юридический вопрос.', { reply_to_message_id: ctx.message.message_id });
   }
 
   try {
     // Индикация печатания
     await ctx.sendChatAction('typing');
     
-    // Временное сообщение о начале анализа
-    const statusMsg = await ctx.reply('Анализирую законодательство...');
+    // Временное сообщение с привязкой (Reply) к вопросу студента
+    const statusMsg = await ctx.reply('Анализирую законодательство...', { reply_to_message_id: ctx.message.message_id });
 
     // Получение ответа от ИИ
     const answer = await getAIAnswer(question);
 
-    // Удаляем статусное сообщение и отправляем финальный ответ
+    // Удаляем статус и отправляем финальный ответ с привязкой к автору
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
-    await ctx.reply(answer, { parse_mode: 'Markdown' });
+    await ctx.reply(answer, { 
+        parse_mode: 'Markdown',
+        reply_to_message_id: ctx.message.message_id 
+    });
   } catch (error) {
     console.error('Ошибка в обработчике сообщений бота:', error);
-    ctx.reply('Произошла ошибка. Пожалуйста, попробуйте позже.');
+    ctx.reply('Произошла ошибка. Пожалуйста, попробуйте позже.', { reply_to_message_id: ctx.message.message_id });
   }
 });
 
