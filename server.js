@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const path = require('path');
+const bot = require('./telegram/bot');
 
 const app = express();
 app.set('trust proxy', 1); // Доверие к прокси Render
@@ -1798,7 +1799,16 @@ app.listen(PORT, () => {
     console.log('Загружено ключей Gemini: ' + KEYS.length);
     console.log('Адрес базы: ' + cleanPineconeHost);
     console.log('==========================================\n');
+
+    // Запуск Telegram бота
+    bot.launch()
+        .then(() => console.log('Telegram бот успешно запущен'))
+        .catch(err => console.error('Ошибка запуска Telegram бота:', err));
 });
+
+// Грейсфул шатдаун для бота
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 // --- САМО-ПИНАТЕЛЬ ---
 const APP_URL = "https://miyzamchi-backend.onrender.com/ping";
