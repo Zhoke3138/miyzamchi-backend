@@ -35,7 +35,7 @@ function getNextKey() {
     return KEYS[currentKeyIndex % KEYS.length];
 }
 
-// --- SYSTEM PROMPTS (Full versions from server.js) ---
+// --- SYSTEM PROMPTS ---
 const systemInstruction = [
     "# ИДЕНТИЧНОСТЬ",
     "Ты — **Мыйзамчы**, юридический ИИ-ассистент Кыргызской Республики.",
@@ -73,7 +73,7 @@ const systemInstruction = [
     "",
     "# ФОРМАТИРОВАНИЕ",
     "- Используй Markdown: заголовки (##), **жирный** для норм и сроков.",
-    "- Дисклеймер в конце:  **(Создано с помощью ИИ \"Мыйзамчы\" ⚡).**"
+    "- Дисклеймер в самом конце (с новой строки курсивом): ⚡ *(Создано с помощью ИИ \"Мыйзамчы\")*"
 ].join("\n");
 
 const BASE_CONSULTANT_PROMPT = `
@@ -92,7 +92,20 @@ const BASE_CONSULTANT_PROMPT = `
 Понять ситуацию → дать конкретный план → при необходимости составить документ.
 `.trim();
 
-// --- CORE LOGIC ---
+// --- МУЛЬТИМЕДИА И AI-ЛОГИКА ---
+
+async function extractTextFromMedia(mimeType, base64Data) {
+    const activeKey = getNextKey();
+    const genAI = new GoogleGenerativeAI(activeKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = "Извлеки текст из этого медиафайла. Если это голосовое сообщение, сделай точную транскрипцию (переведи голос в текст). Если это фото, распознай весь читаемый текст и опиши суть документа или ситуации. Выведи ТОЛЬКО текст, без вступительных слов.";
+
+    const result = await model.generateContent([
+        prompt,
+        { inlineData: { data: base64Data, mimeType } }
+    ]);
+    return result.response.text();
+}
 
 async function getEmbedding(text, retryCount = 0) {
     const activeKey = getNextKey();
@@ -150,7 +163,6 @@ async function getAIAnswer(message, history = []) {
             const vector = await getEmbedding(message);
             const matches = await searchPinecone(vector, 12);
             
-            // Фильтрация и разделение на Ключевые и Вспомогательные
             const core = matches.filter(m => (m.score || 0) >= 0.75);
             const context = matches.filter(m => (m.score || 0) < 0.75 && (m.score || 0) >= 0.5);
 
@@ -166,8 +178,6 @@ async function getAIAnswer(message, history = []) {
 
         const activeKey = getNextKey();
         const genAI = new GoogleGenerativeAI(activeKey);
-        
-        // Используем Consultant Prompt если есть контекст, иначе базовый
         const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
 
         const model = genAI.getGenerativeModel({
@@ -189,4 +199,4 @@ async function getAIAnswer(message, history = []) {
     }
 }
 
-module.exports = { getAIAnswer };
+module.exports = { getAIAnswer, extractTextFromMedia };
