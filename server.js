@@ -51,6 +51,7 @@ const apiLimiter = rateLimit({
     message: { reply: 'Слишком много запросов. Пожалуйста, подождите одну минуту.' }
 });
 app.use('/api/chat', apiLimiter);
+app.use('/api/analyze-document', apiLimiter);
 
 // --- MINJUST API PROXY (CORS Bypass & Caching) ---
 const apiCache = new Map();
@@ -277,7 +278,9 @@ const embeddingCache = new Map();
 const EMBEDDING_MODEL = "models/gemini-embedding-001";
 
 // --- УНИВЕРСАЛЬНЫЙ FETCH ДЛЯ ВЕКТОРОВ ---
-async function getEmbedding(text, retryCount = 0) {
+// forceKey (optional) — принудительно использовать конкретный ключ
+// (нужно для verification-агентов, чтобы распределять нагрузку по ключам параллельно).
+async function getEmbedding(text, retryCount = 0, forceKey = null) {
     const cacheKey = text.substring(0, 8000);
     if (embeddingCache.has(cacheKey)) {
         console.log('📦 Эмбеддинг из кэша');
@@ -285,7 +288,7 @@ async function getEmbedding(text, retryCount = 0) {
         return embeddingCache.get(cacheKey);
     }
 
-    const activeKey = getActiveKey();
+    const activeKey = forceKey || getActiveKey();
 
     try {
         const url = `https://generativelanguage.googleapis.com/v1beta/${EMBEDDING_MODEL}:embedContent?key=${activeKey}`;
@@ -433,6 +436,85 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     }
     
     return { core, context, all: candidates };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DOCUMENT-GROUNDED ANALYSIS — config + helpers
+// ════════════════════════════════════════════════════════════════════
+// Архитектура:
+//   1) Extractor (Key[0])      — извлекает все статьи из документа
+//   2) Verifiers (Key[1..N])   — параллельно сверяют группы по 3 статьи с Pinecone
+//   3) Synthesizer (Key[last]) — финальный анализ ТОЛЬКО на основе verified-данных
+//
+// Метаданные Pinecone: { npa_title, article_title, full_text, text_preview }
+// Поля article_number нет — номер достаём regex'ом из full_text.
+// ════════════════════════════════════════════════════════════════════
+const DOCUMENT_ANALYSIS_CONFIG = {
+    extractorKeyIndex: 0,           // Key[0] для Extractor
+    synthesizerKeyIndex: 12,        // Key[12] для Synthesizer (последний из 13)
+    verificationKeys: Array.from({ length: 11 }, (_, i) => i + 1), // Key[1..11]
+    maxArticles: 30,
+    defaultArticlesPerAgent: 3,
+    extractorChunkSize: 7000,
+    extractorChunkOverlap: 500,
+    confidenceThresholds: { high: 0.75, medium: 0.70, low: 0.60 }
+};
+
+function getArticlesPerAgent(totalArticles, availableKeys) {
+    if (availableKeys <= 0) return totalArticles;
+    const baseN = Math.ceil(totalArticles / availableKeys);
+    return Math.max(baseN, DOCUMENT_ANALYSIS_CONFIG.defaultArticlesPerAgent);
+}
+
+// Нормализация номера статьи для сравнения "1¹" vs "1-1" и т.п.
+function normalizeArticleNumber(num) {
+    if (num === null || num === undefined) return '';
+    return String(num)
+        .toLowerCase()
+        .replace(/\s+/g, '')
+        .replace(/\./g, '')
+        .replace(/¹/g, '-1').replace(/²/g, '-2').replace(/³/g, '-3').replace(/⁴/g, '-4')
+        .replace(/⁵/g, '-5').replace(/⁶/g, '-6').replace(/⁷/g, '-7').replace(/⁸/g, '-8')
+        .replace(/⁹/g, '-9').replace(/⁰/g, '-0');
+}
+
+// Парсим номер статьи из full_text Pinecone-метаданных.
+// Примеры: "Статья 1¹. Предмет регулирования" → "1¹"
+//          "Статья 137 Пытки"                  → "137"
+function extractArticleNumberFromMetadata(metadata) {
+    const fullText = (metadata && metadata.full_text) || '';
+    const m = fullText.match(/Статья\s+([\d¹²³⁴⁵⁶⁷⁸⁹⁰\-\.]+)/);
+    if (!m) return null;
+    return m[1].trim().replace(/\.$/, '');
+}
+
+// Векторный поиск с приоритизацией matches по lawNameHint.
+// apiKey передаётся в getEmbedding для распределения нагрузки между ключами.
+async function searchPineconeByText(searchText, lawNameHint = null, apiKey = null) {
+    try {
+        if (!searchText || !searchText.trim()) return null;
+        const vector = await getEmbedding(searchText, 0, apiKey);
+        const results = await searchPinecone(vector, 5);
+        if (!results || results.length === 0) return null;
+
+        if (lawNameHint) {
+            const hint = lawNameHint.toLowerCase().slice(0, 12);
+            const exact = results.find(r =>
+                r.metadata && r.metadata.npa_title &&
+                r.metadata.npa_title.toLowerCase().includes(hint)
+            );
+            if (exact) return exact;
+        }
+        return results[0];
+    } catch (e) {
+        console.error('[searchPineconeByText] err:', e.message);
+        return null;
+    }
+}
+
+function sendConfidence(res, payload) {
+    if (!res || res.writableEnded) return;
+    res.write(`data: ${JSON.stringify({ confidence: payload })}\n\n`);
 }
 
 // ============================================================
@@ -914,6 +996,58 @@ const AGENT_SYSTEM_PROMPT = `
 `.trim();
 
 // ============================================================
+// DOCUMENT ANALYSIS SYNTHESIZER PROMPT
+// Используется в финальном агенте analyze-document pipeline.
+// Source-of-truth — ОТЧЁТ ПРОВЕРКИ (verified-by-RAG) который
+// собирают параллельные verifier-агенты.
+// ============================================================
+const DOCUMENT_ANALYSIS_PROMPT = `
+Ты — **Мыйзамчи Аналитик документов**. Проводишь юридический анализ документа пользователя.
+
+═══ ИСТОЧНИК ИСТИНЫ ═══
+Тебе передан **ОТЧЁТ ПРОВЕРКИ СТАТЕЙ** — это результат автоматической сверки каждой ссылки на статью из документа с реальной базой НПА КР через Pinecone.
+ОТЧЁТ — ЕДИНСТВЕННЫЙ источник правовой истины. Других у тебя нет.
+
+═══ КРИТИЧЕСКИЕ ЗАПРЕТЫ (нарушение = галлюцинация) ═══
+
+1. ЗАПРЕЩЕНО упоминать номер статьи (например "ст. 137", "статья 25"), если эта статья НЕ ПРОЦИТИРОВАНА в ОТЧЁТЕ ПРОВЕРКИ.
+
+   Альтернатива — общая формулировка:
+     ❌ «согласно ст. 422 УК КР»
+     ✅ «согласно действующим нормам УК КР о пытках»
+     ✅ «согласно соответствующей статье УК КР»
+
+2. ЕСЛИ в документе пользователя уже указаны номера статей — ЗАПРЕЩЕНО предлагать "правильные" альтернативы или утверждать о смене редакций БЕЗ явного подтверждения из ОТЧЁТА (пометки ⚠️ НОМЕР НЕ СОВПАЛ).
+   Если сомневаешься — пиши: "Рекомендую сверить с cbd.minjust.gov.kg".
+
+3. ЗАПРЕЩЕНО выдумывать статьи которых нет в ОТЧЁТЕ.
+
+4. ЕСЛИ в ОТЧЁТЕ статья помечена ❌ (НЕ найдена) — НЕ строй на её основе анализ. Просто отметь что она не найдена в базе.
+
+═══ ФОРМАТ АНАЛИЗА ═══
+
+## Сверка ссылок на статьи
+Для каждой статьи из ОТЧЁТА:
+
+✅ **[ref]** — Найдена в базе. Формулировка корректна / отличается: цитата из RAG.
+⚠️ **[ref]** — Номер не совпал. В базе с похожим смыслом: [ref-from-RAG]. Возможно устаревшая редакция или ошибка.
+⚠️ **[ref]** — Найдена с низкой уверенностью. Требует ручной проверки.
+❌ **[ref]** — НЕ найдена в правовой базе. Возможно ошибочный номер, опечатка или статья отсутствует в индексе.
+
+## Юридическая оценка
+- Соответствие документа законодательству КР (на основе verified-данных)
+- Замечания по структуре и формулировкам
+- Без выдуманных номеров — только общими фразами если статьи нет в ОТЧЁТЕ
+
+## Рекомендации
+- Конкретные шаги: что исправить, что добавить
+- Если статьи нет в ОТЧЁТЕ — рекомендация сверить с cbd.minjust.gov.kg
+
+═══ ДЛИНА ═══
+Соразмерно объёму документа. Не раздувай. Конкретно по делу.
+`.trim();
+
+// ============================================================
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ============================================================
 
@@ -1208,6 +1342,323 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
     }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// DOCUMENT-GROUNDED ANALYSIS — AGENTS PIPELINE
+// ════════════════════════════════════════════════════════════════════
+
+// ── 1. EXTRACTOR — извлекает все статьи из одного чанка документа ──
+async function extractFromChunk(chunkText, apiKey) {
+    const systemPrompt = 'Ты — юридический парсер. Извлекаешь ВСЕ ссылки на статьи законов из текста. Отвечаешь СТРОГО JSON без markdown без пояснений.';
+    const userPrompt = `Найди все ссылки на статьи законов в документе.
+
+Формат ответа (ровно такой JSON):
+{
+  "articles": [
+    {
+      "ref": "ст.137 УК КР",
+      "lawName": "Уголовный кодекс КР",
+      "articleNumber": "137",
+      "context": "точная цитата из документа (до 150 символов)"
+    }
+  ]
+}
+
+Если статей нет — верни: {"articles": []}
+
+Документ:
+${chunkText}`;
+    try {
+        const result = await callOnce(apiKey, systemPrompt, userPrompt, 2);
+        const cleaned = String(result || '').replace(/```json|```/g, '').trim();
+        // Find first { ... last } — отрезаем потенциальный мусор вокруг
+        const fi = cleaned.indexOf('{');
+        const li = cleaned.lastIndexOf('}');
+        const slice = (fi >= 0 && li > fi) ? cleaned.slice(fi, li + 1) : cleaned;
+        const parsed = JSON.parse(slice);
+        return Array.isArray(parsed.articles) ? parsed.articles : [];
+    } catch (e) {
+        console.error('[Extractor] chunk failed:', e.message);
+        return [];
+    }
+}
+
+// Извлекает статьи из всего документа. Если документ >8K — chunked extraction
+// параллельно через несколько ключей, затем дедуплицирует по ref.
+async function extractArticlesFromDocument(documentText) {
+    const ks = KEYS.length;
+    const cfg = DOCUMENT_ANALYSIS_CONFIG;
+    const extractorKey = KEYS[Math.min(cfg.extractorKeyIndex, ks - 1)];
+
+    if (documentText.length <= 8000) {
+        const articles = await extractFromChunk(documentText, extractorKey);
+        return articles.slice(0, cfg.maxArticles);
+    }
+
+    // Chunked extraction
+    const CHUNK = cfg.extractorChunkSize;
+    const OVL = cfg.extractorChunkOverlap;
+    const chunks = [];
+    for (let i = 0; i < documentText.length; i += (CHUNK - OVL)) {
+        chunks.push(documentText.slice(i, i + CHUNK));
+        if (i + CHUNK >= documentText.length) break;
+    }
+    // Используем extractor + verification keys как пул
+    const keysPool = [cfg.extractorKeyIndex, ...cfg.verificationKeys]
+        .filter(idx => idx < ks)
+        .map(idx => KEYS[idx]);
+    if (keysPool.length === 0) keysPool.push(KEYS[0]);
+
+    const results = await Promise.allSettled(
+        chunks.map((chunk, i) => extractFromChunk(chunk, keysPool[i % keysPool.length]))
+    );
+    const all = results
+        .filter(r => r.status === 'fulfilled' && Array.isArray(r.value))
+        .flatMap(r => r.value);
+
+    // Дедупликация по нормализованному ref
+    const seen = new Set();
+    const unique = [];
+    for (const a of all) {
+        const key = String(a.ref || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        if (!key) continue;
+        if (!seen.has(key)) {
+            seen.add(key);
+            unique.push(a);
+        }
+    }
+    console.log(`[Extractor] chunks=${chunks.length} | raw=${all.length} | unique=${unique.length}`);
+    return unique.slice(0, cfg.maxArticles);
+}
+
+// ── 2. VERIFIER — для группы статей делает RAG + сверку номера ──
+async function verifyArticleGroup(articleGroup, apiKey) {
+    const cfg = DOCUMENT_ANALYSIS_CONFIG;
+    const out = [];
+    for (const article of articleGroup) {
+        try {
+            // Embedding-запрос строим из lawName + context документа — это даёт
+            // богатый вектор. Просто "ст.137 УК КР" даст слабый.
+            const searchText = `${article.lawName || ''} ${article.context || article.ref || ''}`.trim();
+            const ragResult = await searchPineconeByText(searchText, article.lawName, apiKey);
+
+            const score = Number((ragResult && ragResult.score) || 0);
+            const md = (ragResult && ragResult.metadata) || {};
+            const ragText = md.full_text || null;
+            const ragNpaTitle = md.npa_title || '';
+            const ragArticleNum = extractArticleNumberFromMetadata(md);
+
+            const numNorm = normalizeArticleNumber(article.articleNumber);
+            const ragNumNorm = normalizeArticleNumber(ragArticleNum);
+            const numberMatches = !!(numNorm && ragNumNorm && numNorm === ragNumNorm);
+
+            // found: true если совпал номер при разумном score ИЛИ score очень высокий
+            const found = ragResult !== null && (
+                (numberMatches && score >= cfg.confidenceThresholds.low) ||
+                score >= 0.85
+            );
+            const confidence = score >= cfg.confidenceThresholds.high ? 'high'
+                             : score >= cfg.confidenceThresholds.medium ? 'medium'
+                             : 'low';
+            // mismatch — нашли похожую статью но с другим номером
+            const mismatch = !!(ragArticleNum && !numberMatches && score >= cfg.confidenceThresholds.medium);
+
+            out.push({
+                ref: article.ref,
+                lawName: article.lawName || '',
+                articleNumber: article.articleNumber || '',
+                context: article.context || '',
+                ragText, ragNpaTitle,
+                ragArticleNumber: ragArticleNum,
+                score, found, numberMatches, mismatch, confidence
+            });
+        } catch (e) {
+            console.error('[Verifier] err for', article.ref, ':', e.message);
+            out.push({
+                ref: article.ref,
+                lawName: article.lawName || '',
+                articleNumber: article.articleNumber || '',
+                context: article.context || '',
+                ragText: null, ragNpaTitle: '', ragArticleNumber: null,
+                score: 0, found: false, numberMatches: false, mismatch: false, confidence: 'low',
+                error: e.message
+            });
+        }
+    }
+    return out;
+}
+
+// Координатор — раскидывает статьи по верификационным ключам через Promise.allSettled
+async function runParallelVerification(articles) {
+    const ks = KEYS.length;
+    const cfg = DOCUMENT_ANALYSIS_CONFIG;
+
+    // Доступные ключи для verification: из конфига, но не выходящие за пределы KEYS
+    let verifKeyIndexes = cfg.verificationKeys.filter(i => i < ks);
+    if (verifKeyIndexes.length === 0) {
+        // fallback: используем все доступные кроме extractor и synthesizer
+        verifKeyIndexes = [];
+        for (let i = 0; i < ks; i++) {
+            if (i !== cfg.extractorKeyIndex && i !== Math.min(cfg.synthesizerKeyIndex, ks - 1)) {
+                verifKeyIndexes.push(i);
+            }
+        }
+        if (verifKeyIndexes.length === 0) verifKeyIndexes = [0]; // совсем мало ключей
+    }
+
+    const articlesPerAgent = getArticlesPerAgent(articles.length, verifKeyIndexes.length);
+    const groups = [];
+    for (let i = 0; i < articles.length; i += articlesPerAgent) {
+        groups.push(articles.slice(i, i + articlesPerAgent));
+    }
+
+    console.log(`[DocAnalysis] ${articles.length} статей → ${groups.length} групп по ${articlesPerAgent} (verifKeys=${verifKeyIndexes.length}/${ks})`);
+
+    const promises = groups.map((group, i) =>
+        verifyArticleGroup(group, KEYS[verifKeyIndexes[i % verifKeyIndexes.length]])
+    );
+    const results = await Promise.allSettled(promises);
+    return results
+        .filter(r => r.status === 'fulfilled')
+        .flatMap(r => r.value);
+}
+
+// ── 3. CONFIDENCE — общая уверенность по всем verified статьям ──
+function calculateOverallConfidence(verified) {
+    if (!verified || verified.length === 0) {
+        return { level: 'unknown', totalArticles: 0, foundArticles: 0, notFoundArticles: 0, lowConfArticles: 0, mismatchArticles: 0, avgScore: 0 };
+    }
+    const found = verified.filter(v => v.found);
+    const notFound = verified.filter(v => !v.found);
+    const lowConf = verified.filter(v => v.found && v.confidence === 'low');
+    const mismatch = verified.filter(v => v.mismatch);
+    const avgScore = found.length > 0
+        ? found.reduce((s, v) => s + v.score, 0) / found.length
+        : 0;
+
+    let level;
+    if (notFound.length > verified.length / 2) level = 'low';
+    else if (mismatch.length > 0 || avgScore < 0.75 || lowConf.length > 0) level = 'medium';
+    else if (avgScore >= 0.75) level = 'high';
+    else level = 'medium';
+
+    return {
+        level,
+        totalArticles: verified.length,
+        foundArticles: found.length,
+        notFoundArticles: notFound.length,
+        lowConfArticles: lowConf.length,
+        mismatchArticles: mismatch.length,
+        avgScore: Number(avgScore.toFixed(3))
+    };
+}
+
+// ── 4. SYNTHESIZER — финальный стриминговый анализ ──
+async function synthesizeAnalysis(documentText, verifiedArticles, userQuery, res) {
+    const ks = KEYS.length;
+    const synthKey = KEYS[Math.min(DOCUMENT_ANALYSIS_CONFIG.synthesizerKeyIndex, ks - 1)];
+
+    const reportLines = verifiedArticles.map(v => {
+        if (v.found && !v.mismatch && v.confidence !== 'low') {
+            return `✅ ${v.ref}\n` +
+                   `   Score: ${v.score.toFixed(3)} (${v.confidence})\n` +
+                   `   В документе: "${v.context}"\n` +
+                   `   Найдено: ${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}\n` +
+                   `   Оригинал: "${(v.ragText || '').slice(0, 400)}..."`;
+        }
+        if (v.mismatch) {
+            return `⚠️ ${v.ref} — НОМЕР НЕ СОВПАЛ\n` +
+                   `   В документе указано: ст. ${v.articleNumber}\n` +
+                   `   В базе с похожим смыслом: ${v.ragNpaTitle} — ст. ${v.ragArticleNumber}\n` +
+                   `   Score: ${v.score.toFixed(3)}\n` +
+                   `   Текст найденного: "${(v.ragText || '').slice(0, 300)}..."`;
+        }
+        if (v.found && v.confidence === 'low') {
+            return `⚠️ ${v.ref} — низкая уверенность\n` +
+                   `   Score: ${v.score.toFixed(3)}\n` +
+                   `   Найдено: ${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}\n` +
+                   `   Требует ручной проверки`;
+        }
+        return `❌ ${v.ref} — НЕ найдена в правовой базе\n` +
+               `   В документе: "${v.context}"`;
+    }).join('\n\n---\n\n');
+
+    const userPrompt = `═══ ОТЧЁТ ПРОВЕРКИ СТАТЕЙ (единственный источник истины) ═══
+
+${reportLines}
+
+═══ ЗАПРОС ПОЛЬЗОВАТЕЛЯ ═══
+${userQuery || 'Проанализируй документ'}
+
+═══ ДОКУМЕНТ ПОЛЬЗОВАТЕЛЯ ═══
+${(documentText || '').slice(0, 15000)}
+
+Проанализируй документ строго на основе ОТЧЁТА. Не упоминай номеров статей которых нет в ОТЧЁТЕ.`;
+
+    try {
+        await streamGeminiResponse(synthKey, DOCUMENT_ANALYSIS_PROMPT, userPrompt, [], res);
+    } catch (err) {
+        console.error('[Synthesizer] failed:', err.message);
+        // Fallback: попробуем через round-robin ключ
+        try {
+            await streamGeminiResponse(getNextKey(), DOCUMENT_ANALYSIS_PROMPT, userPrompt, [], res);
+        } catch (e2) {
+            console.error('[Synthesizer] fallback failed:', e2.message);
+            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Ошибка генерации финального анализа. Попробуйте повторить.' })}\n\n`);
+        }
+    }
+}
+
+// ── 5. ORCHESTRATOR — собирает pipeline воедино ──
+async function analyzeDocumentSmart(documentText, userQuery, res) {
+    try {
+        // Этап 1: Extractor
+        sendStatus(res, '📄 Извлекаю статьи из документа...', '📄');
+        const articles = await extractArticlesFromDocument(documentText);
+
+        if (articles.length === 0) {
+            // Деградируем в обычный agent flow
+            sendStatus(res, 'ℹ️ Ссылок на статьи не найдено. Делаю обычный анализ...', 'ℹ️');
+            const fallbackMsg = `Запрос пользователя: ${userQuery}\n\nДокумент:\n"""\n${(documentText || '').slice(0, 15000)}\n"""`;
+            await handleAgent(fallbackMsg, [], res, 0, userQuery);
+            return;
+        }
+
+        // Этап 2: Parallel verification
+        sendStatus(res, `🔎 Найдено ${articles.length} статей. Сверяю с базой НПА параллельно...`, '🔎');
+        const verifiedArticles = await runParallelVerification(articles);
+
+        // Этап 3: Confidence
+        const confidencePayload = calculateOverallConfidence(verifiedArticles);
+        sendConfidence(res, confidencePayload);
+
+        sendStatus(
+            res,
+            `✅ Проверено: ${confidencePayload.foundArticles}/${confidencePayload.totalArticles}. Формирую анализ...`,
+            '✅'
+        );
+
+        // Источники для UI chip badges (берём те что нашлись)
+        const sourcesArr = verifiedArticles.filter(v => v.found && v.ragNpaTitle).slice(0, 5);
+        if (sourcesArr.length > 0) {
+            const sources = sourcesArr.map(v =>
+                `${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}`
+            );
+            const metadata = sourcesArr.map(v => ({
+                npa_title: v.ragNpaTitle,
+                article_title: v.ragArticleNumber ? `Статья ${v.ragArticleNumber}` : '',
+                full_text: v.ragText || ''
+            }));
+            res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
+        }
+
+        // Этап 4: Synthesizer
+        await synthesizeAnalysis(documentText, verifiedArticles, userQuery, res);
+    } catch (err) {
+        console.error('[analyzeDocumentSmart] fatal:', err);
+        res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Ошибка анализа документа: ' + (err && err.message || 'unknown') })}\n\n`);
+    }
+}
+
 // ============================================================
 // ГЛАВНЫЙ МАРШРУТ
 // ============================================================
@@ -1290,6 +1741,50 @@ app.post('/api/chat', async (req, res) => {
             res.end();
         } catch (writeErr) {
             console.error("Не удалось записать ошибку в поток:", writeErr.message);
+        }
+    }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// /api/analyze-document — Document-Grounded Analysis pipeline
+// ════════════════════════════════════════════════════════════════════
+// Body: { documentText: string, userQuery?: string }
+// Stream SSE events:
+//   { protocolStatus, icon }        — этапы pipeline
+//   { confidence: {level, ...} }    — общая уверенность
+//   { sources, metadata }           — найденные в RAG источники
+//   { text }                        — стрим финального анализа
+//   [DONE]                          — конец
+// ════════════════════════════════════════════════════════════════════
+app.post('/api/analyze-document', async (req, res) => {
+    serverStats.totalRequests++;
+    try {
+        const { documentText = '', userQuery = '' } = req.body || {};
+        if (!documentText || !documentText.trim()) {
+            return res.status(400).json({ error: 'Empty documentText' });
+        }
+
+        console.log(`\n[AnalyzeDoc] doc=${documentText.length}ch | query: "${(userQuery || '').slice(0, 80)}"`);
+
+        // SSE headers с антибуферизацией Render
+        res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+        await analyzeDocumentSmart(documentText, userQuery, res);
+
+        res.write('data: [DONE]\n\n');
+        res.end();
+    } catch (error) {
+        console.error('[/api/analyze-document] global error:', error.message);
+        try {
+            res.write(`data: ${JSON.stringify({ text: '\n\nСистемная ошибка. Повторите запрос.' })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            res.end();
+        } catch (writeErr) {
+            console.error('Не удалось записать ошибку в поток:', writeErr.message);
         }
     }
 });
