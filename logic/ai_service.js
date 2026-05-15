@@ -1,0 +1,190 @@
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+require('dotenv').config();
+
+// --- CONFIG ---
+const { GEMINI_API_KEYS, PINECONE_API_KEY, PINECONE_HOST } = process.env;
+const KEYS = GEMINI_API_KEYS ? GEMINI_API_KEYS.split(',').map(k => k.trim()) : [];
+let currentKeyIndex = 0;
+const cleanPineconeHost = PINECONE_HOST ? PINECONE_HOST.replace(/\/$/, '') : '';
+
+// --- UTILS ---
+const blockedKeys = new Map();
+
+function blockKey(key, durationMs = 15_000) {
+    blockedKeys.set(key, Date.now() + durationMs);
+}
+
+function isKeyBlocked(key) {
+    const until = blockedKeys.get(key);
+    if (!until) return false;
+    if (Date.now() >= until) {
+        blockedKeys.delete(key);
+        return false;
+    }
+    return true;
+}
+
+function getNextKey() {
+    for (let i = 0; i < KEYS.length; i++) {
+        const key = KEYS[currentKeyIndex % KEYS.length];
+        currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
+        if (!isKeyBlocked(key)) return key;
+    }
+    return KEYS[currentKeyIndex % KEYS.length];
+}
+
+// --- SYSTEM PROMPTS (Full versions from server.js) ---
+const systemInstruction = [
+    "# ИДЕНТИЧНОСТЬ",
+    "Ты — **Мыйзамчи**, юридический ИИ-ассистент Кыргызской Республики.",
+    "Твоя задача — помогать гражданам понимать законодательство КР просто, точно и практично.",
+    "",
+    "# ДЛИНА ОТВЕТА — СТРОГОЕ ПРАВИЛО",
+    "Отвечай СОРАЗМЕРНО вопросу. Это критически важно:",
+    "- Простой вопрос (1-2 предложения от пользователя) → ответ 2-5 предложений",
+    "- Средний вопрос (конкретная ситуация) → ответ 1-3 абзаца",
+    "- Сложный вопрос (многосоставная ситуация) → структурированный ответ с разделами",
+    "- Запрос на документ → только документ + краткие инструкции",
+    "ЗАПРЕЩЕНО растягивать ответ списками и подзаголовками там где достаточно абзаца.",
+    "ЗАПРЕЩЕНО повторять одну мысль разными словами.",
+    "",
+    "# ИСТОЧНИКИ ЗНАНИЙ (строгий приоритет)",
+    "1. **Приоритет 1 — Контекст (НПА):** Твои ответы должны основываться ИСКЛЮЧИТЕЛЬНО на предоставленных статьях законов КР.",
+    "2. **⭐ КЛЮЧЕВЫЕ vs 📚 ВСПОМОГАТЕЛЬНЫЕ статьи:** Если в контексте есть статьи с пометкой **[⭐ КЛЮЧЕВАЯ СТАТЬЯ]** — опирайся в первую очередь на них.",
+    "3. **Если в контексте нет ответа:** Ты ОБЯЗАН прямо сказать: «К сожалению, в моей текущей базе НПА нет информации по этому вопросу.»",
+    "4. **КАТЕГОРИЧЕСКИЙ ЗАПРЕТ НА ГАЛЛЮЦИНАЦИИ:** Тебе ЗАПРЕЩЕНО выдумывать номера статей, сроки, суммы или нормы.",
+    "",
+    "# ПРАВИЛО ЮРИДИЧЕСКОЙ ИЕРАРХИИ",
+    "Аргументация: Базовое правило (Кодекс) → Специальная норма (Закон) → Процедура (Правила).",
+    "",
+    "# РЕЖИМЫ ОТВЕТА",
+    "## Режим 0 — Приветствие и болталка",
+    "- Если пользователь просто поздоровался — отвечай тепло и естественно.",
+    "## Режим 1 — Юридическая консультация",
+    "- Начинай с: «Согласно [статья] [название акта]...»",
+    "## Режим 3 — Составление документа",
+    "- **СУДЕБНЫЕ ДОКУМЕНТЫ:** НЕ ГЕНЕРИРУЙ готовый текст. Дай структуру + реквизиты + рекомендацию к юристу.",
+    "- **ДОСУДЕБНЫЕ документы:** Можно составить шаблон с полями **[ЗАПОЛНИТЬ: ...]**.",
+    "",
+    "# ЯЗЫК",
+    "- Отвечай на языке вопроса (кыргызский / русский).",
+    "",
+    "# ФОРМАТИРОВАНИЕ",
+    "- Используй Markdown: заголовки (##), **жирный** для норм и сроков.",
+    "- Дисклеймер в конце: ⚠️ *Мыйзамчи — ИИ-ассистент. Ответ не заменяет консультацию юриста.*"
+].join("\n");
+
+const BASE_CONSULTANT_PROMPT = `
+Ты — **Мыйзамчи Эксперт**, опытный практикующий юрист Кыргызской Республики.
+Ты не справочник законов — ты живой юрист, который реально помогает людям решить их проблему.
+
+═══ АБСОЛЮТНОЕ ПРАВИЛО: ЗАПРЕТ ГАЛЛЮЦИНАЦИЙ ═══
+Твои ответы должны основываться ИСКЛЮЧИТЕЛЬНО на предоставленных статьях законов КР (контексте).
+Если в контексте нет ответа на вопрос — ты ОБЯЗАН прямо сказать: «К сожалению, в моей текущей базе НПА нет информации по этому вопросу.»
+
+═══ ПРАВИЛО ЮРИДИЧЕСКОЙ ИЕРАРХИИ ═══
+Аргументация строго сверху вниз: Кодексы -> Законы -> Подзаконные акты.
+
+═══ ГЛАВНЫЙ ПРИНЦИП ═══
+Человек пришёл не за цитатами — он пришёл за решением проблемы.
+Понять ситуацию → дать конкретный план → при необходимости составить документ.
+`.trim();
+
+// --- CORE LOGIC ---
+
+async function getEmbedding(text, retryCount = 0) {
+    const activeKey = getNextKey();
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${activeKey}`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: "models/gemini-embedding-001",
+                content: { parts: [{ text: text.substring(0, 8000) }] },
+                outputDimensionality: 768
+            })
+        });
+        const data = await response.json();
+        if (response.status === 429 && retryCount < KEYS.length) {
+            blockKey(activeKey);
+            return getEmbedding(text, retryCount + 1);
+        }
+        if (!response.ok) throw new Error(data.error?.message || 'Embedding failed');
+        return data.embedding.values.slice(0, 768);
+    } catch (error) {
+        console.error("Embedding error:", error.message);
+        throw error;
+    }
+}
+
+async function searchPinecone(vector, topK = 10) {
+    try {
+        const response = await fetch(cleanPineconeHost + '/query', {
+            method: 'POST',
+            headers: { 'Api-Key': PINECONE_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vector, topK, includeMetadata: true })
+        });
+        const data = await response.json();
+        return data.matches || [];
+    } catch (error) {
+        console.error("Pinecone error:", error.message);
+        return [];
+    }
+}
+
+function isCasualMessage(message) {
+    const cleaned = message.trim().toLowerCase();
+    const GREETING_PATTERNS = [/^(салам|привет|хай|здравствуй|здравствуйте|hi|hello|hey|ку)/i];
+    return GREETING_PATTERNS.some(pattern => pattern.test(cleaned)) && cleaned.length < 50;
+}
+
+async function getAIAnswer(message, history = []) {
+    try {
+        const isCasual = isCasualMessage(message);
+        let contextText = '';
+
+        if (!isCasual) {
+            const vector = await getEmbedding(message);
+            const matches = await searchPinecone(vector, 12);
+            
+            // Фильтрация и разделение на Ключевые и Вспомогательные
+            const core = matches.filter(m => (m.score || 0) >= 0.75);
+            const context = matches.filter(m => (m.score || 0) < 0.75 && (m.score || 0) >= 0.5);
+
+            const coreText = core.map(m => `[⭐ КЛЮЧЕВАЯ СТАТЬЯ — ${m.metadata.npa_title}]\n${m.metadata.full_text}`).join('\n\n');
+            const contextTextPart = context.map(m => `[📚 ВСПОМОГАТЕЛЬНАЯ — ${m.metadata.npa_title}]\n${m.metadata.full_text}`).join('\n\n');
+            
+            contextText = (coreText + '\n\n' + contextTextPart).trim();
+        }
+
+        const promptText = contextText 
+            ? `Контекст законов КР (⭐ ключевые и 📚 вспомогательные статьи):\n\n${contextText}\n\nВопрос пользователя: ${message}`
+            : message;
+
+        const activeKey = getNextKey();
+        const genAI = new GoogleGenerativeAI(activeKey);
+        
+        // Используем Consultant Prompt если есть контекст, иначе базовый
+        const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
+
+        const model = genAI.getGenerativeModel({
+            model: "gemini-flash-latest",
+            systemInstruction: systemPrompt
+        });
+
+        const chatHistory = history.map(msg => ({
+            role: msg.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: msg.text }]
+        })).slice(-10);
+
+        const chat = model.startChat({ history: chatHistory });
+        const result = await chat.sendMessage(promptText);
+        return result.response.text();
+    } catch (error) {
+        console.error("AI Logic Error:", error.message);
+        return "Извините, произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте позже через веб-интерфейс или повторите попытку.";
+    }
+}
+
+module.exports = { getAIAnswer };
