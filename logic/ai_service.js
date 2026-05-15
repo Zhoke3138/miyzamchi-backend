@@ -89,7 +89,7 @@ const BASE_CONSULTANT_PROMPT = `
 async function extractTextFromMedia(mimeType, base64Data) {
     const activeKey = getNextKey();
     const genAI = new GoogleGenerativeAI(activeKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     const prompt = "Извлеки текст из этого медиафайла. Если это голос, сделай точную транскрипцию. Если фото, распознай весь читаемый текст. Выведи ТОЛЬКО текст, без вступительных слов.";
     const result = await model.generateContent([ prompt, { inlineData: { data: base64Data, mimeType } } ]);
     return result.response.text();
@@ -126,7 +126,9 @@ async function getEmbedding(text, retryCount = 0) {
             })
         });
         const data = await response.json();
-        if (response.status === 429 && retryCount < KEYS.length) {
+        
+        // Добавил переключение ключа и при 503 ошибке!
+        if ((response.status === 429 || response.status === 503) && retryCount < KEYS.length) {
             blockKey(activeKey);
             return getEmbedding(text, retryCount + 1);
         }
@@ -159,7 +161,7 @@ function isCasualMessage(message) {
     return GREETING_PATTERNS.some(pattern => pattern.test(cleaned)) && cleaned.length < 50;
 }
 
-// ДОБАВЛЕН ПАРАМЕТР onProgress ДЛЯ РЕАЛЬНЫХ СТАТУСОВ
+// --- ГЛАВНАЯ ФУНКЦИЯ С УМНОЙ РОТАЦИЕЙ (КАК В ВЕБЕ) ---
 async function getAIAnswer(message, history = [], onProgress = null) {
     try {
         const isCasual = isCasualMessage(message);
@@ -169,8 +171,8 @@ async function getAIAnswer(message, history = [], onProgress = null) {
             if (onProgress) await onProgress('🧮 Векторизую запрос (перевожу в цифры)...');
             const vector = await getEmbedding(message);
             
-            if (onProgress) await onProgress('🔎 Ищу релевантные статьи в базе Pinecone...');
-            const matches = await searchPinecone(vector, 10);
+            if (onProgress) await onProgress('🔎 Ищу релевантные статьи в базе...');
+            const matches = await searchPinecone(vector, 12);
             
             const core = matches.filter(m => (m.score || 0) >= 0.75);
             const context = matches.filter(m => (m.score || 0) < 0.75 && (m.score || 0) >= 0.5);
@@ -185,28 +187,49 @@ async function getAIAnswer(message, history = [], onProgress = null) {
             ? `Контекст законов КР:\n\n${contextText}\n\nВопрос пользователя: ${message}`
             : message;
 
-        const activeKey = getNextKey();
-        const genAI = new GoogleGenerativeAI(activeKey);
-        const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
-
-        if (onProgress) await onProgress('⚖️ База найдена. Генерирую юридический ответ...');
-        
-        const model = genAI.getGenerativeModel({
-            model: "gemini-flash-latest",
-            systemInstruction: systemPrompt
-        });
-
         const chatHistory = history.map(msg => ({
             role: msg.role === 'assistant' ? 'model' : 'user',
             parts: [{ text: msg.text }]
         })).slice(-10);
 
-        const chat = model.startChat({ history: chatHistory });
-        const result = await chat.sendMessage(promptText);
-        return result.response.text();
+        if (onProgress) await onProgress('⚖️ База найдена. Генерирую ответ...');
+
+        // Логика умной ротации ключей при генерации
+        let retries = 0;
+        const maxRetries = KEYS.length > 0 ? KEYS.length : 3;
+
+        while (retries <= maxRetries) {
+            const activeKey = getNextKey(); // БЕРЕМ НОВЫЙ КЛЮЧ ВНУТРИ ЦИКЛА!
+            try {
+                const genAI = new GoogleGenerativeAI(activeKey);
+                const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
+                
+                const model = genAI.getGenerativeModel({
+                    model: "gemini-1.5-flash", // Оставил стабильную версию
+                    systemInstruction: systemPrompt
+                });
+
+                const chat = model.startChat({ history: chatHistory });
+                const result = await chat.sendMessage(promptText);
+                return result.response.text();
+
+            } catch (error) {
+                console.warn(`[Gemini Error] Попытка ${retries + 1} провалена: ${error.message}`);
+                blockKey(activeKey); // Отправляем ключ в карантин на 15 сек!
+
+                retries++;
+                if (retries >= maxRetries) {
+                    throw error; // Если убили все 13 ключей — сдаемся
+                }
+
+                if (onProgress) await onProgress(`🔄 Сервер перегружен. Переключаю ключ (попытка ${retries + 1})...`);
+                await new Promise(resolve => setTimeout(resolve, 800)); // Пауза 800мс как в server.js
+            }
+        }
+
     } catch (error) {
-        console.error("AI Logic Error:", error.message);
-        return "Извините, произошла ошибка при обработке вашего запроса.";
+        console.error("AI Logic Error FINAL:", error.message);
+        return "Извините, произошла ошибка. Серверы Google временно перегружены, я перепробовал все ключи, но не смог пробиться. Пожалуйста, подождите минуту.";
     }
 }
 
