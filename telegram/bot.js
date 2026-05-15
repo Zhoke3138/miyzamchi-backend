@@ -32,20 +32,33 @@ async function safeEdit(ctx, messageId, newText) {
   try {
     await ctx.telegram.editMessageText(ctx.chat.id, messageId, undefined, newText);
   } catch (e) {
-    // Игнорируем ошибки (если текст совпадает или Телеграм просит не спамить)
+    // Игнорируем ошибки Телеграма
   }
 }
 
-bot.start((ctx) => {
-  ctx.reply('Привет! Я Мыйзамчы. Задайте вопрос, отправьте фото документа, голосовое сообщение или файл (PDF/Word)!');
-});
+// --- ТЕКСТ ИНСТРУКЦИИ ---
+const helpMessage = `*Как пользоваться ботом Мыйзамчы?* ⚖️\n\n` +
+  `Я — юридический ИИ-ассистент. Вот что я умею и как ко мне обращаться:\n\n` +
+  `*1. Как вызвать меня в группе:*\n` +
+  `• Напиши мое имя: \`Мыйзамчы\`, \`Бот\` (в любом падеже)\n` +
+  `• Используй команду: \`/ask ваш вопрос\`\n` +
+  `• Тегни меня: \`@имя_бота ваш вопрос\`\n` +
+  `• *Самое удобное:* Сделай свайп влево (Reply/Ответить) на любое мое сообщение и напиши вопрос или отправь файл!\n\n` +
+  `*2. Что мне можно отправлять:*\n` +
+  `• 📝 *Текст:* Опиши ситуацию подробно.\n` +
+  `• 🎧 *Голосовые:* Просто наговори проблему, я переведу в текст.\n` +
+  `• 📸 *Фото:* Скинь фото документа, я его прочитаю.\n` +
+  `• 📄 *Файлы:* Отправь PDF или Word (.docx), и я проведу юридический анализ текста.\n\n` +
+  `*Важно:* Я помню контекст беседы (последние 3 вопроса), так что можешь задавать уточняющие вопросы!`;
+
+bot.start((ctx) => ctx.reply(helpMessage, { parse_mode: 'Markdown' }));
+bot.help((ctx) => ctx.reply(helpMessage, { parse_mode: 'Markdown' }));
 
 bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
   const isGroup = ctx.chat.type !== 'private';
   const isReplyToBot = ctx.message.reply_to_message && ctx.message.reply_to_message.from.id === ctx.botInfo.id;
   const botUsername = ctx.botInfo.username || '';
   
-  // Умный триггер для группы
   const triggerRegex = new RegExp(`^(@${botUsername}\\s*|мыйзамч[а-я]*\\s*|мизамч[а-я]*\\s*|бот[а-я]*\\s*|\\/ask\\s*)`, 'i');
 
   let question = "";
@@ -55,9 +68,11 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
   let isDoc = false;
   let fileName = "";
 
-  // 1. ОПРЕДЕЛЯЕМ ТИП СООБЩЕНИЯ И ФИЛЬТРУЕМ СПАМ
   if (ctx.message.text) {
     const text = ctx.message.text.trim();
+    // Игнорируем команды старт и хелп в этом блоке
+    if (text.startsWith('/start') || text.startsWith('/help')) return;
+    
     const match = text.match(triggerRegex);
     if (isGroup && !isReplyToBot && !match) return;
     question = match ? text.substring(match[0].length).trim() : text;
@@ -91,16 +106,13 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
   try {
     await ctx.sendChatAction('typing');
     
-    // 2. НАЧАЛЬНЫЙ СТАТУС
     const initText = isMedia ? '⏳ Получаю файл...' : '⏳ Анализирую ваш вопрос...';
     const statusMsg = await ctx.reply(initText, { reply_to_message_id: ctx.message.message_id });
     
-    // Функция-передатчик, которую мы отдадим в мозг
     const updateProgress = async (statusText) => {
       await safeEdit(ctx, statusMsg.message_id, statusText);
     };
 
-    // 3. ОБРАБОТКА МЕДИА
     if (isMedia) {
       await updateProgress('📥 Скачиваю файл с серверов Telegram...');
       const fileUrl = await ctx.telegram.getFileLink(fileId);
@@ -130,11 +142,9 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     const userId = ctx.message.from.id;
     const userHistory = getHistory(chatId, userId);
 
-    // 4. ПЕРЕДАЧА В МОЗГ
     const answer = await getAIAnswer(question, userHistory, updateProgress);
     saveToHistory(chatId, userId, question, answer);
 
-    // 5. ФИНАЛ: Удаляем статус, кидаем ответ (с защитой от капризов Telegram)
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
     
     try {
