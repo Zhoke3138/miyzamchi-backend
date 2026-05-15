@@ -2,9 +2,10 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
 // --- CONFIG ---
-const { GEMINI_API_KEYS, PINECONE_API_KEY, PINECONE_HOST } = process.env;
-const KEYS = GEMINI_API_KEYS ? GEMINI_API_KEYS.split(',').map(k => k.trim()) : [];
+const rawKeys = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEYS;
+const KEYS = rawKeys ? rawKeys.split(',').map(k => k.trim()) : [];
 let currentKeyIndex = 0;
+const { PINECONE_API_KEY, PINECONE_HOST } = process.env;
 const cleanPineconeHost = PINECONE_HOST ? PINECONE_HOST.replace(/\/$/, '') : '';
 
 // --- UTILS ---
@@ -25,6 +26,7 @@ function isKeyBlocked(key) {
 }
 
 function getNextKey() {
+    if (KEYS.length === 0) throw new Error("API ключи Gemini не найдены в конфигурации.");
     for (let i = 0; i < KEYS.length; i++) {
         const key = KEYS[currentKeyIndex % KEYS.length];
         currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
