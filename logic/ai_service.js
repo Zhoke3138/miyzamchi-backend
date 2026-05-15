@@ -97,7 +97,7 @@ const BASE_CONSULTANT_PROMPT = `
 async function extractTextFromMedia(mimeType, base64Data) {
     const activeKey = getNextKey();
     const genAI = new GoogleGenerativeAI(activeKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
     const prompt = "Извлеки текст из этого медиафайла. Если это голосовое сообщение, сделай точную транскрипцию (переведи голос в текст). Если это фото, распознай весь читаемый текст и опиши суть документа или ситуации. Выведи ТОЛЬКО текст, без вступительных слов.";
 
     const result = await model.generateContent([
