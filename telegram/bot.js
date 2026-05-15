@@ -1,7 +1,7 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 require('dotenv').config();
-const { getAIAnswer, extractTextFromMedia } = require('../logic/ai_service');
+const { getAIAnswer, extractTextFromMedia, extractTextFromDocument } = require('../logic/ai_service');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -17,9 +17,7 @@ const sessions = new Map();
 
 function getHistory(chatId, userId) {
   const key = `${chatId}_${userId}`;
-  if (!sessions.has(key)) {
-    sessions.set(key, []);
-  }
+  if (!sessions.has(key)) sessions.set(key, []);
   return sessions.get(key);
 }
 
@@ -28,38 +26,39 @@ function saveToHistory(chatId, userId, userText, aiText) {
   const history = getHistory(chatId, userId);
   history.push({ role: 'user', text: userText });
   history.push({ role: 'assistant', text: aiText });
-  if (history.length > 6) history.splice(0, 2); // Помнит 3 последних вопроса-ответа
+  if (history.length > 6) history.splice(0, 2);
 }
 // -----------------------
 
 bot.start((ctx) => {
-  ctx.reply('Привет! Я Мыйзамчы — ваш ИИ-ассистент по праву. Задайте мне вопрос, отправьте фото документа или запишите голосовое сообщение!');
+  ctx.reply('Привет! Я Мыйзамчы. Задайте вопрос, отправьте фото документа, голосовое сообщение или файл (PDF/Word)!');
 });
 
-// Обрабатываем текст, голос и фото
-bot.on(['text', 'voice', 'photo'], async (ctx) => {
+// ДОБАВЛЕН 'document' В МАССИВ СЛУШАТЕЛЕЙ
+bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
   const isGroup = ctx.chat.type !== 'private';
   const isReplyToBot = ctx.message.reply_to_message && ctx.message.reply_to_message.from.id === ctx.botInfo.id;
   const botUsername = ctx.botInfo.username || '';
   
-  // Умный триггер: реагирует на "Мыйзамчы", "Мыйзамчыга", "Бот", "/ask" и тег @бота
   const triggerRegex = new RegExp(`^(@${botUsername}\\s*|мыйзамч[а-я]*\\s*|мизамч[а-я]*\\s*|бот[а-я]*\\s*|\\/ask\\s*)`, 'i');
 
   let question = "";
   let isMedia = false;
   let fileId = null;
   let mimeType = "";
+  let isDoc = false;
+  let fileName = "";
 
   // 1. ОПРЕДЕЛЯЕМ ТИП СООБЩЕНИЯ
   if (ctx.message.text) {
     const text = ctx.message.text.trim();
     const match = text.match(triggerRegex);
-    if (isGroup && !isReplyToBot && !match) return; // Анти-спам
+    if (isGroup && !isReplyToBot && !match) return;
     question = match ? text.substring(match[0].length).trim() : text;
     if (!question && !isReplyToBot) return ctx.reply('Слушаю! Напишите или наговорите ваш вопрос.', { reply_to_message_id: ctx.message.message_id });
 
   } else if (ctx.message.voice) {
-    if (isGroup && !isReplyToBot) return; // В группе слушаем голос только по Reply к боту
+    if (isGroup && !isReplyToBot) return;
     isMedia = true;
     fileId = ctx.message.voice.file_id;
     mimeType = ctx.message.voice.mime_type || 'audio/ogg';
@@ -67,31 +66,51 @@ bot.on(['text', 'voice', 'photo'], async (ctx) => {
   } else if (ctx.message.photo) {
     const caption = ctx.message.caption || "";
     const match = caption.match(triggerRegex);
-    if (isGroup && !isReplyToBot && !match) return; // Анти-спам для фото
+    if (isGroup && !isReplyToBot && !match) return;
     question = match ? caption.substring(match[0].length).trim() : caption;
     isMedia = true;
-    fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id; // Берем картинку лучшего качества
+    fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
     mimeType = 'image/jpeg';
+    
+  } else if (ctx.message.document) { // НОВЫЙ БЛОК ДЛЯ ФАЙЛОВ
+    const doc = ctx.message.document;
+    const caption = ctx.message.caption || "";
+    const match = caption.match(triggerRegex);
+    if (isGroup && !isReplyToBot && !match) return;
+    question = match ? caption.substring(match[0].length).trim() : caption;
+    isMedia = true;
+    isDoc = true;
+    fileId = doc.file_id;
+    mimeType = doc.mime_type || '';
+    fileName = doc.file_name || '';
   }
 
   try {
     await ctx.sendChatAction('typing');
     let statusMsg = null;
 
-    // 2. ОБРАБОТКА МУЛЬТИМЕДИА
+    // 2. ОБРАБОТКА ФАЙЛОВ И МУЛЬТИМЕДИА
     if (isMedia) {
-      statusMsg = await ctx.reply(ctx.message.voice ? '🎧 Распознаю аудио...' : '👁️ Изучаю фото...', { reply_to_message_id: ctx.message.message_id });
+      let statusText = '👁️ Изучаю файл...';
+      if (ctx.message.voice) statusText = '🎧 Распознаю аудио...';
+      else if (isDoc) statusText = '📄 Читаю документ...';
 
-      // Скачиваем файл с серверов Telegram
+      statusMsg = await ctx.reply(statusText, { reply_to_message_id: ctx.message.message_id });
+
       const fileUrl = await ctx.telegram.getFileLink(fileId);
       const response = await axios.get(fileUrl.href, { responseType: 'arraybuffer' });
-      const base64Data = Buffer.from(response.data).toString('base64');
+      const buffer = Buffer.from(response.data);
 
-      // Извлекаем текст
-      const mediaText = await extractTextFromMedia(mimeType, base64Data);
+      let mediaText = "";
+      if (isDoc) {
+        mediaText = await extractTextFromDocument(buffer, mimeType, fileName);
+      } else {
+        const base64Data = buffer.toString('base64');
+        mediaText = await extractTextFromMedia(mimeType, base64Data);
+      }
       
-      // Объединяем подпись к фото и вытащенный текст
-      question = question ? `${question}\n\n[Текст из медиа: ${mediaText}]` : mediaText;
+      const userPrompt = question || "Проанализируй этот документ.";
+      question = `${userPrompt}\n\n[Текст документа/медиа: ${mediaText}]`;
 
       await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, undefined, '🧠 Данные получены. Ищу статьи в законах КР...');
     } else {
@@ -115,7 +134,7 @@ bot.on(['text', 'voice', 'photo'], async (ctx) => {
 
   } catch (error) {
     console.error('Ошибка в обработчике:', error);
-    ctx.reply('Произошла ошибка при обработке. Возможно, файл слишком большой или сервисы перегружены.', { reply_to_message_id: ctx.message.message_id });
+    ctx.reply('Произошла ошибка при обработке. Возможно, файл слишком большой.', { reply_to_message_id: ctx.message.message_id });
   }
 });
 
