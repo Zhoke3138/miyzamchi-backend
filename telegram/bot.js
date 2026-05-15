@@ -91,7 +91,7 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
   try {
     await ctx.sendChatAction('typing');
     
-    // 2. НАЧАЛЬНЫЙ СТАТУС (Отличается для текста и файлов)
+    // 2. НАЧАЛЬНЫЙ СТАТУС
     const initText = isMedia ? '⏳ Получаю файл...' : '⏳ Анализирую ваш вопрос...';
     const statusMsg = await ctx.reply(initText, { reply_to_message_id: ctx.message.message_id });
     
@@ -100,7 +100,7 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
       await safeEdit(ctx, statusMsg.message_id, statusText);
     };
 
-    // 3. ОБРАБОТКА МЕДИА (Если есть)
+    // 3. ОБРАБОТКА МЕДИА
     if (isMedia) {
       await updateProgress('📥 Скачиваю файл с серверов Telegram...');
       const fileUrl = await ctx.telegram.getFileLink(fileId);
@@ -130,16 +130,24 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     const userId = ctx.message.from.id;
     const userHistory = getHistory(chatId, userId);
 
-    // 4. ПЕРЕДАЧА В МОЗГ (Он сам обновит статусы: Векторизация -> База -> Генерация)
+    // 4. ПЕРЕДАЧА В МОЗГ
     const answer = await getAIAnswer(question, userHistory, updateProgress);
     saveToHistory(chatId, userId, question, answer);
 
-    // 5. ФИНАЛ: Удаляем статус, кидаем ответ
+    // 5. ФИНАЛ: Удаляем статус, кидаем ответ (с защитой от капризов Telegram)
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
-    await ctx.reply(answer, {
-        parse_mode: 'Markdown',
-        reply_to_message_id: ctx.message.message_id
-    });
+    
+    try {
+        await ctx.reply(answer, {
+            parse_mode: 'Markdown',
+            reply_to_message_id: ctx.message.message_id
+        });
+    } catch (tgError) {
+        console.warn('Телеграм ругается на Markdown, отправляю без форматирования...');
+        await ctx.reply(answer, {
+            reply_to_message_id: ctx.message.message_id
+        });
+    }
 
   } catch (error) {
     console.error('Ошибка в обработчике:', error);
