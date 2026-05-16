@@ -1,7 +1,8 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 require('dotenv').config();
-const { getAIAnswer, extractTextFromMedia, extractTextFromDocument } = require('./ai_service'); // Убедись, что путь к файлу верный
+// ВОТ ТУТ ИСПРАВЛЕН ПУТЬ НА ПРАВИЛЬНЫЙ:
+const { getAIAnswer, extractTextFromMedia, extractTextFromDocument } = require('../logic/ai_service');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -146,19 +147,19 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     const userId = ctx.message.from.id;
     const userHistory = getHistory(chatId, userId);
 
-    // Запрашиваем ответ у ИИ (передаем флаг isVoiceRequest 4-м параметром!)
+    // Запрашиваем ответ у ИИ
     const aiResult = await getAIAnswer(question, userHistory, updateProgress, isVoiceRequest);
     
-    // Безопасно извлекаем текст (потому что aiResult может быть объектом или строкой)
+    // Безопасно извлекаем текст
     const finalAnswerText = typeof aiResult === 'string' ? aiResult : aiResult.text;
 
-    // Сохраняем в историю ТОЛЬКО текст, иначе объекты сломают память
+    // Сохраняем в историю ТОЛЬКО текст
     saveToHistory(chatId, userId, question, finalAnswerText);
 
     // Удаляем сообщение со статусом (часики)
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
     
-    // --- ОТПРАВКА ГОЛОСА (Если был запрос голосом и вернулся аудио-файл) ---
+    // --- ОТПРАВКА ГОЛОСА ---
     if (isVoiceRequest && aiResult.audioBase64) {
       try {
         const audioBuffer = Buffer.from(aiResult.audioBase64, 'base64');
@@ -171,7 +172,7 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
       }
     }
 
-    // --- ОТПРАВКА ТЕКСТА (Отправляем всегда, чтобы были видны статьи и форматирование) ---
+    // --- ОТПРАВКА ТЕКСТА ---
     try {
         await ctx.reply(finalAnswerText, {
             parse_mode: 'Markdown',
