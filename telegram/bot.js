@@ -163,12 +163,17 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     if (isVoiceRequest && aiResult.audioBase64) {
       try {
         const audioBuffer = Buffer.from(aiResult.audioBase64, 'base64');
-        await ctx.replyWithVoice(
-          { source: audioBuffer }, 
-          { reply_to_message_id: ctx.message.message_id }
+        // Используем replyWithAudio для отправки WAV-файла как трека
+        await ctx.replyWithAudio(
+          { source: audioBuffer, filename: 'Miyzamchi_Answer.wav' }, 
+          { 
+            reply_to_message_id: ctx.message.message_id,
+            title: 'Аудио-ответ от Мыйзамчы',
+            performer: 'ИИ Юрист'
+          }
         );
       } catch (audioErr) {
-        console.error("Ошибка при отправке аудио Телеграмом:", audioErr);
+        console.error("❌ Ошибка при отправке аудио Телеграмом:", audioErr.message);
       }
     }
 
