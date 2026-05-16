@@ -1628,8 +1628,38 @@ async function analyzeDocumentSmart(documentText, userQuery, res) {
         sendStatus(res, `🔎 Найдено ${articles.length} статей. Сверяю с базой НПА параллельно...`, '🔎');
         const verifiedArticles = await runParallelVerification(articles);
 
-        // Этап 3: Confidence
+        // Этап 3: Confidence + детали по каждой статье для UI
         const confidencePayload = calculateOverallConfidence(verifiedArticles);
+        confidencePayload.articles = verifiedArticles.map(v => {
+            let status, reason;
+            if (v.found && !v.mismatch && v.confidence !== 'low') {
+                status = 'ok';
+                reason = v.ragNpaTitle
+                    ? `Найдено: ${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}`
+                    : 'Подтверждено в базе НПА';
+            } else if (v.mismatch) {
+                status = 'mismatch';
+                reason = `В документе: ст. ${v.articleNumber}. В базе с похожим смыслом: ${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}`;
+            } else if (v.found && v.confidence === 'low') {
+                status = 'low';
+                reason = `Найдено с низкой уверенностью (score ${v.score.toFixed(2)}). Требует ручной проверки.`;
+            } else {
+                status = 'not_found';
+                reason = 'В правовой базе нет статьи с достаточным совпадением. Возможно: устаревшая редакция, опечатка, или статья отсутствует в индексе.';
+            }
+            return {
+                ref: v.ref,
+                status,
+                reason,
+                score: Number(v.score.toFixed(3)),
+                articleNumber: v.articleNumber || '',
+                lawName: v.lawName || '',
+                ragNpaTitle: v.ragNpaTitle || '',
+                ragArticleNumber: v.ragArticleNumber || '',
+                context: v.context ? v.context.slice(0, 140) : '',
+                ragText: v.ragText ? v.ragText.slice(0, 280) + (v.ragText.length > 280 ? '…' : '') : ''
+            };
+        });
         sendConfidence(res, confidencePayload);
 
         sendStatus(
