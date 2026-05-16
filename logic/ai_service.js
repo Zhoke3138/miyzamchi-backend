@@ -183,8 +183,9 @@ function isNonLegalQuery(message) {
     return skipPatterns.some(pattern => pattern.test(cleaned));
 }
 
-// --- ГЛАВНАЯ ФУНКЦИЯ С УМНОЙ И ТИХОЙ РОТАЦИЕЙ ---
-async function getAIAnswer(message, history = [], onProgress = null) {
+// --- ГЛАВНАЯ ФУНКЦИЯ С УМНОЙ И ТИХОЙ РОТАЦИЕЙ И ГОЛОСОМ ---
+// Добавлен параметр requireVoice. Если true - генерируем аудио-ответ
+async function getAIAnswer(message, history = [], onProgress = null, requireVoice = false) {
     try {
         // Проверяем, нужно ли делать запрос в векторную БД
         const skipDB = isNonLegalQuery(message);
@@ -224,16 +225,43 @@ async function getAIAnswer(message, history = [], onProgress = null) {
             const activeKey = getNextKey(); 
             try {
                 const genAI = new GoogleGenerativeAI(activeKey);
-                // Если есть контекст, добавляем базу консультанта. Если нет (болталка/мотивация) — только системник.
                 const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
                 
-                const model = genAI.getGenerativeModel({
+                // Настраиваем конфиг. Оставляем gemini-flash-latest, как ты и сказал!
+                const modelConfig = {
                     model: "gemini-flash-latest",
                     systemInstruction: systemPrompt
-                });
+                };
 
+                // Включаем суровый голос Puck, если пришла голосовуха
+                if (requireVoice) {
+                    modelConfig.generationConfig = {
+                        responseModalities: ["AUDIO"],
+                        speechConfig: {
+                            voiceConfig: {
+                                prebuiltVoiceConfig: { voiceName: "Puck" }
+                            }
+                        }
+                    };
+                }
+
+                const model = genAI.getGenerativeModel(modelConfig);
                 const chat = model.startChat({ history: chatHistory });
                 const result = await chat.sendMessage(promptText);
+
+                // Если просили голос, вытаскиваем и текст, и аудио
+                if (requireVoice) {
+                    const candidate = result.response.candidates[0];
+                    const audioPart = candidate?.content?.parts?.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
+                    const textPart = candidate?.content?.parts?.find(p => p.text);
+                    
+                    return {
+                        text: textPart ? textPart.text : result.response.text(),
+                        audioBase64: audioPart ? audioPart.inlineData.data : null
+                    };
+                }
+
+                // Стандартный текстовый ответ для обычных сообщений
                 return result.response.text();
 
             } catch (error) {
