@@ -1,7 +1,8 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 require('dotenv').config();
-// ВОТ ТУТ ИСПРАВЛЕН ПУТЬ НА ПРАВИЛЬНЫЙ:
+const fs = require('fs'); // Добавили для работы с файлами
+const path = require('path'); // Добавили для путей
 const { getAIAnswer, extractTextFromMedia, extractTextFromDocument } = require('../logic/ai_service');
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -33,7 +34,7 @@ async function safeEdit(ctx, messageId, newText) {
   try {
     await ctx.telegram.editMessageText(ctx.chat.id, messageId, undefined, newText);
   } catch (e) {
-    // Игнорируем ошибки Телеграма (например, если текст не изменился)
+    // Игнорируем ошибки Телеграма
   }
 }
 
@@ -72,7 +73,6 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
   let isDoc = false;
   let fileName = "";
   
-  // Флаг: было ли это голосовое сообщение от пользователя
   const isVoiceRequest = ctx.message.voice !== undefined;
 
   if (ctx.message.text) {
@@ -140,62 +140,49 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
       
       const userPrompt = question || "Проанализируй этот документ.";
       question = `${userPrompt}\n\n[Текст: ${mediaText}]`;
-      await updateProgress('✅ Данные извлечены. Начинаю юридический анализ...');
+      await updateProgress('✅ Данные извлечены. Начинаю анализ...');
     }
 
     const chatId = ctx.message.chat.id;
     const userId = ctx.message.from.id;
     const userHistory = getHistory(chatId, userId);
 
-    // Запрашиваем ответ у ИИ
     const aiResult = await getAIAnswer(question, userHistory, updateProgress, isVoiceRequest);
     
-    // Безопасно извлекаем текст
     const finalAnswerText = typeof aiResult === 'string' ? aiResult : aiResult.text;
-
-    // Сохраняем в историю ТОЛЬКО текст
     saveToHistory(chatId, userId, question, finalAnswerText);
-
-    // Удаляем сообщение со статусом (часики)
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
     
-    // --- ОТПРАВКА ГОЛОСА (С ЖЕЛЕЗОБЕТОННЫМ WAV-ЗАГОЛОВКОМ) ---
+    // --- ЖЕЛЕЗОБЕТОННАЯ ОТПРАВКА ГОЛОСА ЧЕРЕЗ ФАЙЛОВУЮ СИСТЕМУ ---
     if (isVoiceRequest && aiResult.audioBase64) {
+      const tempFilePath = path.join(__dirname, `Miyzamchi_Voice_${Date.now()}.wav`);
+      
       try {
-        const pcmBuffer = Buffer.from(aiResult.audioBase64, 'base64');
-        const dataLength = pcmBuffer.length;
+        const audioBuffer = Buffer.from(aiResult.audioBase64, 'base64');
         
-        // Магия: Создаем идеальный 44-байтный заголовок WAV (24000 Hz, 16 bit, Mono)
-        // Без этого Телеграм откажется принимать аудио от Gemini
-        const wavHeader = Buffer.alloc(44);
-        wavHeader.write('RIFF', 0);
-        wavHeader.writeUInt32LE(36 + dataLength, 4);
-        wavHeader.write('WAVE', 8);
-        wavHeader.write('fmt ', 12);
-        wavHeader.writeUInt32LE(16, 16); // Subchunk1Size
-        wavHeader.writeUInt16LE(1, 20); // AudioFormat (PCM)
-        wavHeader.writeUInt16LE(1, 22); // NumChannels (1 = Mono)
-        wavHeader.writeUInt32LE(24000, 24); // SampleRate
-        wavHeader.writeUInt32LE(24000 * 2, 28); // ByteRate
-        wavHeader.writeUInt16LE(2, 32); // BlockAlign
-        wavHeader.writeUInt16LE(16, 34); // BitsPerSample
-        wavHeader.write('data', 36);
-        wavHeader.writeUInt32LE(dataLength, 40);
-        
-        // Склеиваем заголовок и сырой звук
-        const perfectWavBuffer = Buffer.concat([wavHeader, pcmBuffer]);
+        // 1. Физически сохраняем файл на сервер (Телеграм это обожает)
+        fs.writeFileSync(tempFilePath, audioBuffer);
+        console.log(`[File System] Аудио сохранено во временный файл: ${tempFilePath}`);
 
-        // Используем replyWithAudio для отправки WAV-файла как трека
+        // 2. Отправляем файл как путь, а не как буфер памяти
         await ctx.replyWithAudio(
-          { source: perfectWavBuffer, filename: 'Miyzamchi_Answer.wav' }, 
+          { source: tempFilePath }, 
           { 
             reply_to_message_id: ctx.message.message_id,
             title: 'Аудио-ответ от Мыйзамчы',
-            performer: 'ИИ Юрист'
+            performer: 'ИИ Наставник'
           }
         );
+        console.log(`[Telegram] Аудио успешно отправлено!`);
+
       } catch (audioErr) {
         console.error("❌ Ошибка при отправке аудио Телеграмом:", audioErr.message);
+      } finally {
+        // 3. Удаляем файл с сервера, чтобы не забивать место
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+          console.log(`[File System] Временный файл удален.`);
+        }
       }
     }
 
@@ -227,7 +214,6 @@ bot.catch((err, ctx) => {
 async function launchBot(retryCount = 0) {
   try {
     console.log(`[Bot] Попытка запуска #${retryCount + 1}...`);
-    // ФИКС ОШИБКИ 409: Сбрасываем старые зависшие апдейты при старте
     await bot.launch({ dropPendingUpdates: true });
     console.log('✅ Telegram бот Мыйзамчы успешно запущен!');
   } catch (err) {
@@ -241,7 +227,6 @@ async function launchBot(retryCount = 0) {
 
 launchBot();
 
-// Плавная остановка
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
