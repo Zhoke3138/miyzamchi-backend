@@ -186,10 +186,10 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
         let contextText = '';
 
         if (!skipDB) {
-            if (onProgress) await onProgress('🧮 Векторизую запрос (перевожу в цифры)...');
+            if (onProgress) await onProgress('🧮 Векторизую запрос...');
             const vector = await getEmbedding(message);
             
-            if (onProgress) await onProgress('🔎 Ищу релевантные статьи в базе...');
+            if (onProgress) await onProgress('🔎 Ищу статьи в базе...');
             const matches = await searchPinecone(vector, 12);
             
             const core = matches.filter(m => (m.score || 0) >= 0.75);
@@ -219,10 +219,9 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
             const activeKey = getNextKey(); 
             try {
                 const genAI = new GoogleGenerativeAI(activeKey);
-                
-                // ШАГ 1: ВСЕГДА генерируем текст через мощную модель, которая переварит весь контекст
                 const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
                 
+                // ШАГ 1: Генерируем полный текстовый ответ
                 const textModel = genAI.getGenerativeModel({
                     model: "gemini-flash-latest",
                     systemInstruction: systemPrompt
@@ -232,11 +231,23 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
                 const textResult = await chat.sendMessage(promptText);
                 const finalAnswerText = textResult.response.text();
 
-                // ШАГ 2: Если просят голос, переводим готовый текст в звук
+                // ШАГ 2: Если запрошен голос, делаем короткую выжимку, чтобы избежать таймаута Телеграма (90 сек)
                 if (requireVoice) {
-                    if (onProgress) await onProgress('🎙️ Синтезирую голос Мыйзамчы...');
-                    console.log(`[AI Logic] Текст готов. Озвучиваю через TTS-модель (экономия токенов)...`);
+                    if (onProgress) await onProgress('🎙️ Синтезирую аудио-ответ...');
                     
+                    // ЖЕЛЕЗОБЕТОННЫЙ ФИКС: Берем максимум 300 символов (до ближайшей точки)
+                    let shortVoiceText = finalAnswerText;
+                    if (shortVoiceText.length > 300) {
+                        shortVoiceText = shortVoiceText.substring(0, 300);
+                        const lastDotIndex = shortVoiceText.lastIndexOf('.');
+                        if (lastDotIndex > 0) {
+                            shortVoiceText = shortVoiceText.substring(0, lastDotIndex + 1);
+                        }
+                        shortVoiceText += " Подробный юридический разбор читайте ниже в тексте.";
+                    }
+
+                    console.log(`[AI Logic] Текст урезан до ${shortVoiceText.length} символов для быстрой генерации голоса.`);
+
                     const audioModel = genAI.getGenerativeModel({
                         model: "gemini-3.1-flash-tts-preview",
                         generationConfig: {
@@ -249,9 +260,8 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
                         }
                     });
 
-                    // Отправляем ТОЛЬКО готовый ответ, никаких законов и системных промптов (обходим лимит в 10к)
-                    const audioResult = await audioModel.generateContent(`Прочитай этот текст:\n\n${finalAnswerText}`);
-                    
+                    // Отправляем ТОЛЬКО короткий кусок. Это сработает за пару секунд!
+                    const audioResult = await audioModel.generateContent(shortVoiceText);
                     const candidate = audioResult.response.candidates[0];
                     const audioPart = candidate?.content?.parts?.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
                     
@@ -271,14 +281,13 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
                 if (retries >= maxRetries) {
                     throw error; 
                 }
-
                 await new Promise(resolve => setTimeout(resolve, 800)); 
             }
         }
 
     } catch (error) {
         console.error("AI Logic Error FINAL:", error.message);
-        return "Извините, произошла ошибка. Серверы Google временно перегружены, я перепробовал все ключи, но не смог пробиться. Пожалуйста, подождите минуту.";
+        return "Извините, произошла ошибка. Серверы Google временно перегружены.";
     }
 }
 
