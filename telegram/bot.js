@@ -159,13 +159,35 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     // Удаляем сообщение со статусом (часики)
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
     
-    // --- ОТПРАВКА ГОЛОСА ---
+    // --- ОТПРАВКА ГОЛОСА (С ЖЕЛЕЗОБЕТОННЫМ WAV-ЗАГОЛОВКОМ) ---
     if (isVoiceRequest && aiResult.audioBase64) {
       try {
-        const audioBuffer = Buffer.from(aiResult.audioBase64, 'base64');
+        const pcmBuffer = Buffer.from(aiResult.audioBase64, 'base64');
+        const dataLength = pcmBuffer.length;
+        
+        // Магия: Создаем идеальный 44-байтный заголовок WAV (24000 Hz, 16 bit, Mono)
+        // Без этого Телеграм откажется принимать аудио от Gemini
+        const wavHeader = Buffer.alloc(44);
+        wavHeader.write('RIFF', 0);
+        wavHeader.writeUInt32LE(36 + dataLength, 4);
+        wavHeader.write('WAVE', 8);
+        wavHeader.write('fmt ', 12);
+        wavHeader.writeUInt32LE(16, 16); // Subchunk1Size
+        wavHeader.writeUInt16LE(1, 20); // AudioFormat (PCM)
+        wavHeader.writeUInt16LE(1, 22); // NumChannels (1 = Mono)
+        wavHeader.writeUInt32LE(24000, 24); // SampleRate
+        wavHeader.writeUInt32LE(24000 * 2, 28); // ByteRate
+        wavHeader.writeUInt16LE(2, 32); // BlockAlign
+        wavHeader.writeUInt16LE(16, 34); // BitsPerSample
+        wavHeader.write('data', 36);
+        wavHeader.writeUInt32LE(dataLength, 40);
+        
+        // Склеиваем заголовок и сырой звук
+        const perfectWavBuffer = Buffer.concat([wavHeader, pcmBuffer]);
+
         // Используем replyWithAudio для отправки WAV-файла как трека
         await ctx.replyWithAudio(
-          { source: audioBuffer, filename: 'Miyzamchi_Answer.wav' }, 
+          { source: perfectWavBuffer, filename: 'Miyzamchi_Answer.wav' }, 
           { 
             reply_to_message_id: ctx.message.message_id,
             title: 'Аудио-ответ от Мыйзамчы',
