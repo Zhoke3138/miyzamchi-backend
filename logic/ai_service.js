@@ -166,28 +166,22 @@ async function searchPinecone(vector, topK = 10) {
     }
 }
 
-// Фильтр для отсечения не-юридических запросов от базы данных
 function isNonLegalQuery(message) {
     const cleaned = message.trim().toLowerCase();
-    
-    // Если сообщение длинное, скорее всего это описание ситуации, пускаем в БД
     if (cleaned.length > 250) return false;
-
-    // Паттерны: Приветствия, благодарности, нытье, запросы на мотивацию
     const skipPatterns = [
         /^(салам|привет|хай|здравствуй|здравствуйте|hi|hello|hey|ку|доброе утро|добрый день|добрый вечер)/i,
         /(как дела|что делаешь|кто ты|что ты умеешь|спасибо|рахмат|благодарю|от души)/i,
         /(мотиваци|замотивируй|мотивируй|устал|надоело|не хочу учить|лень|сдаюсь|тяжело|помоги морально|нет сил|выгорел|срс задолбало|боюсь сессии|скучно|нытье)/i
     ];
-    
     return skipPatterns.some(pattern => pattern.test(cleaned));
 }
 
-// --- ГЛАВНАЯ ФУНКЦИЯ С УМНОЙ И ТИХОЙ РОТАЦИЕЙ И ГОЛОСОМ ---
-// Добавлен параметр requireVoice. Если true - генерируем аудио-ответ
+// --- ГЛАВНАЯ ФУНКЦИЯ ---
 async function getAIAnswer(message, history = [], onProgress = null, requireVoice = false) {
     try {
-        // Проверяем, нужно ли делать запрос в векторную БД
+        console.log(`[AI Logic] Начало генерации. Запрошен голос: ${requireVoice}`);
+        
         const skipDB = isNonLegalQuery(message);
         let contextText = '';
 
@@ -227,13 +221,16 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
                 const genAI = new GoogleGenerativeAI(activeKey);
                 const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
                 
-                // Настраиваем конфиг. Оставляем gemini-flash-latest, как ты и сказал!
+                // Тот самый крутой фикс: используем твою TTS-модель для голоса!
+                const aiModelName = requireVoice ? "gemini-3.1-flash-tts-preview" : "gemini-flash-latest";
+                console.log(`[AI Logic] Использую модель: ${aiModelName}`);
+
                 const modelConfig = {
-                    model: "gemini-flash-latest",
+                    model: aiModelName,
                     systemInstruction: systemPrompt
                 };
 
-                // Включаем суровый голос Puck, если пришла голосовуха
+                // Для аудио-модели просим вернуть звук
                 if (requireVoice) {
                     modelConfig.generationConfig = {
                         responseModalities: ["AUDIO"],
@@ -249,11 +246,12 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
                 const chat = model.startChat({ history: chatHistory });
                 const result = await chat.sendMessage(promptText);
 
-                // Если просили голос, вытаскиваем и текст, и аудио
                 if (requireVoice) {
                     const candidate = result.response.candidates[0];
                     const audioPart = candidate?.content?.parts?.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
                     const textPart = candidate?.content?.parts?.find(p => p.text);
+                    
+                    console.log(`[AI Logic] Ответ получен. Наличие аудио-файла: ${!!audioPart}`);
                     
                     return {
                         text: textPart ? textPart.text : result.response.text(),
@@ -261,7 +259,6 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
                     };
                 }
 
-                // Стандартный текстовый ответ для обычных сообщений
                 return result.response.text();
 
             } catch (error) {
