@@ -219,47 +219,49 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
             const activeKey = getNextKey(); 
             try {
                 const genAI = new GoogleGenerativeAI(activeKey);
+                
+                // ШАГ 1: ВСЕГДА генерируем текст через мощную модель, которая переварит весь контекст
                 const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
                 
-                // Тот самый крутой фикс: используем твою TTS-модель для голоса!
-                const aiModelName = requireVoice ? "gemini-3.1-flash-tts-preview" : "gemini-flash-latest";
-                console.log(`[AI Logic] Использую модель: ${aiModelName}`);
-
-                const modelConfig = {
-                    model: aiModelName,
+                const textModel = genAI.getGenerativeModel({
+                    model: "gemini-flash-latest",
                     systemInstruction: systemPrompt
-                };
+                });
 
-                // Для аудио-модели просим вернуть звук
+                const chat = textModel.startChat({ history: chatHistory });
+                const textResult = await chat.sendMessage(promptText);
+                const finalAnswerText = textResult.response.text();
+
+                // ШАГ 2: Если просят голос, переводим готовый текст в звук
                 if (requireVoice) {
-                    modelConfig.generationConfig = {
-                        responseModalities: ["AUDIO"],
-                        speechConfig: {
-                            voiceConfig: {
-                                prebuiltVoiceConfig: { voiceName: "Puck" }
+                    if (onProgress) await onProgress('🎙️ Синтезирую голос Мыйзамчы...');
+                    console.log(`[AI Logic] Текст готов. Озвучиваю через TTS-модель (экономия токенов)...`);
+                    
+                    const audioModel = genAI.getGenerativeModel({
+                        model: "gemini-3.1-flash-tts-preview",
+                        generationConfig: {
+                            responseModalities: ["AUDIO"],
+                            speechConfig: {
+                                voiceConfig: {
+                                    prebuiltVoiceConfig: { voiceName: "Puck" }
+                                }
                             }
                         }
-                    };
-                }
+                    });
 
-                const model = genAI.getGenerativeModel(modelConfig);
-                const chat = model.startChat({ history: chatHistory });
-                const result = await chat.sendMessage(promptText);
-
-                if (requireVoice) {
-                    const candidate = result.response.candidates[0];
-                    const audioPart = candidate?.content?.parts?.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
-                    const textPart = candidate?.content?.parts?.find(p => p.text);
+                    // Отправляем ТОЛЬКО готовый ответ, никаких законов и системных промптов (обходим лимит в 10к)
+                    const audioResult = await audioModel.generateContent(`Прочитай этот текст:\n\n${finalAnswerText}`);
                     
-                    console.log(`[AI Logic] Ответ получен. Наличие аудио-файла: ${!!audioPart}`);
+                    const candidate = audioResult.response.candidates[0];
+                    const audioPart = candidate?.content?.parts?.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
                     
                     return {
-                        text: textPart ? textPart.text : result.response.text(),
+                        text: finalAnswerText,
                         audioBase64: audioPart ? audioPart.inlineData.data : null
                     };
                 }
 
-                return result.response.text();
+                return finalAnswerText;
 
             } catch (error) {
                 console.warn(`[Gemini Error] Попытка ${retries + 1} провалена: ${error.message}`);
