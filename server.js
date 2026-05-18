@@ -362,6 +362,13 @@ function sendStatus(res, text, icon) {
     res.write(`data: ${JSON.stringify({ protocolStatus: text, icon })}\n\n`);
 }
 
+// Fine-grained stepper event для IDE-чата (Thinking Box).
+// step = { id, status: 'loading'|'success'|'warning'|'error', text, reason?, score? }
+function sendStep(res, step) {
+    if (!res || res.writableEnded || !step || !step.id) return;
+    try { res.write(`data: ${JSON.stringify({ step })}\n\n`); } catch (e) {}
+}
+
 // --- АДАПТИВНЫЙ RETRIEVAL 2.0 (с реальным стримингом этапов) ---
 // Возвращает: { core: [...], context: [...], all: [...] }
 //   core    — статьи с высоким score (> CORE_THRESHOLD) — Gemini опирается на них
@@ -1539,15 +1546,45 @@ async function verifySingleArticle(article) {
 }
 
 // ВСЕ статьи параллельно через Promise.allSettled. SSE-статусы в реальном времени.
+// Эмитим per-article шаги:
+//   1) loading — сразу при старте (со стабильным id verify_N)
+//   2) success/warning/error — после завершения (тот же id для перезаписи)
 async function verifyAllArticles(articles, res) {
-    const promises = articles.map((article, i) =>
-        verifySingleArticle(article)
-            .then(result => {
-                sendStatus(res, result.message);
-                console.log(`[Verify ${i + 1}/${articles.length}] ${result.message}`);
-                return result;
-            })
-    );
+    const STATUS_MAP = {
+        verified: 'success',
+        mismatch: 'warning',
+        not_found: 'error',
+        error: 'error'
+    };
+    const promises = articles.map((article, i) => {
+        const stepId = `verify_${i}`;
+        const refLabel = `Ст. ${article.article || '?'} ${article.act || ''}`.trim();
+        // Loading-событие СРАЗУ — фронт нарисует спиннер
+        sendStep(res, { id: stepId, status: 'loading', text: refLabel });
+        return verifySingleArticle(article).then(result => {
+            const uiStatus = STATUS_MAP[result.status] || 'success';
+            let reason = null;
+            if (result.status === 'not_found') {
+                reason = 'Норма отсутствует в базе';
+            } else if (result.status === 'mismatch') {
+                reason = result.suggestedArticle
+                    ? `Найдено совпадение со ст. ${result.suggestedArticle}`
+                    : 'Найдена близкая, но не совпадающая статья';
+            } else if (result.status === 'error') {
+                reason = 'Ошибка проверки';
+            }
+            sendStep(res, {
+                id: stepId,
+                status: uiStatus,
+                text: result.ref || refLabel,
+                reason,
+                score: result.score || 0
+            });
+            sendStatus(res, result.message); // back-compat для регулярного чата
+            console.log(`[Verify ${i + 1}/${articles.length}] ${result.message}`);
+            return result;
+        });
+    });
     const settled = await Promise.allSettled(promises);
     return settled
         .filter(r => r.status === 'fulfilled')
@@ -1662,14 +1699,17 @@ async function analyzeDocumentSmart(documentText, userQuery, res) {
     try {
         // Этап 1: Extractor
         sendStatus(res, '📄 Извлекаю ссылки на НПА из документа...');
+        sendStep(res, { id: 'extract', status: 'loading', text: 'Извлекаю ссылки на НПА из документа' });
         const articles = await extractArticles(documentText);
 
         if (articles.length === 0) {
+            sendStep(res, { id: 'extract', status: 'warning', text: 'Ссылки на НПА не найдены', reason: 'Переключаюсь на общий анализ' });
             sendStatus(res, 'ℹ️ Ссылки на НПА не найдены. Переключаюсь на обычный анализ...');
             const fb = `Запрос: ${userQuery || 'Проанализируй документ'}\n\nДокумент:\n"""\n${(documentText || '').slice(0, 15000)}\n"""`;
             await handleAgent(fb, [], res, 0, userQuery);
             return;
         }
+        sendStep(res, { id: 'extract', status: 'success', text: `Найдено ссылок на НПА: ${articles.length}` });
         sendStatus(res, `📋 Найдено ${articles.length} ссылок. Проверяю каждую параллельно...`);
 
         // Этап 2: Per-article parallel verification
@@ -1705,8 +1745,10 @@ async function analyzeDocumentSmart(documentText, userQuery, res) {
         }
 
         // Этап 4: Judge
+        sendStep(res, { id: 'judge', status: 'loading', text: 'Формирую юридическое заключение' });
         sendStatus(res, '⚖️ Формирую юридическое заключение...');
         await runJudge(documentText, results, res);
+        sendStep(res, { id: 'judge', status: 'success', text: 'Заключение готово' });
 
         console.log(`[DocAnalysis] Done: ${articles.length} articles, ${verified} verified, ${notFound} not_found, ${Date.now() - startTime}ms`);
     } catch (err) {
