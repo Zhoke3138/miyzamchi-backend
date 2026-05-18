@@ -99,12 +99,32 @@ const BASE_CONSULTANT_PROMPT = `
 
 // --- МУЛЬТИМЕДИА И ПАРСИНГ ---
 async function extractTextFromMedia(mimeType, base64Data) {
-    const activeKey = getNextKey();
-    const genAI = new GoogleGenerativeAI(activeKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
     const prompt = "Извлеки текст из этого медиафайла. Если это голос, сделай точную транскрипцию. Если фото, распознай весь читаемый текст. Выведи ТОЛЬКО текст, без вступительных слов.";
-    const result = await model.generateContent([ prompt, { inlineData: { data: base64Data, mimeType } } ]);
-    return result.response.text();
+    
+    let retries = 0;
+    const maxRetries = KEYS.length > 0 ? KEYS.length : 3;
+
+    while (retries <= maxRetries) {
+        const activeKey = getNextKey();
+        try {
+            const genAI = new GoogleGenerativeAI(activeKey);
+            // Используем стабильную версию модели
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
+            const result = await model.generateContent([ prompt, { inlineData: { data: base64Data, mimeType } } ]);
+            return result.response.text();
+        } catch (error) {
+            console.warn(`[Gemini Media Error] Распознавание не удалось (попытка ${retries + 1}): ${error.message}`);
+            blockKey(activeKey); 
+
+            retries++;
+            if (retries > maxRetries) {
+                console.error("❌ Фатальная ошибка парсинга медиа. Серверы Google лежат.");
+                throw error; 
+            }
+            // Ждем 1 секунду перед тем как дернуть Google снова
+            await new Promise(resolve => setTimeout(resolve, 1000)); 
+        }
+    }
 }
 
 async function extractTextFromDocument(buffer, mimeType, fileName) {
