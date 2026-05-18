@@ -158,14 +158,13 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     saveToHistory(chatId, userId, question, finalAnswerText);
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
     
-    // --- ЖЕЛЕЗОБЕТОННАЯ ОТПРАВКА ГОЛОСА ЧЕРЕЗ ФАЙЛОВУЮ СИСТЕМУ И БУФЕР ---
+    // --- ЖЕЛЕЗОБЕТОННАЯ ОТПРАВКА ГОЛОСА ---
     if (isVoiceRequest && aiResult.audioBase64) {
       const tempWavPath = path.join(__dirname, `temp_${Date.now()}.wav`);
       const tempOggPath = path.join(__dirname, `voice_${Date.now()}.ogg`);
       
       try {
         const audioBuffer = Buffer.from(aiResult.audioBase64, 'base64');
-        
         fs.writeFileSync(tempWavPath, audioBuffer);
         console.log(`[File System] Исходное аудио сохранено: ${tempWavPath}`);
         await updateProgress('⚙️ Конвертирую аудио для Telegram...');
@@ -177,51 +176,50 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
               '-ar 24000',
               '-ac 1'
             ])
-            .audioCodec('libopus')
+            .outputOptions([
+              '-c:a libopus',
+              '-b:a 32k', // Оптимизация битрейта под Телеграм
+              '-vbr on'
+            ])
             .toFormat('ogg')
             .on('error', (err) => {
-              console.error('❌ Ошибка FFmpeg во время конвертации:', err);
+              console.error('❌ Ошибка FFmpeg:', err);
               reject(err);
             })
             .on('end', () => {
-              console.log('✅ Конвертация в OGG завершена успешно.');
+              console.log('✅ Конвертация в OGG завершена.');
               resolve();
             })
             .save(tempOggPath);
         });
 
-        // --- ФИКС SOCKET HANG UP: Читаем файл в буфер памяти ---
+        // 🟢 ФИКС RACE CONDITION: Даем файловой системе 500мс, чтобы отпустить файл
+        await new Promise(r => setTimeout(r, 500));
+
         const stats = fs.statSync(tempOggPath);
         console.log(`[File System] Размер готового OGG файла: ${stats.size} байт`);
         
         if (stats.size === 0) {
-          throw new Error("FFmpeg создал пустой файл (0 байт).");
+          throw new Error("FFmpeg создал пустой файл.");
         }
 
-        const oggBuffer = fs.readFileSync(tempOggPath);
-
-        // Отправляем буфером, а не ссылкой на диск
+        // 🟢 ФИКС SOCKET HANG UP: Передаем через Stream, чтобы Телеграм не захлебнулся
         await ctx.replyWithVoice(
-          { source: oggBuffer }, 
+          { source: fs.createReadStream(tempOggPath) }, 
           { reply_to_message_id: ctx.message.message_id }
         );
         console.log(`[Telegram] Голосовое успешно отправлено в чат!`);
 
       } catch (audioErr) {
-        // --- ПОЛНОЕ ЛОГИРОВАНИЕ ОШИБКИ ---
         console.error("\n================ ПОЛНАЯ ОШИБКА АУДИО ================");
-        console.error("Сообщение ошибки:", audioErr.message);
-        console.error("Стек вызовов (где упало):", audioErr.stack);
-        
-        // Если ошибка пришла от самого Телеграма (Axios)
+        console.error(audioErr.stack || audioErr.message);
         if (audioErr.response) {
-            console.error("Статус от Telegram:", audioErr.response.status);
             console.error("Ответ от Telegram:", JSON.stringify(audioErr.response.data, null, 2));
         }
         console.error("=====================================================\n");
-        
-        await ctx.reply('⚠️ Произошла ошибка при отправке голосового сообщения. Смотрите логи сервера.', { reply_to_message_id: ctx.message.message_id });
+        await ctx.reply('⚠️ Произошла ошибка при отправке аудио. Читайте текстовый ответ.', { reply_to_message_id: ctx.message.message_id });
       } finally {
+        // Уборка мусора
         if (fs.existsSync(tempWavPath)) fs.unlinkSync(tempWavPath);
         if (fs.existsSync(tempOggPath)) fs.unlinkSync(tempOggPath);
         console.log(`[File System] Временные файлы удалены.`);
@@ -248,7 +246,6 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
 });
 
 // --- ГЛОБАЛЬНАЯ ЗАЩИТА И УПРЯМЫЙ ЗАПУСК ---
-
 bot.catch((err, ctx) => {
   console.error(`[Global Error] Ошибка бота в апдейте ${ctx.updateType}:`, err);
 });
