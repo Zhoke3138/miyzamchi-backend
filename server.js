@@ -450,67 +450,45 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
 // Метаданные Pinecone: { npa_title, article_title, full_text, text_preview }
 // Поля article_number нет — номер достаём regex'ом из full_text.
 // ════════════════════════════════════════════════════════════════════
-const DOCUMENT_ANALYSIS_CONFIG = {
-    extractorKeyIndex: 0,           // Key[0] для Extractor
-    synthesizerKeyIndex: 12,        // Key[12] для Synthesizer (последний из 13)
-    verificationKeys: Array.from({ length: 11 }, (_, i) => i + 1), // Key[1..11]
-    maxArticles: 30,
-    defaultArticlesPerAgent: 3,
+const DOC_ANALYSIS_CONFIG = {
+    maxArticles: 30,                // жёсткий лимит — защита ключей от rate limit
+    pineconeTopK: 5,                // 5 кандидатов на статью → regex match по всем
+    minDocumentLength: 50,          // < 50 → перенаправляем в обычный чат
     extractorChunkSize: 7000,
     extractorChunkOverlap: 500,
     confidenceThresholds: { high: 0.75, medium: 0.70, low: 0.60 }
 };
 
-function getArticlesPerAgent(totalArticles, availableKeys) {
-    if (availableKeys <= 0) return totalArticles;
-    const baseN = Math.ceil(totalArticles / availableKeys);
-    return Math.max(baseN, DOCUMENT_ANALYSIS_CONFIG.defaultArticlesPerAgent);
-}
-
-// Нормализация номера статьи для сравнения "1¹" vs "1-1" и т.п.
-function normalizeArticleNumber(num) {
-    if (num === null || num === undefined) return '';
-    return String(num)
-        .toLowerCase()
-        .replace(/\s+/g, '')
-        .replace(/\./g, '')
-        .replace(/¹/g, '-1').replace(/²/g, '-2').replace(/³/g, '-3').replace(/⁴/g, '-4')
-        .replace(/⁵/g, '-5').replace(/⁶/g, '-6').replace(/⁷/g, '-7').replace(/⁸/g, '-8')
-        .replace(/⁹/g, '-9').replace(/⁰/g, '-0');
-}
-
-// Парсим номер статьи из full_text Pinecone-метаданных.
+// Извлекаем номер статьи из full_text Pinecone-метаданных.
 // Примеры: "Статья 1¹. Предмет регулирования" → "1¹"
 //          "Статья 137 Пытки"                  → "137"
-function extractArticleNumberFromMetadata(metadata) {
-    const fullText = (metadata && metadata.full_text) || '';
-    const m = fullText.match(/Статья\s+([\d¹²³⁴⁵⁶⁷⁸⁹⁰\-\.]+)/);
+function extractArticleNumber(fullText) {
+    if (!fullText) return null;
+    const m = String(fullText).match(/Статья\s+([\d¹²³⁴⁵⁶⁷⁸⁹⁰\-\.]+)/);
     if (!m) return null;
     return m[1].trim().replace(/\.$/, '');
 }
 
-// Векторный поиск с приоритизацией matches по lawNameHint.
-// apiKey передаётся в getEmbedding для распределения нагрузки между ключами.
-async function searchPineconeByText(searchText, lawNameHint = null, apiKey = null) {
-    try {
-        if (!searchText || !searchText.trim()) return null;
-        const vector = await getEmbedding(searchText, 0, apiKey);
-        const results = await searchPinecone(vector, 5);
-        if (!results || results.length === 0) return null;
+function escapeRegex(s) {
+    return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
-        if (lawNameHint) {
-            const hint = lawNameHint.toLowerCase().slice(0, 12);
-            const exact = results.find(r =>
-                r.metadata && r.metadata.npa_title &&
-                r.metadata.npa_title.toLowerCase().includes(hint)
-            );
-            if (exact) return exact;
+// Найти лучшее совпадение из топ-N кандидатов Pinecone:
+//   - сначала ищем тот где номер статьи в full_text БУКВАЛЬНО совпадает с искомым,
+//   - если не нашли — возвращаем top-1 по score с numberMatches:false.
+function findBestArticleMatch(candidates, article) {
+    if (!candidates || candidates.length === 0) return null;
+    const needle = escapeRegex(article.article || '');
+    if (!needle) return candidates[0] ? { ...candidates[0], numberMatches: false } : null;
+    // Regex: "Статья 137" / "Статья 137." / "Статья 137¹" / "Статья 137-1"
+    const re = new RegExp(`Статья\\s+${needle}[¹²³⁴⁵⁶⁷⁸⁹⁰\\.\\s\\-]`, 'i');
+    for (const c of candidates) {
+        const fullText = (c && c.metadata && c.metadata.full_text) || '';
+        if (re.test(fullText)) {
+            return { ...c, numberMatches: true };
         }
-        return results[0];
-    } catch (e) {
-        console.error('[searchPineconeByText] err:', e.message);
-        return null;
     }
+    return { ...candidates[0], numberMatches: false };
 }
 
 function sendConfidence(res, payload) {
@@ -1002,50 +980,90 @@ const AGENT_SYSTEM_PROMPT = `
 // Source-of-truth — ОТЧЁТ ПРОВЕРКИ (verified-by-RAG) который
 // собирают параллельные verifier-агенты.
 // ============================================================
-const DOCUMENT_ANALYSIS_PROMPT = `
-Ты — **Мыйзамчи Аналитик документов**. Проводишь юридический анализ документа пользователя.
+const JUDGE_SYSTEM_PROMPT = `
+Ты — **Мыйзамчы Агент-Судья**. Юридический аналитик системы Мыйзамчы.
+Работаешь ИСКЛЮЧИТЕЛЬНО по законодательству **Кыргызской Республики**.
 
-═══ ИСТОЧНИК ИСТИНЫ ═══
-Тебе передан **ОТЧЁТ ПРОВЕРКИ СТАТЕЙ** — это результат автоматической сверки каждой ссылки на статью из документа с реальной базой НПА КР через Pinecone.
-ОТЧЁТ — ЕДИНСТВЕННЫЙ источник правовой истины. Других у тебя нет.
+═══ АБСОЛЮТНЫЙ ЗАПРЕТ — ЗАКОНОДАТЕЛЬСТВО ДРУГИХ СТРАН ═══
+ЗАПРЕЩЕНО ссылаться на нормы РФ, Казахстана, других стран как применимые в КР.
+Только право Кыргызской Республики + ратифицированные КР международные договоры (но только если они в ОТЧЁТЕ).
 
-═══ КРИТИЧЕСКИЕ ЗАПРЕТЫ (нарушение = галлюцинация) ═══
+═══ АБСОЛЮТНОЕ ПРАВИЛО — ЕДИНСТВЕННЫЙ ИСТОЧНИК ИСТИНЫ ═══
+ВСЕ номера статей в твоём ответе ДОЛЖНЫ быть процитированы из «ОТЧЁТА ВЕРИФИКАЦИИ» (per-article RAG-сверка через Pinecone).
+Твоя собственная память о юр.кодексах НЕ ИСТОЧНИК. Память может содержать устаревшие или неверные данные.
+ЕСЛИ номера НЕТ в ОТЧЁТЕ — ты его НЕ ЗНАЕШЬ и не можешь упоминать.
 
-1. ЗАПРЕЩЕНО упоминать номер статьи (например "ст. 137", "статья 25"), если эта статья НЕ ПРОЦИТИРОВАНА в ОТЧЁТЕ ПРОВЕРКИ.
+═══ ЛОГИКА ПО КАТЕГОРИЯМ ОТЧЁТА ═══
 
-   Альтернатива — общая формулировка:
-     ❌ «согласно ст. 422 УК КР»
-     ✅ «согласно действующим нормам УК КР о пытках»
-     ✅ «согласно соответствующей статье УК КР»
+▸ Статья ✅ verified
+   → Можешь свободно ссылаться на её номер из ОТЧЁТА.
+   → Формат: «согласно ст. X [НПА из ОТЧЁТА]…»
+   → Цитируй оригинал из ragText (приведённый в ОТЧЁТЕ).
 
-2. ЕСЛИ в документе пользователя уже указаны номера статей — ЗАПРЕЩЕНО предлагать "правильные" альтернативы или утверждать о смене редакций БЕЗ явного подтверждения из ОТЧЁТА (пометки ⚠️ НОМЕР НЕ СОВПАЛ).
-   Если сомневаешься — пиши: "Рекомендую сверить с cbd.minjust.gov.kg".
+▸ Статья ⚠️ mismatch (номер не совпал, ближайшее в базе — другой номер)
+   → Упомяни ОБА номера в формате: «в документе указана ст. X, в базе ближайшее совпадение — ст. Y (suggestedArticle)».
+   → Номер Y бери ДОСЛОВНО из ОТЧЁТА (поле suggestedArticle). НЕ изобретай.
 
-3. ЗАПРЕЩЕНО выдумывать статьи которых нет в ОТЧЁТЕ.
+▸ Статья ❌ not_found
+   → Упомяни номер из документа пользователя.
+   → НИКОГДА не предлагай «правильный» номер из памяти.
+   → Формулировка: «не подтверждена базой НПА, рекомендую сверить с cbd.minjust.gov.kg».
 
-4. ЕСЛИ в ОТЧЁТЕ статья помечена ❌ (НЕ найдена) — НЕ строй на её основе анализ. Просто отметь что она не найдена в базе.
+═══ КОНКРЕТНЫЕ ПРИМЕРЫ ГАЛЛЮЦИНАЦИЙ (НЕ ДЕЛАТЬ) ═══
 
-═══ ФОРМАТ АНАЛИЗА ═══
+❌ ЗАПРЕЩЕНО: «В действующем УК КР пытки квалифицируются по ст. 422»
+   (если ст. 422 не в ОТЧЁТЕ — выдумка из памяти).
 
-## Сверка ссылок на статьи
-Для каждой статьи из ОТЧЁТА:
+❌ ЗАПРЕЩЕНО: «Данная норма закреплена в ст. 57 Конституции КР»
+   (если ст. 57 не в ОТЧЁТЕ).
 
-✅ **[ref]** — Найдена в базе. Формулировка корректна / отличается: цитата из RAG.
-⚠️ **[ref]** — Номер не совпал. В базе с похожим смыслом: [ref-from-RAG]. Возможно устаревшая редакция или ошибка.
-⚠️ **[ref]** — Найдена с низкой уверенностью. Требует ручной проверки.
-❌ **[ref]** — НЕ найдена в правовой базе. Возможно ошибочный номер, опечатка или статья отсутствует в индексе.
+❌ ЗАПРЕЩЕНО: «Согласно ст. 76 действующего УК КР сроки давности…»
+   (если ст. 76 не в ОТЧЁТЕ).
 
-## Юридическая оценка
-- Соответствие документа законодательству КР (на основе verified-данных)
-- Замечания по структуре и формулировкам
-- Без выдуманных номеров — только общими фразами если статьи нет в ОТЧЁТЕ
+❌ ЗАПРЕЩЕНО: «Усильте позицию ссылкой на ст. 46 УПК КР»
+   (если ст. 46 УПК не в ОТЧЁТЕ).
 
-## Рекомендации
-- Конкретные шаги: что исправить, что добавить
-- Если статьи нет в ОТЧЁТЕ — рекомендация сверить с cbd.minjust.gov.kg
+❌ ЗАПРЕЩЕНО: «В редакции 2021 года это статья X»
+   (если X не помечен ⚠️ mismatch в ОТЧЁТЕ для этой статьи).
+
+❌ ЗАПРЕЩЕНО: «Согласно ст. X УК РФ» — нормы РФ не применяются в КР.
+
+✅ РАЗРЕШЕНО: «согласно соответствующим нормам УК КР о пытках»
+✅ РАЗРЕШЕНО: «согласно действующему уголовному законодательству КР»
+✅ РАЗРЕШЕНО: «Рекомендую сверить актуальные номера статей с cbd.minjust.gov.kg»
+
+═══ ПРАВИЛО ОТКАЗА ОТ «УЛУЧШЕНИЙ» ═══
+Если в ОТЧЁТЕ много ❌ — это значит что Pinecone не нашёл этих норм.
+Возможные причины: устаревшая редакция, международные источники (Конвенция ООН, МПГПП — их нет в базе НПА КР), или специфический раздел.
+В ЛЮБОМ случае — НЕ предлагай свою память как замену. Просто отметь отсутствие подтверждения.
+
+═══ САМОПРОВЕРКА ПЕРЕД ОТПРАВКОЙ ═══
+Перед финальным ответом мысленно пройдись по каждому упомянутому номеру статьи:
+  • Есть ли он буквально в ОТЧЁТЕ?
+  • Если нет — УБЕРИ номер, замени общей формулировкой.
+
+═══ ФОРМАТ ОТВЕТА ═══
+
+## 🔍 Сверка ссылок на статьи
+По каждой статье ИЗ ОТЧЁТА — строка со статусом:
+
+✅ Ст.X [НПА]: Подтверждена. Оригинал из базы: "[цитата до 200 сим]"
+   Использование в документе: корректно / неточно (почему)
+
+⚠️ Ст.Y [НПА]: Номер не совпал. Ближайшее в базе — ст.Z (suggestedArticle).
+   Проверьте актуальную редакцию.
+
+❌ Ст.W [НПА]: НЕ найдена в базе. Рекомендую сверить с cbd.minjust.gov.kg.
+
+## ⚖️ Юридическая оценка
+Содержательная оценка документа. Номера — только из ОТЧЁТА. Иначе общими фразами.
+
+## 📋 Рекомендации
+Что исправить/добавить. Без номеров которых нет в ОТЧЁТЕ.
+Пропущенные нормы (общими словами). Критические проблемы.
 
 ═══ ДЛИНА ═══
-Соразмерно объёму документа. Не раздувай. Конкретно по делу.
+Соразмерно объёму документа. Без воды, конкретно по делу.
 `.trim();
 
 // ============================================================
@@ -1073,12 +1091,14 @@ async function callOnce(apiKey, systemPrompt, userPrompt, retryCount = 0) {
     }
 }
 
-async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, res) {
+async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, res, generationConfig = null) {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
+    const modelOpts = {
         model: "gemini-flash-latest",
         systemInstruction: systemPrompt
-    });
+    };
+    if (generationConfig) modelOpts.generationConfig = generationConfig;
+    const model = genAI.getGenerativeModel(modelOpts);
     const chat = model.startChat({ history: history || [] });
     const result = await chat.sendMessageStream(userPrompt);
     for await (const chunk of result.stream) {
@@ -1344,22 +1364,30 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
 }
 
 // ════════════════════════════════════════════════════════════════════
-// DOCUMENT-GROUNDED ANALYSIS — AGENTS PIPELINE
+// DOCUMENT-GROUNDED ANALYSIS — PER-ARTICLE VERIFICATION PIPELINE
+// ════════════════════════════════════════════════════════════════════
+//   1) Extractor   — JSON-парсер документа → [{act, article, topic, context}]
+//   2) Verifiers   — 1 статья = 1 embedding = 1 Pinecone (topK=5) + regex
+//                    ВСЕ статьи через Promise.allSettled (round-robin keys)
+//   3) Judge       — финальный стриминг ответа на основе verification-отчёта
 // ════════════════════════════════════════════════════════════════════
 
-// ── 1. EXTRACTOR — извлекает все статьи из одного чанка документа ──
+// ── 1. EXTRACTOR ──────────────────────────────────────────────────────
 async function extractFromChunk(chunkText, apiKey) {
-    const systemPrompt = 'Ты — юридический парсер. Извлекаешь ВСЕ ссылки на статьи законов из текста. Отвечаешь СТРОГО JSON без markdown без пояснений.';
-    const userPrompt = `Найди все ссылки на статьи законов в документе.
+    const systemPrompt = `Ты — юридический парсер для законодательства Кыргызской Республики.
+Извлекаешь ВСЕ ссылки на статьи НПА из текста.
+ЗАПРЕЩЕНО упоминать законодательство РФ, Казахстана и других стран — только КР.
+Отвечаешь СТРОГО JSON без markdown без пояснений.`;
+    const userPrompt = `Найди все ссылки на статьи НПА КР в документе.
 
 Формат ответа (ровно такой JSON):
 {
   "articles": [
     {
-      "ref": "ст.137 УК КР",
-      "lawName": "Уголовный кодекс КР",
-      "articleNumber": "137",
-      "context": "точная цитата из документа (до 150 символов)"
+      "act": "Уголовный кодекс КР",
+      "article": "137",
+      "topic": "Пытки",
+      "context": "точная цитата из документа где упоминается (до 150 символов)"
     }
   ]
 }
@@ -1371,7 +1399,6 @@ ${chunkText}`;
     try {
         const result = await callOnce(apiKey, systemPrompt, userPrompt, 2);
         const cleaned = String(result || '').replace(/```json|```/g, '').trim();
-        // Find first { ... last } — отрезаем потенциальный мусор вокруг
         const fi = cleaned.indexOf('{');
         const li = cleaned.lastIndexOf('}');
         const slice = (fi >= 0 && li > fi) ? cleaned.slice(fi, li + 1) : cleaned;
@@ -1383,19 +1410,14 @@ ${chunkText}`;
     }
 }
 
-// Извлекает статьи из всего документа. Если документ >8K — chunked extraction
-// параллельно через несколько ключей, затем дедуплицирует по ref.
-async function extractArticlesFromDocument(documentText) {
-    const ks = KEYS.length;
-    const cfg = DOCUMENT_ANALYSIS_CONFIG;
-    const extractorKey = KEYS[Math.min(cfg.extractorKeyIndex, ks - 1)];
-
+// Извлекает статьи из документа. Если >8K — chunked параллельно.
+async function extractArticles(documentText) {
+    const cfg = DOC_ANALYSIS_CONFIG;
     if (documentText.length <= 8000) {
-        const articles = await extractFromChunk(documentText, extractorKey);
+        const articles = await extractFromChunk(documentText, getNextKey());
         return articles.slice(0, cfg.maxArticles);
     }
-
-    // Chunked extraction
+    // Chunked extraction — параллельно через round-robin keys
     const CHUNK = cfg.extractorChunkSize;
     const OVL = cfg.extractorChunkOverlap;
     const chunks = [];
@@ -1403,25 +1425,18 @@ async function extractArticlesFromDocument(documentText) {
         chunks.push(documentText.slice(i, i + CHUNK));
         if (i + CHUNK >= documentText.length) break;
     }
-    // Используем extractor + verification keys как пул
-    const keysPool = [cfg.extractorKeyIndex, ...cfg.verificationKeys]
-        .filter(idx => idx < ks)
-        .map(idx => KEYS[idx]);
-    if (keysPool.length === 0) keysPool.push(KEYS[0]);
-
     const results = await Promise.allSettled(
-        chunks.map((chunk, i) => extractFromChunk(chunk, keysPool[i % keysPool.length]))
+        chunks.map(chunk => extractFromChunk(chunk, getNextKey()))
     );
     const all = results
         .filter(r => r.status === 'fulfilled' && Array.isArray(r.value))
         .flatMap(r => r.value);
-
-    // Дедупликация по нормализованному ref
+    // Дедупликация по нормализованному "act|article"
     const seen = new Set();
     const unique = [];
     for (const a of all) {
-        const key = String(a.ref || '').toLowerCase().replace(/\s+/g, ' ').trim();
-        if (!key) continue;
+        const key = `${(a.act || '').toLowerCase().trim()}|${(a.article || '').toLowerCase().trim()}`;
+        if (!key || key === '|') continue;
         if (!seen.has(key)) {
             seen.add(key);
             unique.push(a);
@@ -1431,262 +1446,278 @@ async function extractArticlesFromDocument(documentText) {
     return unique.slice(0, cfg.maxArticles);
 }
 
-// ── 2. VERIFIER — для группы статей делает RAG + сверку номера ──
-async function verifyArticleGroup(articleGroup, apiKey) {
-    const cfg = DOCUMENT_ANALYSIS_CONFIG;
-    const out = [];
-    for (const article of articleGroup) {
-        try {
-            // Embedding-запрос строим из lawName + context документа — это даёт
-            // богатый вектор. Просто "ст.137 УК КР" даст слабый.
-            const searchText = `${article.lawName || ''} ${article.context || article.ref || ''}`.trim();
-            const ragResult = await searchPineconeByText(searchText, article.lawName, apiKey);
+// ── 2. VERIFIER (PER-ARTICLE) ────────────────────────────────────────
+// КЛЮЧЕВАЯ ФУНКЦИЯ. 1 статья = 1 embedding = 1 Pinecone query (topK=5).
+async function verifySingleArticle(article) {
+    const cfg = DOC_ANALYSIS_CONFIG;
+    const act = article.act || '';
+    const num = article.article || '';
+    // Fallback: если topic пустой — берём context документа (он несёт смысл нормы)
+    const topic = (article.topic && article.topic.trim()) || (article.context || '').trim();
+    const refLabel = `Ст.${num} ${act}`.trim();
 
-            const score = Number((ragResult && ragResult.score) || 0);
-            const md = (ragResult && ragResult.metadata) || {};
-            const ragText = md.full_text || null;
-            const ragNpaTitle = md.npa_title || '';
-            const ragArticleNum = extractArticleNumberFromMetadata(md);
+    try {
+        // Сфокусированный embedding для ОДНОЙ статьи
+        const searchQuery = `${act} Статья ${num} ${topic}`.trim();
+        const vector = await getEmbedding(searchQuery);
+        const candidates = await searchPinecone(vector, cfg.pineconeTopK);
 
-            const numNorm = normalizeArticleNumber(article.articleNumber);
-            const ragNumNorm = normalizeArticleNumber(ragArticleNum);
-            const numberMatches = !!(numNorm && ragNumNorm && numNorm === ragNumNorm);
-
-            // found: true если совпал номер при разумном score ИЛИ score очень высокий
-            const found = ragResult !== null && (
-                (numberMatches && score >= cfg.confidenceThresholds.low) ||
-                score >= 0.85
-            );
-            const confidence = score >= cfg.confidenceThresholds.high ? 'high'
-                             : score >= cfg.confidenceThresholds.medium ? 'medium'
-                             : 'low';
-            // mismatch — нашли похожую статью но с другим номером
-            const mismatch = !!(ragArticleNum && !numberMatches && score >= cfg.confidenceThresholds.medium);
-
-            out.push({
-                ref: article.ref,
-                lawName: article.lawName || '',
-                articleNumber: article.articleNumber || '',
-                context: article.context || '',
-                ragText, ragNpaTitle,
-                ragArticleNumber: ragArticleNum,
-                score, found, numberMatches, mismatch, confidence
-            });
-        } catch (e) {
-            console.error('[Verifier] err for', article.ref, ':', e.message);
-            out.push({
-                ref: article.ref,
-                lawName: article.lawName || '',
-                articleNumber: article.articleNumber || '',
-                context: article.context || '',
-                ragText: null, ragNpaTitle: '', ragArticleNumber: null,
-                score: 0, found: false, numberMatches: false, mismatch: false, confidence: 'low',
-                error: e.message
-            });
+        if (!candidates || candidates.length === 0) {
+            return {
+                ...article,
+                ref: refLabel,
+                status: 'not_found',
+                confidence: 'low',
+                score: 0,
+                ragText: null, ragTitle: null, ragNpaTitle: null,
+                suggestedArticle: null,
+                message: `❌ ${refLabel}: не найдена в базе`
+            };
         }
+
+        // Regex match по всем 5 кандидатам
+        const bestMatch = findBestArticleMatch(candidates, article);
+        const score = Number((bestMatch && bestMatch.score) || 0);
+        const confidence = score >= cfg.confidenceThresholds.high ? 'high'
+                         : score >= cfg.confidenceThresholds.medium ? 'medium'
+                         : 'low';
+
+        if (bestMatch && bestMatch.numberMatches) {
+            return {
+                ...article,
+                ref: refLabel,
+                status: 'verified',
+                confidence,
+                score,
+                ragText: bestMatch.metadata?.full_text || null,
+                ragTitle: bestMatch.metadata?.article_title || null,
+                ragNpaTitle: bestMatch.metadata?.npa_title || null,
+                suggestedArticle: null,
+                message: `✅ ${refLabel}: подтверждена (score ${score.toFixed(3)})`
+            };
+        }
+        if (bestMatch && score >= cfg.confidenceThresholds.medium) {
+            // Нашли похожую но под другим номером
+            const foundNumber = extractArticleNumber(bestMatch.metadata?.full_text);
+            return {
+                ...article,
+                ref: refLabel,
+                status: 'mismatch',
+                confidence: 'medium',
+                score,
+                ragText: bestMatch.metadata?.full_text || null,
+                ragTitle: bestMatch.metadata?.article_title || null,
+                ragNpaTitle: bestMatch.metadata?.npa_title || null,
+                suggestedArticle: foundNumber,
+                message: `⚠️ ${refLabel}: ближайшее — ст.${foundNumber || '?'} (score ${score.toFixed(3)})`
+            };
+        }
+        return {
+            ...article,
+            ref: refLabel,
+            status: 'not_found',
+            confidence: 'low',
+            score,
+            ragText: null, ragTitle: null, ragNpaTitle: null,
+            suggestedArticle: null,
+            message: `❌ ${refLabel}: не найдена в базе (best score ${score.toFixed(3)})`
+        };
+    } catch (e) {
+        console.error('[Verifier] err for', refLabel, ':', e.message);
+        return {
+            ...article,
+            ref: refLabel,
+            status: 'error',
+            confidence: 'low',
+            score: 0,
+            ragText: null, ragTitle: null, ragNpaTitle: null,
+            suggestedArticle: null,
+            error: e.message,
+            message: `⚠️ ${refLabel}: ошибка проверки`
+        };
     }
-    return out;
 }
 
-// Координатор — раскидывает статьи по верификационным ключам через Promise.allSettled
-async function runParallelVerification(articles) {
-    const ks = KEYS.length;
-    const cfg = DOCUMENT_ANALYSIS_CONFIG;
-
-    // Доступные ключи для verification: из конфига, но не выходящие за пределы KEYS
-    let verifKeyIndexes = cfg.verificationKeys.filter(i => i < ks);
-    if (verifKeyIndexes.length === 0) {
-        // fallback: используем все доступные кроме extractor и synthesizer
-        verifKeyIndexes = [];
-        for (let i = 0; i < ks; i++) {
-            if (i !== cfg.extractorKeyIndex && i !== Math.min(cfg.synthesizerKeyIndex, ks - 1)) {
-                verifKeyIndexes.push(i);
-            }
-        }
-        if (verifKeyIndexes.length === 0) verifKeyIndexes = [0]; // совсем мало ключей
-    }
-
-    const articlesPerAgent = getArticlesPerAgent(articles.length, verifKeyIndexes.length);
-    const groups = [];
-    for (let i = 0; i < articles.length; i += articlesPerAgent) {
-        groups.push(articles.slice(i, i + articlesPerAgent));
-    }
-
-    console.log(`[DocAnalysis] ${articles.length} статей → ${groups.length} групп по ${articlesPerAgent} (verifKeys=${verifKeyIndexes.length}/${ks})`);
-
-    const promises = groups.map((group, i) =>
-        verifyArticleGroup(group, KEYS[verifKeyIndexes[i % verifKeyIndexes.length]])
+// ВСЕ статьи параллельно через Promise.allSettled. SSE-статусы в реальном времени.
+async function verifyAllArticles(articles, res) {
+    const promises = articles.map((article, i) =>
+        verifySingleArticle(article)
+            .then(result => {
+                sendStatus(res, result.message);
+                console.log(`[Verify ${i + 1}/${articles.length}] ${result.message}`);
+                return result;
+            })
     );
-    const results = await Promise.allSettled(promises);
-    return results
+    const settled = await Promise.allSettled(promises);
+    return settled
         .filter(r => r.status === 'fulfilled')
-        .flatMap(r => r.value);
+        .map(r => r.value);
 }
 
-// ── 3. CONFIDENCE — общая уверенность по всем verified статьям ──
-function calculateOverallConfidence(verified) {
-    if (!verified || verified.length === 0) {
-        return { level: 'unknown', totalArticles: 0, foundArticles: 0, notFoundArticles: 0, lowConfArticles: 0, mismatchArticles: 0, avgScore: 0 };
+// ── 3. CONFIDENCE ────────────────────────────────────────────────────
+function calculateConfidence(results) {
+    if (!results || results.length === 0) {
+        return { level: 'unknown', total: 0, verified: 0, notFound: 0, mismatched: 0, avgScore: 0 };
     }
-    const found = verified.filter(v => v.found);
-    const notFound = verified.filter(v => !v.found);
-    const lowConf = verified.filter(v => v.found && v.confidence === 'low');
-    const mismatch = verified.filter(v => v.mismatch);
-    const avgScore = found.length > 0
-        ? found.reduce((s, v) => s + v.score, 0) / found.length
+    const verified = results.filter(r => r.status === 'verified');
+    const notFound = results.filter(r => r.status === 'not_found' || r.status === 'error');
+    const mismatched = results.filter(r => r.status === 'mismatch');
+    const avgScore = verified.length > 0
+        ? verified.reduce((s, v) => s + (v.score || 0), 0) / verified.length
         : 0;
 
     let level;
-    if (notFound.length > verified.length / 2) level = 'low';
-    else if (mismatch.length > 0 || avgScore < 0.75 || lowConf.length > 0) level = 'medium';
-    else if (avgScore >= 0.75) level = 'high';
-    else level = 'medium';
+    if (notFound.length > results.length * 0.5) level = 'low';
+    else if (notFound.length > 0 || mismatched.length > 0) level = 'medium';
+    else level = 'high';
 
     return {
         level,
-        totalArticles: verified.length,
-        foundArticles: found.length,
-        notFoundArticles: notFound.length,
-        lowConfArticles: lowConf.length,
-        mismatchArticles: mismatch.length,
+        total: results.length,
+        verified: verified.length,
+        notFound: notFound.length,
+        mismatched: mismatched.length,
         avgScore: Number(avgScore.toFixed(3))
     };
 }
 
-// ── 4. SYNTHESIZER — финальный стриминговый анализ ──
-async function synthesizeAnalysis(documentText, verifiedArticles, userQuery, res) {
-    const ks = KEYS.length;
-    const synthKey = KEYS[Math.min(DOCUMENT_ANALYSIS_CONFIG.synthesizerKeyIndex, ks - 1)];
+// Структура для UI: подробный список статей с reason для confidence badge раскрытия.
+function buildArticleDetail(v) {
+    let status, reason;
+    if (v.status === 'verified') {
+        status = 'ok';
+        reason = v.ragNpaTitle
+            ? `Найдено: ${v.ragNpaTitle}${v.ragTitle ? ' — ' + v.ragTitle : ''}`
+            : 'Подтверждено в базе НПА';
+    } else if (v.status === 'mismatch') {
+        status = 'mismatch';
+        reason = `В документе: ст.${v.article || '?'}. В базе ближайшее совпадение — ст.${v.suggestedArticle || '?'} (${v.ragNpaTitle || ''}).`;
+    } else if (v.status === 'error') {
+        status = 'not_found';
+        reason = `Ошибка проверки: ${v.error || ''}. Сверьте с cbd.minjust.gov.kg.`;
+    } else {
+        status = 'not_found';
+        reason = 'В правовой базе нет статьи с достаточным совпадением. Возможно: устаревшая редакция, опечатка или отсутствие в индексе.';
+    }
+    return {
+        ref: v.ref || `Ст.${v.article || '?'} ${v.act || ''}`,
+        status, reason,
+        score: Number((v.score || 0).toFixed(3)),
+        articleNumber: v.article || '',
+        lawName: v.act || '',
+        ragNpaTitle: v.ragNpaTitle || '',
+        ragArticleNumber: v.suggestedArticle || '',
+        context: v.context ? v.context.slice(0, 140) : '',
+        ragText: v.ragText ? v.ragText.slice(0, 280) + (v.ragText.length > 280 ? '…' : '') : ''
+    };
+}
 
-    const reportLines = verifiedArticles.map(v => {
-        if (v.found && !v.mismatch && v.confidence !== 'low') {
-            return `✅ ${v.ref}\n` +
-                   `   Score: ${v.score.toFixed(3)} (${v.confidence})\n` +
-                   `   В документе: "${v.context}"\n` +
-                   `   Найдено: ${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}\n` +
-                   `   Оригинал: "${(v.ragText || '').slice(0, 400)}..."`;
+// ── 4. JUDGE ─────────────────────────────────────────────────────────
+async function runJudge(documentText, results, res) {
+    const report = results.map(v => {
+        if (v.status === 'verified') {
+            return `✅ Ст.${v.article} ${v.act} (score ${v.score.toFixed(3)})\n` +
+                   `   В документе: "${v.context || ''}"\n` +
+                   `   Оригинал из базы: "${(v.ragText || '').slice(0, 350)}"`;
         }
-        if (v.mismatch) {
-            return `⚠️ ${v.ref} — НОМЕР НЕ СОВПАЛ\n` +
-                   `   В документе указано: ст. ${v.articleNumber}\n` +
-                   `   В базе с похожим смыслом: ${v.ragNpaTitle} — ст. ${v.ragArticleNumber}\n` +
-                   `   Score: ${v.score.toFixed(3)}\n` +
-                   `   Текст найденного: "${(v.ragText || '').slice(0, 300)}..."`;
+        if (v.status === 'mismatch') {
+            return `⚠️ Ст.${v.article} ${v.act} — НОМЕР НЕ СОВПАЛ\n` +
+                   `   В базе ближайшее: ст.${v.suggestedArticle || '?'} (${v.ragNpaTitle || ''})\n` +
+                   `   Текст найденного: "${(v.ragText || '').slice(0, 250)}"`;
         }
-        if (v.found && v.confidence === 'low') {
-            return `⚠️ ${v.ref} — низкая уверенность\n` +
-                   `   Score: ${v.score.toFixed(3)}\n` +
-                   `   Найдено: ${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}\n` +
-                   `   Требует ручной проверки`;
+        if (v.status === 'error') {
+            return `⚠️ Ст.${v.article} ${v.act} — ошибка проверки: ${v.error || 'unknown'}`;
         }
-        return `❌ ${v.ref} — НЕ найдена в правовой базе\n` +
-               `   В документе: "${v.context}"`;
+        return `❌ Ст.${v.article} ${v.act} — не найдена в базе НПА КР`;
     }).join('\n\n---\n\n');
 
-    const userPrompt = `═══ ОТЧЁТ ПРОВЕРКИ СТАТЕЙ (единственный источник истины) ═══
+    const userPrompt = `═══ ОТЧЁТ ВЕРИФИКАЦИИ (единственный источник истины) ═══
 
-${reportLines}
-
-═══ ЗАПРОС ПОЛЬЗОВАТЕЛЯ ═══
-${userQuery || 'Проанализируй документ'}
+${report}
 
 ═══ ДОКУМЕНТ ПОЛЬЗОВАТЕЛЯ ═══
 ${(documentText || '').slice(0, 15000)}
 
-Проанализируй документ строго на основе ОТЧЁТА. Не упоминай номеров статей которых нет в ОТЧЁТЕ.`;
+Проанализируй документ строго на основе ОТЧЁТА.
+Не упоминай номеров статей которых нет в ОТЧЁТЕ. Не ссылайся на законодательство РФ.`;
 
+    // Низкая temperature — критична для anti-hallucination
+    const judgeConfig = { temperature: 0.2, topP: 0.85, maxOutputTokens: 4096 };
     try {
-        await streamGeminiResponse(synthKey, DOCUMENT_ANALYSIS_PROMPT, userPrompt, [], res);
+        await streamGeminiResponse(getNextKey(), JUDGE_SYSTEM_PROMPT, userPrompt, [], res, judgeConfig);
     } catch (err) {
-        console.error('[Synthesizer] failed:', err.message);
-        // Fallback: попробуем через round-robin ключ
+        console.error('[Judge] failed:', err.message);
         try {
-            await streamGeminiResponse(getNextKey(), DOCUMENT_ANALYSIS_PROMPT, userPrompt, [], res);
+            await streamGeminiResponse(getNextKey(), JUDGE_SYSTEM_PROMPT, userPrompt, [], res, judgeConfig);
         } catch (e2) {
-            console.error('[Synthesizer] fallback failed:', e2.message);
+            console.error('[Judge] fallback failed:', e2.message);
             res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Ошибка генерации финального анализа. Попробуйте повторить.' })}\n\n`);
         }
     }
 }
 
-// ── 5. ORCHESTRATOR — собирает pipeline воедино ──
+// ── 5. ORCHESTRATOR ──────────────────────────────────────────────────
 async function analyzeDocumentSmart(documentText, userQuery, res) {
+    const startTime = Date.now();
     try {
         // Этап 1: Extractor
-        sendStatus(res, '📄 Извлекаю статьи из документа...', '📄');
-        const articles = await extractArticlesFromDocument(documentText);
+        sendStatus(res, '📄 Извлекаю ссылки на НПА из документа...');
+        const articles = await extractArticles(documentText);
 
         if (articles.length === 0) {
-            // Деградируем в обычный agent flow
-            sendStatus(res, 'ℹ️ Ссылок на статьи не найдено. Делаю обычный анализ...', 'ℹ️');
-            const fallbackMsg = `Запрос пользователя: ${userQuery}\n\nДокумент:\n"""\n${(documentText || '').slice(0, 15000)}\n"""`;
-            await handleAgent(fallbackMsg, [], res, 0, userQuery);
+            sendStatus(res, 'ℹ️ Ссылки на НПА не найдены. Переключаюсь на обычный анализ...');
+            const fb = `Запрос: ${userQuery || 'Проанализируй документ'}\n\nДокумент:\n"""\n${(documentText || '').slice(0, 15000)}\n"""`;
+            await handleAgent(fb, [], res, 0, userQuery);
+            return;
+        }
+        sendStatus(res, `📋 Найдено ${articles.length} ссылок. Проверяю каждую параллельно...`);
+
+        // Этап 2: Per-article parallel verification
+        const results = await verifyAllArticles(articles, res);
+
+        // Этап 3: Confidence + детали для UI
+        const confidencePayload = calculateConfidence(results);
+        confidencePayload.articles = results.map(buildArticleDetail);
+        sendConfidence(res, confidencePayload);
+
+        const verified = confidencePayload.verified;
+        const notFound = confidencePayload.notFound;
+        sendStatus(res, `📊 Результат: ✅${verified} подтверждено, ❌${notFound} не найдено. Формирую анализ...`);
+
+        // Если ни одна не подтверждена — общий анализ через handleAgent
+        if (verified === 0) {
+            sendStatus(res, '⚠️ Ни одна статья не подтверждена. Запускаю общий анализ...');
+            const fb = `Запрос: ${userQuery || 'Проанализируй документ'}\n\nДокумент:\n"""\n${(documentText || '').slice(0, 15000)}\n"""`;
+            await handleAgent(fb, [], res, 0, userQuery);
             return;
         }
 
-        // Этап 2: Parallel verification
-        sendStatus(res, `🔎 Найдено ${articles.length} статей. Сверяю с базой НПА параллельно...`, '🔎');
-        const verifiedArticles = await runParallelVerification(articles);
-
-        // Этап 3: Confidence + детали по каждой статье для UI
-        const confidencePayload = calculateOverallConfidence(verifiedArticles);
-        confidencePayload.articles = verifiedArticles.map(v => {
-            let status, reason;
-            if (v.found && !v.mismatch && v.confidence !== 'low') {
-                status = 'ok';
-                reason = v.ragNpaTitle
-                    ? `Найдено: ${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}`
-                    : 'Подтверждено в базе НПА';
-            } else if (v.mismatch) {
-                status = 'mismatch';
-                reason = `В документе: ст. ${v.articleNumber}. В базе с похожим смыслом: ${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}`;
-            } else if (v.found && v.confidence === 'low') {
-                status = 'low';
-                reason = `Найдено с низкой уверенностью (score ${v.score.toFixed(2)}). Требует ручной проверки.`;
-            } else {
-                status = 'not_found';
-                reason = 'В правовой базе нет статьи с достаточным совпадением. Возможно: устаревшая редакция, опечатка, или статья отсутствует в индексе.';
-            }
-            return {
-                ref: v.ref,
-                status,
-                reason,
-                score: Number(v.score.toFixed(3)),
-                articleNumber: v.articleNumber || '',
-                lawName: v.lawName || '',
-                ragNpaTitle: v.ragNpaTitle || '',
-                ragArticleNumber: v.ragArticleNumber || '',
-                context: v.context ? v.context.slice(0, 140) : '',
-                ragText: v.ragText ? v.ragText.slice(0, 280) + (v.ragText.length > 280 ? '…' : '') : ''
-            };
-        });
-        sendConfidence(res, confidencePayload);
-
-        sendStatus(
-            res,
-            `✅ Проверено: ${confidencePayload.foundArticles}/${confidencePayload.totalArticles}. Формирую анализ...`,
-            '✅'
-        );
-
-        // Источники для UI chip badges (берём те что нашлись)
-        const sourcesArr = verifiedArticles.filter(v => v.found && v.ragNpaTitle).slice(0, 5);
+        // Источники для chip-badges (только verified)
+        const sourcesArr = results.filter(r => r.status === 'verified' && r.ragNpaTitle).slice(0, 5);
         if (sourcesArr.length > 0) {
-            const sources = sourcesArr.map(v =>
-                `${v.ragNpaTitle}${v.ragArticleNumber ? ' — ст. ' + v.ragArticleNumber : ''}`
-            );
+            const sources = sourcesArr.map(v => `${v.ragNpaTitle} — Ст.${v.article}`);
             const metadata = sourcesArr.map(v => ({
                 npa_title: v.ragNpaTitle,
-                article_title: v.ragArticleNumber ? `Статья ${v.ragArticleNumber}` : '',
+                article_title: v.ragTitle || `Статья ${v.article}`,
                 full_text: v.ragText || ''
             }));
             res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
         }
 
-        // Этап 4: Synthesizer
-        await synthesizeAnalysis(documentText, verifiedArticles, userQuery, res);
+        // Этап 4: Judge
+        sendStatus(res, '⚖️ Формирую юридическое заключение...');
+        await runJudge(documentText, results, res);
+
+        console.log(`[DocAnalysis] Done: ${articles.length} articles, ${verified} verified, ${notFound} not_found, ${Date.now() - startTime}ms`);
     } catch (err) {
         console.error('[analyzeDocumentSmart] fatal:', err);
-        res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Ошибка анализа документа: ' + (err && err.message || 'unknown') })}\n\n`);
+        sendStatus(res, '❌ Ошибка анализа. Переключаюсь на обычный путь...');
+        try {
+            const fb = `Запрос: ${userQuery || 'Проанализируй документ'}\n\nДокумент:\n"""\n${(documentText || '').slice(0, 15000)}\n"""`;
+            await handleAgent(fb, [], res, 0, userQuery);
+        } catch (e2) {
+            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Критическая ошибка: ' + (err && err.message || 'unknown') })}\n\n`);
+        }
     }
 }
 
@@ -1791,8 +1822,11 @@ app.post('/api/analyze-document', async (req, res) => {
     serverStats.totalRequests++;
     try {
         const { documentText = '', userQuery = '' } = req.body || {};
-        if (!documentText || !documentText.trim()) {
-            return res.status(400).json({ error: 'Empty documentText' });
+        const trimmedLen = (documentText || '').trim().length;
+        if (trimmedLen < DOC_ANALYSIS_CONFIG.minDocumentLength) {
+            return res.status(400).json({
+                error: `Документ слишком короткий (${trimmedLen}/${DOC_ANALYSIS_CONFIG.minDocumentLength} символов). Используйте обычный чат для коротких запросов.`
+            });
         }
 
         console.log(`\n[AnalyzeDoc] doc=${documentText.length}ch | query: "${(userQuery || '').slice(0, 80)}"`);
