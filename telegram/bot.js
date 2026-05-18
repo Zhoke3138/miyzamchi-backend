@@ -1,14 +1,7 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
 const { getAIAnswer, extractTextFromMedia, extractTextFromDocument } = require('../logic/ai_service');
-
-// --- ИМПОРТЫ ДЛЯ КОНВЕРТАЦИИ ГОЛОСА (FFMPEG) ---
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegStatic = require('ffmpeg-static');
-ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -53,7 +46,7 @@ const helpMessage = `*Как пользоваться ботом Мыйзамч�
   `• *Самое удобное:* Сделай свайп влево (Reply/Ответить) на любое мое сообщение и напиши вопрос или отправь файл!\n\n` +
   `*2. Что мне можно отправлять:*\n` +
   `• 📝 *Текст:* Опиши ситуацию подробно.\n` +
-  `• 🎧 *Голосовые:* Просто наговори проблему, я отвечу тоже голосом!\n` +
+  `• 🎧 *Голосовые:* Просто наговори проблему, я переведу её в текст и отвечу!\n` +
   `• 📸 *Фото:* Скинь фото документа, я его прочитаю.\n` +
   `• 📄 *Файлы:* Отправь PDF или Word (.docx), и я проведу юридический анализ текста.\n\n` +
   `*Важно:* Я помню контекст беседы (последние 3 вопроса), так что можешь задавать уточняющие вопросы!`;
@@ -77,8 +70,6 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
   let mimeType = "";
   let isDoc = false;
   let fileName = "";
-  
-  const isVoiceRequest = ctx.message.voice !== undefined;
 
   if (ctx.message.text) {
     const text = ctx.message.text.trim();
@@ -152,81 +143,13 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     const userId = ctx.message.from.id;
     const userHistory = getHistory(chatId, userId);
 
-    const aiResult = await getAIAnswer(question, userHistory, updateProgress, isVoiceRequest);
+    // Получаем ТОЛЬКО текстовый ответ от ИИ
+    const finalAnswerText = await getAIAnswer(question, userHistory, updateProgress);
     
-    const finalAnswerText = typeof aiResult === 'string' ? aiResult : aiResult.text;
     saveToHistory(chatId, userId, question, finalAnswerText);
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
     
-    // --- ЖЕЛЕЗОБЕТОННАЯ ОТПРАВКА ГОЛОСА ---
-    if (isVoiceRequest && aiResult.audioBase64) {
-      const tempWavPath = path.join(__dirname, `temp_${Date.now()}.wav`);
-      const tempOggPath = path.join(__dirname, `voice_${Date.now()}.ogg`);
-      
-      try {
-        const audioBuffer = Buffer.from(aiResult.audioBase64, 'base64');
-        fs.writeFileSync(tempWavPath, audioBuffer);
-        console.log(`[File System] Исходное аудио сохранено: ${tempWavPath}`);
-        await updateProgress('⚙️ Конвертирую аудио для Telegram...');
-
-        await new Promise((resolve, reject) => {
-          ffmpeg(tempWavPath)
-            .inputOptions([
-              '-f s16le',
-              '-ar 24000',
-              '-ac 1'
-            ])
-            .outputOptions([
-              '-c:a libopus',
-              '-b:a 32k', // Оптимизация битрейта под Телеграм
-              '-vbr on'
-            ])
-            .toFormat('ogg')
-            .on('error', (err) => {
-              console.error('❌ Ошибка FFmpeg:', err);
-              reject(err);
-            })
-            .on('end', () => {
-              console.log('✅ Конвертация в OGG завершена.');
-              resolve();
-            })
-            .save(tempOggPath);
-        });
-
-        // 🟢 ФИКС RACE CONDITION: Даем файловой системе 500мс, чтобы отпустить файл
-        await new Promise(r => setTimeout(r, 500));
-
-        const stats = fs.statSync(tempOggPath);
-        console.log(`[File System] Размер готового OGG файла: ${stats.size} байт`);
-        
-        if (stats.size === 0) {
-          throw new Error("FFmpeg создал пустой файл.");
-        }
-
-        // 🟢 ФИКС SOCKET HANG UP: Передаем через Stream, чтобы Телеграм не захлебнулся
-        await ctx.replyWithVoice(
-          { source: fs.createReadStream(tempOggPath) }, 
-          { reply_to_message_id: ctx.message.message_id }
-        );
-        console.log(`[Telegram] Голосовое успешно отправлено в чат!`);
-
-      } catch (audioErr) {
-        console.error("\n================ ПОЛНАЯ ОШИБКА АУДИО ================");
-        console.error(audioErr.stack || audioErr.message);
-        if (audioErr.response) {
-            console.error("Ответ от Telegram:", JSON.stringify(audioErr.response.data, null, 2));
-        }
-        console.error("=====================================================\n");
-        await ctx.reply('⚠️ Произошла ошибка при отправке аудио. Читайте текстовый ответ.', { reply_to_message_id: ctx.message.message_id });
-      } finally {
-        // Уборка мусора
-        if (fs.existsSync(tempWavPath)) fs.unlinkSync(tempWavPath);
-        if (fs.existsSync(tempOggPath)) fs.unlinkSync(tempOggPath);
-        console.log(`[File System] Временные файлы удалены.`);
-      }
-    }
-
-    // --- ОТПРАВКА ТЕКСТА ---
+    // --- ОТПРАВКА СТАБИЛЬНОГО ТЕКСТА ---
     try {
         await ctx.reply(finalAnswerText, {
             parse_mode: 'Markdown',
@@ -245,7 +168,7 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
   }
 });
 
-// --- ГЛОБАЛЬНАЯ ЗАЩИТА И УПРЯМЫЙ ЗАПУСК ---
+// --- ГЛОБАЛЬНАЯ ЗАЩИТА ---
 bot.catch((err, ctx) => {
   console.error(`[Global Error] Ошибка бота в апдейте ${ctx.updateType}:`, err);
 });
