@@ -166,14 +166,19 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
       try {
         const audioBuffer = Buffer.from(aiResult.audioBase64, 'base64');
         
-        // 1. Сохраняем сырое аудио от Gemini во временный WAV
+        // 1. Сохраняем сырое аудио от Gemini во временный файл
         fs.writeFileSync(tempWavPath, audioBuffer);
         console.log(`[File System] Исходное аудио сохранено: ${tempWavPath}`);
         await updateProgress('⚙️ Конвертирую аудио для Telegram...');
 
-        // 2. Конвертируем WAV в OGG с кодеком OPUS (стандарт Telegram)
+        // 2. Конвертируем RAW PCM в OGG с кодеком OPUS (стандарт Telegram)
         await new Promise((resolve, reject) => {
           ffmpeg(tempWavPath)
+            .inputOptions([
+              '-f s16le',     // формат: 16-bit PCM little-endian
+              '-ar 24000',    // частота дискретизации: 24 kHz
+              '-ac 1'         // моно-канал
+            ])
             .audioCodec('libopus')
             .toFormat('ogg')
             .on('error', (err) => {
