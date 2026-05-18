@@ -1,9 +1,14 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 require('dotenv').config();
-const fs = require('fs'); // Добавили для работы с файлами
-const path = require('path'); // Добавили для путей
+const fs = require('fs');
+const path = require('path');
 const { getAIAnswer, extractTextFromMedia, extractTextFromDocument } = require('../logic/ai_service');
+
+// --- ИМПОРТЫ ДЛЯ КОНВЕРТАЦИИ ГОЛОСА (FFMPEG) ---
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegStatic = require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegStatic);
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -153,36 +158,49 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     saveToHistory(chatId, userId, question, finalAnswerText);
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
     
-    // --- ЖЕЛЕЗОБЕТОННАЯ ОТПРАВКА ГОЛОСА ЧЕРЕЗ ФАЙЛОВУЮ СИСТЕМУ ---
+    // --- ЖЕЛЕЗОБЕТОННАЯ ОТПРАВКА ГОЛОСА ЧЕРЕЗ ФАЙЛОВУЮ СИСТЕМУ И FFMPEG ---
     if (isVoiceRequest && aiResult.audioBase64) {
-      const tempFilePath = path.join(__dirname, `Miyzamchi_Voice_${Date.now()}.wav`);
+      const tempWavPath = path.join(__dirname, `temp_${Date.now()}.wav`);
+      const tempOggPath = path.join(__dirname, `voice_${Date.now()}.ogg`);
       
       try {
         const audioBuffer = Buffer.from(aiResult.audioBase64, 'base64');
         
-        // 1. Физически сохраняем файл на сервер (Телеграм это обожает)
-        fs.writeFileSync(tempFilePath, audioBuffer);
-        console.log(`[File System] Аудио сохранено во временный файл: ${tempFilePath}`);
+        // 1. Сохраняем сырое аудио от Gemini во временный WAV
+        fs.writeFileSync(tempWavPath, audioBuffer);
+        console.log(`[File System] Исходное аудио сохранено: ${tempWavPath}`);
+        await updateProgress('⚙️ Конвертирую аудио для Telegram...');
 
-        // 2. Отправляем файл как путь, а не как буфер памяти
-        await ctx.replyWithAudio(
-          { source: tempFilePath }, 
-          { 
-            reply_to_message_id: ctx.message.message_id,
-            title: 'Аудио-ответ от Мыйзамчы',
-            performer: 'ИИ Наставник'
-          }
+        // 2. Конвертируем WAV в OGG с кодеком OPUS (стандарт Telegram)
+        await new Promise((resolve, reject) => {
+          ffmpeg(tempWavPath)
+            .audioCodec('libopus')
+            .toFormat('ogg')
+            .on('error', (err) => {
+              console.error('Ошибка FFmpeg:', err);
+              reject(err);
+            })
+            .on('end', () => {
+              console.log('Конвертация в OGG завершена успешно.');
+              resolve();
+            })
+            .save(tempOggPath);
+        });
+
+        // 3. Отправляем именно как ГОЛОСОВОЕ СООБЩЕНИЕ (replyWithVoice)
+        await ctx.replyWithVoice(
+          { source: tempOggPath }, 
+          { reply_to_message_id: ctx.message.message_id }
         );
-        console.log(`[Telegram] Аудио успешно отправлено!`);
+        console.log(`[Telegram] Голосовое успешно отправлено!`);
 
       } catch (audioErr) {
-        console.error("❌ Ошибка при отправке аудио Телеграмом:", audioErr.message);
+        console.error("❌ Ошибка при обработке/отправке аудио:", audioErr.message);
       } finally {
-        // 3. Удаляем файл с сервера, чтобы не забивать место
-        if (fs.existsSync(tempFilePath)) {
-          fs.unlinkSync(tempFilePath);
-          console.log(`[File System] Временный файл удален.`);
-        }
+        // 4. Убираем за собой оба временных файла
+        if (fs.existsSync(tempWavPath)) fs.unlinkSync(tempWavPath);
+        if (fs.existsSync(tempOggPath)) fs.unlinkSync(tempOggPath);
+        console.log(`[File System] Временные файлы удалены.`);
       }
     }
 
