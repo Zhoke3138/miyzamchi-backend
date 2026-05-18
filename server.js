@@ -1453,6 +1453,267 @@ async function extractArticles(documentText) {
     return unique.slice(0, cfg.maxArticles);
 }
 
+// ── 1B. SEGMENTER ────────────────────────────────────────────────────
+// Разбивает документ на смысловые разделы/пункты. LLM сам нумерует, если
+// исходный документ без структуры. Возвращает [{id, number, heading, text}].
+// Параллельный chunked-режим при documentText > 8K.
+const SEGMENT_LIMIT = 25;          // максимум пунктов на документ
+const SEGMENT_MIN_CHARS = 60;      // короче — это просто заголовок, не пункт
+const SEGMENT_CHUNK_SIZE = 7500;
+const SEGMENT_CHUNK_OVERLAP = 400;
+
+async function segmentFromChunk(chunkText, apiKey, chunkIndex = 0) {
+    const systemPrompt = `Ты — юридический парсер документов.
+Разбиваешь юридический документ (договор, иск, заявление, претензия и т.п.)
+на ПУНКТЫ — атомарные смысловые единицы. Каждый пункт должен иметь:
+- свой номер (используй авторский номер если есть: "1.", "1.1", "§ 2";
+  если нумерации нет — создай иерархическую "1", "1.1", "2", "2.1")
+- короткий заголовок (3-7 слов, отражает суть)
+- полный текст пункта (не сокращай, дословная цитата без markdown)
+
+Не создавай пункты для метаданных (дата, ФИО, реквизиты в шапке/футере).
+Не пиши законодательство РФ или других стран — только КР.
+Отвечаешь СТРОГО JSON без markdown без пояснений.`;
+    const userPrompt = `Разбей юридический документ на пункты.
+
+Формат ответа (ровно такой JSON):
+{
+  "segments": [
+    {
+      "number": "1",
+      "heading": "Предмет договора",
+      "text": "Полный текст пункта 1. Дословно из документа..."
+    }
+  ]
+}
+
+Если документ короткий или нечего разбивать — верни {"segments": []}.
+
+Документ${chunkIndex > 0 ? ` (часть ${chunkIndex + 1})` : ''}:
+${chunkText}`;
+    try {
+        const result = await callOnce(apiKey, systemPrompt, userPrompt, 2);
+        const cleaned = String(result || '').replace(/```json|```/g, '').trim();
+        const fi = cleaned.indexOf('{');
+        const li = cleaned.lastIndexOf('}');
+        const slice = (fi >= 0 && li > fi) ? cleaned.slice(fi, li + 1) : cleaned;
+        const parsed = JSON.parse(slice);
+        return Array.isArray(parsed.segments) ? parsed.segments : [];
+    } catch (e) {
+        console.error('[Segmenter] chunk failed:', e.message);
+        return [];
+    }
+}
+
+async function segmentDocument(documentText) {
+    if (!documentText || documentText.length < SEGMENT_MIN_CHARS) return [];
+    let raw;
+    if (documentText.length <= 8000) {
+        raw = await segmentFromChunk(documentText, getNextKey());
+    } else {
+        const CHUNK = SEGMENT_CHUNK_SIZE;
+        const OVL = SEGMENT_CHUNK_OVERLAP;
+        const chunks = [];
+        for (let i = 0; i < documentText.length; i += (CHUNK - OVL)) {
+            chunks.push(documentText.slice(i, i + CHUNK));
+            if (i + CHUNK >= documentText.length) break;
+        }
+        const results = await Promise.allSettled(
+            chunks.map((chunk, idx) => segmentFromChunk(chunk, getNextKey(), idx))
+        );
+        raw = results
+            .filter(r => r.status === 'fulfilled' && Array.isArray(r.value))
+            .flatMap(r => r.value);
+    }
+    // Нормализация: фильтр пустых, дедуп по heading+первые 60 символов text,
+    // присваиваем стабильные id вида seg_N.
+    const seen = new Set();
+    const segments = [];
+    for (const s of raw) {
+        if (!s || typeof s !== 'object') continue;
+        const text = String(s.text || '').trim();
+        const heading = String(s.heading || '').trim();
+        if (text.length < SEGMENT_MIN_CHARS) continue;
+        const dedupKey = `${heading.toLowerCase()}|${text.slice(0, 60).toLowerCase()}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+        segments.push({
+            id: `seg_${segments.length}`,
+            number: String(s.number || segments.length + 1),
+            heading: heading || 'Пункт',
+            text
+        });
+        if (segments.length >= SEGMENT_LIMIT) break;
+    }
+    console.log(`[Segmenter] raw=${raw.length} → final=${segments.length}`);
+    return segments;
+}
+
+// ── 2A. VERIFIER (PER-SEGMENT) ───────────────────────────────────────
+// Гибрид: 1 сегмент → embedding (heading + первые ~400 символов text)
+// → Pinecone topK=5 → LLM-вердикт: соответствует/риск/нарушение/неясно.
+const SEGMENT_VERIFIER_TOPK = 5;
+const SEGMENT_VERIFIER_QUERY_MAXCHARS = 450;
+async function verifySegment(segment) {
+    const refLabel = `п.${segment.number} ${segment.heading}`.trim();
+    try {
+        // Сфокусированный embedding: заголовок несёт суть, тело — детали
+        const queryText = `${segment.heading}. ${segment.text}`.slice(0, SEGMENT_VERIFIER_QUERY_MAXCHARS);
+        const vector = await getEmbedding(queryText);
+        const candidates = await searchPinecone(vector, SEGMENT_VERIFIER_TOPK);
+
+        // Готовим релевантные статьи для LLM-судьи
+        const applicableArticles = (candidates || []).map(c => ({
+            article_title: c.metadata?.article_title || '',
+            npa_title:     c.metadata?.npa_title || '',
+            full_text:    (c.metadata?.full_text || '').slice(0, 1200),
+            score: Number(c.score || 0)
+        })).filter(a => a.full_text);
+
+        if (applicableArticles.length === 0) {
+            return {
+                ...segment,
+                ref: refLabel,
+                status: 'unclear',
+                findings: 'Не удалось найти релевантные статьи КР для этого пункта.',
+                suggestion: null,
+                applicable_articles: [],
+                message: `⚠️ ${refLabel}: статьи КР не найдены`
+            };
+        }
+
+        // LLM-судья: дан текст пункта + найденные релевантные статьи КР
+        const systemPrompt = `Ты — юрист-консультант Кыргызской Республики.
+Анализируешь ОДИН пункт юридического документа и говоришь, соответствует ли
+он действующему законодательству КР.
+
+Не упоминай законодательство РФ, Казахстана и других стран.
+Если найденные статьи не относятся к теме пункта — статус "unclear".
+Отвечаешь СТРОГО JSON без markdown без пояснений.`;
+        const userPrompt = `Пункт документа (${refLabel}):
+"""
+${segment.text}
+"""
+
+Релевантные статьи законодательства КР (из векторной базы):
+${applicableArticles.map((a, i) => `[${i + 1}] ${a.npa_title} — ${a.article_title}
+${a.full_text}
+`).join('\n')}
+
+Оцени пункт договора/документа. Верни JSON:
+{
+  "status": "ok" | "risk" | "violation" | "unclear",
+  "applicable_refs": ["1", "3"],  // индексы релевантных статей из списка выше
+  "findings": "1-2 предложения: что выявил (соответствие/риск/проблема)",
+  "suggestion": "если статус risk/violation — короткое предложение как исправить (или null)"
+}
+
+Расшифровка status:
+- ok        — пункт соответствует найденным нормам, рисков нет
+- risk      — пункт юридически валиден, но содержит потенциальный риск
+- violation — пункт противоречит закону КР или содержит запрещённое условие
+- unclear   — недостаточно информации / найденные статьи не по теме`;
+
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
+        const fi = cleaned.indexOf('{');
+        const li = cleaned.lastIndexOf('}');
+        const slice = (fi >= 0 && li > fi) ? cleaned.slice(fi, li + 1) : cleaned;
+        let parsed = {};
+        try { parsed = JSON.parse(slice); } catch (e) { parsed = {}; }
+
+        const status = ['ok', 'risk', 'violation', 'unclear'].includes(parsed.status)
+            ? parsed.status : 'unclear';
+        const findings = String(parsed.findings || '').trim() || 'Анализ не дал явного результата.';
+        const suggestion = parsed.suggestion ? String(parsed.suggestion).trim() : null;
+
+        // Карта индексов → массив применимых статей (только реально использованных судьёй)
+        const idxs = Array.isArray(parsed.applicable_refs) ? parsed.applicable_refs : [];
+        const used = idxs
+            .map(i => applicableArticles[Number(i) - 1])
+            .filter(Boolean);
+        const finalApplicable = used.length > 0 ? used : applicableArticles.slice(0, 2);
+
+        const statusIcon = { ok: '✅', risk: '⚠️', violation: '❌', unclear: 'ℹ️' }[status];
+        return {
+            ...segment,
+            ref: refLabel,
+            status,
+            findings,
+            suggestion,
+            applicable_articles: finalApplicable,
+            message: `${statusIcon} ${refLabel}: ${findings.slice(0, 70)}${findings.length > 70 ? '…' : ''}`
+        };
+    } catch (e) {
+        console.error('[Seg-Verifier] err for', refLabel, ':', e.message);
+        return {
+            ...segment,
+            ref: refLabel,
+            status: 'error',
+            findings: 'Ошибка проверки пункта.',
+            suggestion: null,
+            applicable_articles: [],
+            error: e.message,
+            message: `⚠️ ${refLabel}: ошибка проверки`
+        };
+    }
+}
+
+// Параллельно через Promise.allSettled. SSE-шаги в реальном времени.
+async function verifyAllSegments(segments, res) {
+    const STATUS_MAP = {
+        ok: 'success',
+        risk: 'warning',
+        violation: 'error',
+        unclear: 'info',
+        error: 'error'
+    };
+    const promises = segments.map((seg, i) => {
+        const stepId = `segverify_${i}`;
+        const refLabel = `п.${seg.number} ${seg.heading}`.trim();
+        sendStep(res, { id: stepId, status: 'loading', text: refLabel });
+        return verifySegment(seg).then(result => {
+            const uiStatus = STATUS_MAP[result.status] || 'info';
+            sendStep(res, {
+                id: stepId,
+                status: uiStatus,
+                text: result.ref || refLabel,
+                reason: result.findings || null
+            });
+            sendStatus(res, result.message);
+            console.log(`[SegVerify ${i + 1}/${segments.length}] ${result.message}`);
+            return result;
+        });
+    });
+    const settled = await Promise.allSettled(promises);
+    return settled.filter(r => r.status === 'fulfilled').map(r => r.value);
+}
+
+// Сводный payload для UI: SegmentReport — список пунктов с вердиктами + статистика
+function buildSegmentReport(results) {
+    if (!results || results.length === 0) return null;
+    const counts = { ok: 0, risk: 0, violation: 0, unclear: 0, error: 0 };
+    for (const r of results) counts[r.status] = (counts[r.status] || 0) + 1;
+    return {
+        total: results.length,
+        ok: counts.ok || 0,
+        risk: counts.risk || 0,
+        violation: counts.violation || 0,
+        unclear: counts.unclear || 0,
+        error: counts.error || 0,
+        segments: results.map(r => ({
+            id: r.id,
+            number: r.number,
+            heading: r.heading,
+            status: r.status,
+            findings: r.findings,
+            suggestion: r.suggestion,
+            text: r.text,
+            applicable_articles: r.applicable_articles || []
+        }))
+    };
+}
+
 // ── 2. VERIFIER (PER-ARTICLE) ────────────────────────────────────────
 // КЛЮЧЕВАЯ ФУНКЦИЯ. 1 статья = 1 embedding = 1 Pinecone query (topK=5).
 async function verifySingleArticle(article) {
@@ -1650,33 +1911,60 @@ function buildArticleDetail(v) {
 }
 
 // ── 4. JUDGE ─────────────────────────────────────────────────────────
-async function runJudge(documentText, results, res) {
-    const report = results.map(v => {
-        if (v.status === 'verified') {
-            return `✅ Ст.${v.article} ${v.act} (score ${v.score.toFixed(3)})\n` +
-                   `   В документе: "${v.context || ''}"\n` +
-                   `   Оригинал из базы: "${(v.ragText || '').slice(0, 350)}"`;
-        }
-        if (v.status === 'mismatch') {
-            return `⚠️ Ст.${v.article} ${v.act} — НОМЕР НЕ СОВПАЛ\n` +
-                   `   В базе ближайшее: ст.${v.suggestedArticle || '?'} (${v.ragNpaTitle || ''})\n` +
-                   `   Текст найденного: "${(v.ragText || '').slice(0, 250)}"`;
-        }
-        if (v.status === 'error') {
-            return `⚠️ Ст.${v.article} ${v.act} — ошибка проверки: ${v.error || 'unknown'}`;
-        }
-        return `❌ Ст.${v.article} ${v.act} — не найдена в базе НПА КР`;
-    }).join('\n\n---\n\n');
+// Два источника правды: (1) per-article verification (если в документе были
+// ссылки на статьи); (2) per-segment verification (всегда). Judge сводит оба
+// в единый markdown-вердикт. Если articles нет — пропускает первый раздел.
+async function runJudge(documentText, articleResults, res, segmentResults = []) {
+    const articleReport = (articleResults && articleResults.length > 0)
+        ? articleResults.map(v => {
+            if (v.status === 'verified') {
+                return `✅ Ст.${v.article} ${v.act} (score ${v.score.toFixed(3)})\n` +
+                       `   В документе: "${v.context || ''}"\n` +
+                       `   Оригинал из базы: "${(v.ragText || '').slice(0, 350)}"`;
+            }
+            if (v.status === 'mismatch') {
+                return `⚠️ Ст.${v.article} ${v.act} — НОМЕР НЕ СОВПАЛ\n` +
+                       `   В базе ближайшее: ст.${v.suggestedArticle || '?'} (${v.ragNpaTitle || ''})\n` +
+                       `   Текст найденного: "${(v.ragText || '').slice(0, 250)}"`;
+            }
+            if (v.status === 'error') {
+                return `⚠️ Ст.${v.article} ${v.act} — ошибка проверки: ${v.error || 'unknown'}`;
+            }
+            return `❌ Ст.${v.article} ${v.act} — не найдена в базе НПА КР`;
+        }).join('\n\n---\n\n')
+        : null;
 
-    const userPrompt = `═══ ОТЧЁТ ВЕРИФИКАЦИИ (единственный источник истины) ═══
+    const segReport = (segmentResults && segmentResults.length > 0)
+        ? segmentResults.map(s => {
+            const icon = { ok: '✅', risk: '⚠️', violation: '❌', unclear: 'ℹ️', error: '⚠️' }[s.status] || 'ℹ️';
+            const applicable = (s.applicable_articles || []).slice(0, 2)
+                .map(a => `${a.npa_title} — ${a.article_title}`).join('; ');
+            return `${icon} п.${s.number} «${s.heading}» [${s.status}]\n` +
+                   `   Цитата: "${(s.text || '').slice(0, 220)}${(s.text||'').length>220?'…':''}"\n` +
+                   `   Вывод: ${s.findings || ''}\n` +
+                   (applicable ? `   Применимы: ${applicable}\n` : '') +
+                   (s.suggestion ? `   Рекомендация: ${s.suggestion}` : '');
+        }).join('\n\n---\n\n')
+        : null;
 
-${report}
+    const sections = [];
+    if (articleReport) sections.push(`═══ ПРОВЕРКА УПОМЯНУТЫХ СТАТЕЙ (источник истины #1) ═══\n\n${articleReport}`);
+    if (segReport)     sections.push(`═══ ПРОВЕРКА ПУНКТОВ ДОКУМЕНТА (источник истины #2) ═══\n\n${segReport}`);
+
+    const userPrompt = `${sections.join('\n\n')}
 
 ═══ ДОКУМЕНТ ПОЛЬЗОВАТЕЛЯ ═══
 ${(documentText || '').slice(0, 15000)}
 
-Проанализируй документ строго на основе ОТЧЁТА.
-Не упоминай номеров статей которых нет в ОТЧЁТЕ. Не ссылайся на законодательство РФ.`;
+Сформируй итоговое заключение СТРОГО на основе отчётов выше.
+Структура ответа (markdown):
+1. **Краткий вывод** — 2-3 предложения о документе в целом.
+2. **Замечания по пунктам** — пройдись по проблемным пунктам (risk/violation), для каждого: цитата → проблема → ст. КР → рекомендация.
+3. **Подтверждённые ссылки на статьи** — если есть.
+4. **Общие рекомендации** — что доработать.
+
+ЗАПРЕЩЕНО: упоминать номера статей которых нет в отчётах; ссылаться на
+законодательство РФ/Казахстана; придумывать факты не из документа.`;
 
     // Низкая temperature — критична для anti-hallucination
     const judgeConfig = { temperature: 0.2, topP: 0.85, maxOutputTokens: 4096 };
@@ -1694,63 +1982,113 @@ ${(documentText || '').slice(0, 15000)}
 }
 
 // ── 5. ORCHESTRATOR ──────────────────────────────────────────────────
+// Гибридный pipeline:
+//   • Параллельно — extractor (ссылки на статьи) и segmenter (нумерация пунктов).
+//   • Параллельно — verifyAllArticles + verifyAllSegments.
+//   • Judge получает оба отчёта и формирует единый markdown-вердикт.
+// Документ без явных ссылок на статьи: extractor вернёт [], segmenter всё равно
+// разобьёт документ — анализ выдаётся на основе segment-отчёта.
 async function analyzeDocumentSmart(documentText, userQuery, res) {
     const startTime = Date.now();
     try {
-        // Этап 1: Extractor
-        sendStatus(res, '📄 Извлекаю ссылки на НПА из документа...');
-        sendStep(res, { id: 'extract', status: 'loading', text: 'Извлекаю ссылки на НПА из документа' });
-        const articles = await extractArticles(documentText);
+        // Этап 1: параллельно — Extractor и Segmenter
+        sendStep(res, { id: 'extract',  status: 'loading', text: 'Извлекаю ссылки на статьи НПА' });
+        sendStep(res, { id: 'segment',  status: 'loading', text: 'Разбиваю документ на пункты' });
+        sendStatus(res, '📄 Извлекаю ссылки на НПА и пункты документа...');
 
-        if (articles.length === 0) {
-            sendStep(res, { id: 'extract', status: 'warning', text: 'Ссылки на НПА не найдены', reason: 'Переключаюсь на общий анализ' });
-            sendStatus(res, 'ℹ️ Ссылки на НПА не найдены. Переключаюсь на обычный анализ...');
+        const [articlesResult, segmentsResult] = await Promise.allSettled([
+            extractArticles(documentText),
+            segmentDocument(documentText)
+        ]);
+        const articles = articlesResult.status === 'fulfilled' ? articlesResult.value : [];
+        const segments = segmentsResult.status === 'fulfilled' ? segmentsResult.value : [];
+
+        if (articles.length > 0) {
+            sendStep(res, { id: 'extract', status: 'success', text: `Найдено ссылок на НПА: ${articles.length}` });
+        } else {
+            sendStep(res, { id: 'extract', status: 'info', text: 'Ссылки на статьи не обнаружены', reason: 'Перехожу к проверке пунктов' });
+        }
+
+        if (segments.length > 0) {
+            sendStep(res, { id: 'segment', status: 'success', text: `Документ разбит на пунктов: ${segments.length}` });
+        } else {
+            sendStep(res, { id: 'segment', status: 'warning', text: 'Не удалось разбить документ на пункты' });
+        }
+
+        // Если совсем нечего проверять — fallback на общий анализ
+        if (articles.length === 0 && segments.length === 0) {
+            sendStatus(res, 'ℹ️ Документ короткий или нестандартный. Переключаюсь на общий анализ...');
             const fb = `Запрос: ${userQuery || 'Проанализируй документ'}\n\nДокумент:\n"""\n${(documentText || '').slice(0, 15000)}\n"""`;
             await handleAgent(fb, [], res, 0, userQuery);
             return;
         }
-        sendStep(res, { id: 'extract', status: 'success', text: `Найдено ссылок на НПА: ${articles.length}` });
-        sendStatus(res, `📋 Найдено ${articles.length} ссылок. Проверяю каждую параллельно...`);
 
-        // Этап 2: Per-article parallel verification
-        const results = await verifyAllArticles(articles, res);
+        sendStatus(res, `🔬 Проверяю: ${articles.length} статей · ${segments.length} пунктов (параллельно)`);
 
-        // Этап 3: Confidence + детали для UI
-        const confidencePayload = calculateConfidence(results);
-        confidencePayload.articles = results.map(buildArticleDetail);
-        sendConfidence(res, confidencePayload);
+        // Этап 2: параллельная проверка статей и пунктов
+        const [articleSettled, segmentSettled] = await Promise.allSettled([
+            articles.length > 0 ? verifyAllArticles(articles, res) : Promise.resolve([]),
+            segments.length > 0 ? verifyAllSegments(segments, res) : Promise.resolve([])
+        ]);
+        const articleResults = articleSettled.status === 'fulfilled' ? articleSettled.value : [];
+        const segmentResults = segmentSettled.status === 'fulfilled' ? segmentSettled.value : [];
 
-        const verified = confidencePayload.verified;
-        const notFound = confidencePayload.notFound;
-        sendStatus(res, `📊 Результат: ✅${verified} подтверждено, ❌${notFound} не найдено. Формирую анализ...`);
-
-        // Если ни одна не подтверждена — общий анализ через handleAgent
-        if (verified === 0) {
-            sendStatus(res, '⚠️ Ни одна статья не подтверждена. Запускаю общий анализ...');
-            const fb = `Запрос: ${userQuery || 'Проанализируй документ'}\n\nДокумент:\n"""\n${(documentText || '').slice(0, 15000)}\n"""`;
-            await handleAgent(fb, [], res, 0, userQuery);
-            return;
+        // Этап 3a: Confidence (по статьям) — только если статьи были
+        if (articleResults.length > 0) {
+            const confidencePayload = calculateConfidence(articleResults);
+            confidencePayload.articles = articleResults.map(buildArticleDetail);
+            sendConfidence(res, confidencePayload);
         }
 
-        // Источники для chip-badges (только verified)
-        const sourcesArr = results.filter(r => r.status === 'verified' && r.ragNpaTitle).slice(0, 5);
-        if (sourcesArr.length > 0) {
-            const sources = sourcesArr.map(v => `${v.ragNpaTitle} — Ст.${v.article}`);
-            const metadata = sourcesArr.map(v => ({
+        // Этап 3b: SegmentReport — всегда когда были пункты
+        if (segmentResults.length > 0) {
+            const segReport = buildSegmentReport(segmentResults);
+            if (segReport) {
+                res.write(`data: ${JSON.stringify({ segmentReport: segReport })}\n\n`);
+            }
+            const issues = segmentResults.filter(s => s.status === 'risk' || s.status === 'violation').length;
+            sendStatus(res, `📊 Пунктов: ${segmentResults.length} · Проблемных: ${issues}`);
+        }
+
+        // Источники для chip-badges: verified статьи + applicable из сегментов
+        const seenSources = new Set();
+        const sources = [], metadata = [];
+        for (const v of articleResults.filter(r => r.status === 'verified' && r.ragNpaTitle)) {
+            const key = `${v.ragNpaTitle}|${v.article}`;
+            if (seenSources.has(key)) continue;
+            seenSources.add(key);
+            sources.push(`${v.ragNpaTitle} — Ст.${v.article}`);
+            metadata.push({
                 npa_title: v.ragNpaTitle,
                 article_title: v.ragTitle || `Статья ${v.article}`,
                 full_text: v.ragText || ''
-            }));
+            });
+            if (sources.length >= 8) break;
+        }
+        for (const s of segmentResults) {
+            for (const a of (s.applicable_articles || []).slice(0, 1)) {
+                if (sources.length >= 8) break;
+                const key = `${a.npa_title}|${a.article_title}`;
+                if (seenSources.has(key)) continue;
+                seenSources.add(key);
+                sources.push(`${a.npa_title} — ${a.article_title}`);
+                metadata.push({
+                    npa_title: a.npa_title,
+                    article_title: a.article_title,
+                    full_text: a.full_text || ''
+                });
+            }
+        }
+        if (sources.length > 0) {
             res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
         }
 
-        // Этап 4: Judge
+        // Этап 4: Judge — гибридный
         sendStep(res, { id: 'judge', status: 'loading', text: 'Формирую юридическое заключение' });
         sendStatus(res, '⚖️ Формирую юридическое заключение...');
-        await runJudge(documentText, results, res);
+        await runJudge(documentText, articleResults, res, segmentResults);
         sendStep(res, { id: 'judge', status: 'success', text: 'Заключение готово' });
-
-        console.log(`[DocAnalysis] Done: ${articles.length} articles, ${verified} verified, ${notFound} not_found, ${Date.now() - startTime}ms`);
+        console.log(`[DocAnalysis] Done: articles=${articleResults.length}, segments=${segmentResults.length}, ${Date.now() - startTime}ms`);
     } catch (err) {
         console.error('[analyzeDocumentSmart] fatal:', err);
         sendStatus(res, '❌ Ошибка анализа. Переключаюсь на обычный путь...');
