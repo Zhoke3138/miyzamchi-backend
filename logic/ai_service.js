@@ -37,6 +37,17 @@ function getNextKey() {
     return KEYS[currentKeyIndex % KEYS.length];
 }
 
+// 🟢 Защита от зависаний API
+function withTimeout(promise, ms) {
+    let timer;
+    const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("API_TIMEOUT")), ms);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+        if (timer) clearTimeout(timer);
+    });
+}
+
 // --- SYSTEM PROMPTS ---
 const systemInstruction = [
     "# ИДЕНТИЧНОСТЬ",
@@ -102,26 +113,28 @@ async function extractTextFromMedia(mimeType, base64Data) {
     const prompt = "Извлеки текст из этого медиафайла. Если это голос, сделай точную транскрипцию. Если фото, распознай весь читаемый текст. Выведи ТОЛЬКО текст, без вступительных слов.";
     
     let retries = 0;
-    const maxRetries = KEYS.length > 0 ? KEYS.length : 3;
+    const maxRetries = 2; // Оставили небольшую броню
 
     while (retries <= maxRetries) {
         const activeKey = getNextKey();
         try {
             const genAI = new GoogleGenerativeAI(activeKey);
-            // Жестко зафиксировали gemini-flash-latest для совместимости
             const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" }); 
-            const result = await model.generateContent([ prompt, { inlineData: { data: base64Data, mimeType } } ]);
+            
+            const result = await withTimeout(
+                model.generateContent([ prompt, { inlineData: { data: base64Data, mimeType } } ]), 
+                20000
+            );
             return result.response.text();
         } catch (error) {
-            console.warn(`[Gemini Media Error] Распознавание не удалось (попытка ${retries + 1}): ${error.message}`);
+            console.warn(`[Gemini Media Error] Попытка ${retries + 1} провалена: ${error.message}`);
             blockKey(activeKey); 
 
             retries++;
             if (retries > maxRetries) {
-                console.error("❌ Фатальная ошибка парсинга медиа. Серверы Google лежат.");
-                throw error; 
+                console.error("❌ Фатальная ошибка медиа. Серверы лежат.");
+                throw new Error("API_TIMEOUT"); 
             }
-            // Ждем 1 секунду перед тем как дернуть Google снова
             await new Promise(resolve => setTimeout(resolve, 1000)); 
         }
     }
@@ -148,7 +161,8 @@ async function getEmbedding(text, retryCount = 0) {
     const activeKey = getNextKey();
     try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${activeKey}`;
-        const response = await fetch(url, {
+        
+        const response = await withTimeout(fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -156,10 +170,11 @@ async function getEmbedding(text, retryCount = 0) {
                 content: { parts: [{ text: text.substring(0, 8000) }] },
                 outputDimensionality: 768
             })
-        });
+        }), 10000);
+        
         const data = await response.json();
         
-        if ((response.status === 429 || response.status === 503) && retryCount < KEYS.length) {
+        if ((response.status === 429 || response.status === 503) && retryCount < 1) {
             blockKey(activeKey);
             return getEmbedding(text, retryCount + 1);
         }
@@ -198,9 +213,9 @@ function isNonLegalQuery(message) {
 }
 
 // --- ГЛАВНАЯ ФУНКЦИЯ ---
-async function getAIAnswer(message, history = [], onProgress = null, requireVoice = false) {
+async function getAIAnswer(message, history = [], onProgress = null) {
     try {
-        console.log(`[AI Logic] Начало генерации. Запрошен голос: ${requireVoice}`);
+        console.log(`[AI Logic] Начало текстовой генерации.`);
         
         const skipDB = isNonLegalQuery(message);
         let contextText = '';
@@ -233,7 +248,7 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
         if (onProgress && !skipDB) await onProgress('⚖️ База найдена. Генерирую ответ...');
 
         let retries = 0;
-        const maxRetries = KEYS.length > 0 ? KEYS.length : 3;
+        const maxRetries = 2; // Оставляем 2 повтора для стабильности текста
 
         while (retries <= maxRetries) {
             const activeKey = getNextKey(); 
@@ -241,67 +256,25 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
                 const genAI = new GoogleGenerativeAI(activeKey);
                 const systemPrompt = contextText ? BASE_CONSULTANT_PROMPT + '\n\n' + systemInstruction : systemInstruction;
                 
-                // ШАГ 1: Генерируем полный текстовый ответ
                 const textModel = genAI.getGenerativeModel({
                     model: "gemini-flash-latest",
                     systemInstruction: systemPrompt
                 });
 
                 const chat = textModel.startChat({ history: chatHistory });
-                const textResult = await chat.sendMessage(promptText);
-                const finalAnswerText = textResult.response.text();
-
-                // ШАГ 2: Если запрошен голос, делаем короткую выжимку
-                if (requireVoice) {
-                    if (onProgress) await onProgress('🎙️ Синтезирую аудио-ответ...');
-                    
-                    // ЖЕЛЕЗОБЕТОННЫЙ ФИКС: Берем максимум 300 символов (до ближайшей точки)
-                    let shortVoiceText = finalAnswerText;
-                    if (shortVoiceText.length > 300) {
-                        shortVoiceText = shortVoiceText.substring(0, 300);
-                        const lastDotIndex = shortVoiceText.lastIndexOf('.');
-                        if (lastDotIndex > 0) {
-                            shortVoiceText = shortVoiceText.substring(0, lastDotIndex + 1);
-                        }
-                        shortVoiceText += " Подробный юридический разбор читайте ниже в тексте.";
-                    }
-
-                    console.log(`[AI Logic] Текст урезан до ${shortVoiceText.length} символов для быстрой генерации голоса.`);
-
-                    const audioModel = genAI.getGenerativeModel({
-                        model: "gemini-3.1-flash-tts-preview",
-                        generationConfig: {
-                            responseModalities: ["AUDIO"],
-                            speechConfig: {
-                                voiceConfig: {
-                                    prebuiltVoiceConfig: { voiceName: "Puck" }
-                                }
-                            }
-                        }
-                    });
-
-                    // Отправляем ТОЛЬКО короткий кусок
-                    const audioResult = await audioModel.generateContent(shortVoiceText);
-                    const candidate = audioResult.response.candidates[0];
-                    const audioPart = candidate?.content?.parts?.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
-                    
-                    return {
-                        text: finalAnswerText,
-                        audioBase64: audioPart ? audioPart.inlineData.data : null
-                    };
-                }
-
-                return finalAnswerText;
+                
+                const textResult = await withTimeout(chat.sendMessage(promptText), 20000);
+                return textResult.response.text();
 
             } catch (error) {
                 console.warn(`[Gemini Error] Попытка ${retries + 1} провалена: ${error.message}`);
                 blockKey(activeKey); 
 
                 retries++;
-                if (retries >= maxRetries) {
-                    throw error; 
+                if (retries > maxRetries) {
+                    return "Извините, серверы искусственного интеллекта сейчас перегружены 🤯. Пожалуйста, подождите пару минут и попробуйте снова."; 
                 }
-                await new Promise(resolve => setTimeout(resolve, 800)); 
+                await new Promise(resolve => setTimeout(resolve, 1000)); 
             }
         }
 
