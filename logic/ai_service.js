@@ -108,8 +108,8 @@ async function extractTextFromMedia(mimeType, base64Data) {
         const activeKey = getNextKey();
         try {
             const genAI = new GoogleGenerativeAI(activeKey);
-            // Используем стабильную версию модели
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); 
+            // Жестко зафиксировали gemini-flash-latest для совместимости
+            const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" }); 
             const result = await model.generateContent([ prompt, { inlineData: { data: base64Data, mimeType } } ]);
             return result.response.text();
         } catch (error) {
@@ -251,7 +251,7 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
                 const textResult = await chat.sendMessage(promptText);
                 const finalAnswerText = textResult.response.text();
 
-                // ШАГ 2: Если запрошен голос, делаем короткую выжимку, чтобы избежать таймаута Телеграма (90 сек)
+                // ШАГ 2: Если запрошен голос, делаем короткую выжимку
                 if (requireVoice) {
                     if (onProgress) await onProgress('🎙️ Синтезирую аудио-ответ...');
                     
@@ -280,7 +280,7 @@ async function getAIAnswer(message, history = [], onProgress = null, requireVoic
                         }
                     });
 
-                    // Отправляем ТОЛЬКО короткий кусок. Это сработает за пару секунд!
+                    // Отправляем ТОЛЬКО короткий кусок
                     const audioResult = await audioModel.generateContent(shortVoiceText);
                     const candidate = audioResult.response.candidates[0];
                     const audioPart = candidate?.content?.parts?.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
