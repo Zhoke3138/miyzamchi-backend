@@ -158,7 +158,7 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
     saveToHistory(chatId, userId, question, finalAnswerText);
     await ctx.deleteMessage(statusMsg.message_id).catch(() => {});
     
-    // --- ЖЕЛЕЗОБЕТОННАЯ ОТПРАВКА ГОЛОСА ЧЕРЕЗ ФАЙЛОВУЮ СИСТЕМУ И FFMPEG ---
+    // --- ЖЕЛЕЗОБЕТОННАЯ ОТПРАВКА ГОЛОСА ЧЕРЕЗ ФАЙЛОВУЮ СИСТЕМУ И БУФЕР ---
     if (isVoiceRequest && aiResult.audioBase64) {
       const tempWavPath = path.join(__dirname, `temp_${Date.now()}.wav`);
       const tempOggPath = path.join(__dirname, `voice_${Date.now()}.ogg`);
@@ -166,43 +166,62 @@ bot.on(['text', 'voice', 'photo', 'document'], async (ctx) => {
       try {
         const audioBuffer = Buffer.from(aiResult.audioBase64, 'base64');
         
-        // 1. Сохраняем сырое аудио от Gemini во временный файл
         fs.writeFileSync(tempWavPath, audioBuffer);
         console.log(`[File System] Исходное аудио сохранено: ${tempWavPath}`);
         await updateProgress('⚙️ Конвертирую аудио для Telegram...');
 
-        // 2. Конвертируем RAW PCM в OGG с кодеком OPUS (стандарт Telegram)
         await new Promise((resolve, reject) => {
           ffmpeg(tempWavPath)
             .inputOptions([
-              '-f s16le',     // формат: 16-bit PCM little-endian
-              '-ar 24000',    // частота дискретизации: 24 kHz
-              '-ac 1'         // моно-канал
+              '-f s16le',
+              '-ar 24000',
+              '-ac 1'
             ])
             .audioCodec('libopus')
             .toFormat('ogg')
             .on('error', (err) => {
-              console.error('Ошибка FFmpeg:', err);
+              console.error('❌ Ошибка FFmpeg во время конвертации:', err);
               reject(err);
             })
             .on('end', () => {
-              console.log('Конвертация в OGG завершена успешно.');
+              console.log('✅ Конвертация в OGG завершена успешно.');
               resolve();
             })
             .save(tempOggPath);
         });
 
-        // 3. Отправляем именно как ГОЛОСОВОЕ СООБЩЕНИЕ (replyWithVoice)
+        // --- ФИКС SOCKET HANG UP: Читаем файл в буфер памяти ---
+        const stats = fs.statSync(tempOggPath);
+        console.log(`[File System] Размер готового OGG файла: ${stats.size} байт`);
+        
+        if (stats.size === 0) {
+          throw new Error("FFmpeg создал пустой файл (0 байт).");
+        }
+
+        const oggBuffer = fs.readFileSync(tempOggPath);
+
+        // Отправляем буфером, а не ссылкой на диск
         await ctx.replyWithVoice(
-          { source: tempOggPath }, 
+          { source: oggBuffer }, 
           { reply_to_message_id: ctx.message.message_id }
         );
-        console.log(`[Telegram] Голосовое успешно отправлено!`);
+        console.log(`[Telegram] Голосовое успешно отправлено в чат!`);
 
       } catch (audioErr) {
-        console.error("❌ Ошибка при обработке/отправке аудио:", audioErr.message);
+        // --- ПОЛНОЕ ЛОГИРОВАНИЕ ОШИБКИ ---
+        console.error("\n================ ПОЛНАЯ ОШИБКА АУДИО ================");
+        console.error("Сообщение ошибки:", audioErr.message);
+        console.error("Стек вызовов (где упало):", audioErr.stack);
+        
+        // Если ошибка пришла от самого Телеграма (Axios)
+        if (audioErr.response) {
+            console.error("Статус от Telegram:", audioErr.response.status);
+            console.error("Ответ от Telegram:", JSON.stringify(audioErr.response.data, null, 2));
+        }
+        console.error("=====================================================\n");
+        
+        await ctx.reply('⚠️ Произошла ошибка при отправке голосового сообщения. Смотрите логи сервера.', { reply_to_message_id: ctx.message.message_id });
       } finally {
-        // 4. Убираем за собой оба временных файла
         if (fs.existsSync(tempWavPath)) fs.unlinkSync(tempWavPath);
         if (fs.existsSync(tempOggPath)) fs.unlinkSync(tempOggPath);
         console.log(`[File System] Временные файлы удалены.`);
