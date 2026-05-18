@@ -186,7 +186,7 @@ async function getEmbedding(text, retryCount = 0) {
     }
 }
 
-async function searchPinecone(vector, topK = 10) {
+async function searchPinecone(vector, topK = 5) {
     try {
         const response = await fetch(cleanPineconeHost + '/query', {
             method: 'POST',
@@ -225,7 +225,7 @@ async function getAIAnswer(message, history = [], onProgress = null) {
             const vector = await getEmbedding(message);
             
             if (onProgress) await onProgress('🔎 Ищу статьи в базе...');
-            const matches = await searchPinecone(vector, 12);
+            const matches = await searchPinecone(vector, 5);
             
             const core = matches.filter(m => (m.score || 0) >= 0.75);
             const context = matches.filter(m => (m.score || 0) < 0.75 && (m.score || 0) >= 0.5);
