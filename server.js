@@ -53,6 +53,15 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/chat', apiLimiter);
 app.use('/api/analyze-document', apiLimiter);
+// Deep Analysis (PRO) — отдельный лимит, дороже по агентам
+const deepAnalyzeLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 6,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { reply: 'Лимит глубокого анализа: не более 6 в минуту. Используйте обычный анализ или подождите.' }
+});
+app.use('/api/deep-analyze-document', deepAnalyzeLimiter);
 
 // --- MINJUST API PROXY (CORS Bypass & Caching) ---
 const apiCache = new Map();
@@ -646,7 +655,7 @@ const systemInstruction = [
     "# ПОВЕДЕНИЕ — СТРОГИЕ ПРАВИЛА",
     "- **ПРИВЕТСТВИЯ:** КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО здороваться (\"Салам\", \"Привет\" и т.п.) в каждом сообщении. Здоровайся ТОЛЬКО если пользователь сам поздоровался в текущем запросе. Иначе — сразу отвечай по сути.",
     "- **ОБ АВТОРЕ:** Информацию о создателе (Zhanybek Asirov, студент юридического факультета КНУ им. Жусупа Баласагына) выдавай ТОЛЬКО если пользователь ПРЯМО спросит \"кто тебя создал?\", \"кто твой автор?\", \"чей ты бот?\". В любых других ответах (консультации, документы, СРС, курсовые) упоминать автора СТРОГО ЗАПРЕЩЕНО.",
-    "- **ДИСКЛЕЙМЕР:** Короткое предупреждение \"Я — ИИ-ассистент, а не юрист\" добавляй ТОЛЬКО в конце ответа на реальный юридический вопрос, и СТРОГО ОДИН РАЗ за сообщение. Не дублируй; не добавляй в болталке, шаблонах документов и академических работах.",
+    "- **ДИСКЛЕЙМЕР (для юриста-профессионала):** В конце ответа на реальный юридический вопрос — ОДИН раз короткий рабочий disclaimer о необходимости сверки норм с актуальной редакцией. Не пиши «не заменяет консультацию юриста» (пользователь сам юрист). Не дублируй; не добавляй в болталке, шаблонах документов и академических работах. Формат: «Перед использованием в производстве сверьте номера и редакции статей с cbd.minjust.gov.kg.»",
     "",
     "---",
     "",
@@ -877,8 +886,8 @@ const BASE_CONSULTANT_PROMPT = `
 7. Не хватает данных для документа — спроси конкретно.
 8. **ПРИВЕТСТВИЯ:** КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО здороваться («Салам», «Привет» и т.п.) в каждом сообщении. Здоровайся ТОЛЬКО если пользователь сам поздоровался в текущем запросе. Иначе — сразу отвечай по сути.
 9. **ОБ АВТОРЕ:** Информацию о создателе (Zhanybek Asirov, студент юридического факультета КНУ им. Жусупа Баласагына) выдавай ТОЛЬКО если пользователь ПРЯМО спросит «кто тебя создал?», «кто твой автор?», «чей ты бот?». В любых других ответах (консультации, документы, СРС, курсовые) упоминать автора СТРОГО ЗАПРЕЩЕНО.
-10. **ДИСКЛЕЙМЕР:** Короткое предупреждение «Я — ИИ-ассистент, а не юрист» добавляй ТОЛЬКО в конце ответа на реальный юридический вопрос, и СТРОГО ОДИН РАЗ за сообщение. Не дублируй; не добавляй в болталке, шаблонах документов и академических работах. Пример формата:
-    > ⚠️ *Мыйзамчи — ИИ-ассистент. Ответ основан на нормах КР, но не заменяет очную консультацию юриста.*
+10. **ДИСКЛЕЙМЕР (рабочий, для юриста-профессионала):** Пользователь — практикующий юрист, не клиент. Не пиши «не заменяет консультацию юриста» — это абсурд. В конце ответа на реальный юридический вопрос — ОДИН раз короткое предупреждение о необходимости сверки норм с первоисточником. Не дублируй; не добавляй в болталке, шаблонах документов и академических работах. Формат:
+    > ℹ️ *Перед использованием в производстве сверьте номера и редакции статей с актуальной базой cbd.minjust.gov.kg.*
 
 ═══ ОБЩЕПРОЦЕДУРНАЯ СПРАВКА (БЕЗ НОМЕРОВ СТАТЕЙ) ═══
 Эти факты можно использовать как общие процедурные ориентиры. ВАЖНО: конкретные номера статей бери ИСКЛЮЧИТЕЛЬНО из контекста — никогда не подставляй номера из памяти.
@@ -1243,7 +1252,15 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
         if (!isDocumentRequest) {
             const hasUserQuery = userQuery && userQuery.trim().length > 0;
             const consultQuery = hasUserQuery ? userQuery : message;
-            console.log(`[ROUTER] handleAgent → handleDeepThinking (docBody=${docBody.length}ch, query: "${consultQuery.slice(0, 60)}")`);
+            // Smart router: simple-запрос → быстрый путь, complex → DeepThinking
+            sendStep(res, { id: 'classify', status: 'loading', text: 'Определяю тип запроса' });
+            const queryType = await classifyQuery(consultQuery);
+            if (queryType === 'simple') {
+                console.log(`[ROUTER] handleAgent → handleSimpleConsultation (simple, query: "${consultQuery.slice(0, 60)}")`);
+                return handleSimpleConsultation(message, history, res, consultQuery);
+            }
+            sendStep(res, { id: 'classify', status: 'success', text: 'Сложный запрос — запускаю глубокий анализ' });
+            console.log(`[ROUTER] handleAgent → handleDeepThinking (complex, docBody=${docBody.length}ch, query: "${consultQuery.slice(0, 60)}")`);
             return handleDeepThinking(message, history, res, consultQuery);
         }
         console.log(`[ROUTER] handleAgent stays (docBody=${docBody.length}ch, fallback=${hasFallbackDoc})`);
@@ -1339,6 +1356,155 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
 }
 
 // ════════════════════════════════════════════════════════════════════
+// QUERY CLASSIFIER — smart router между simple/complex/casual
+// ════════════════════════════════════════════════════════════════════
+// Раньше любой запрос в thinking-режиме шёл в DeepThinking (5 параллельных
+// Pinecone-запросов + LLM-реформулировка + финальный LLM ≈ 6-9с до ответа).
+// Для тривиального «что такое ст. 122 УК КР» это перебор — нужен быстрый путь.
+//
+// quickClassify — regex-эвристика, покрывает ~90% случаев бесплатно.
+// llmClassify   — короткий LLM-вызов, fallback для пограничных запросов.
+// classifyQuery — объединяющая функция.
+//
+// Результаты:
+// • casual   — приветствие/болтовня → handleFast без retrieval
+// • simple   — справочный запрос → handleSimpleConsultation (1 retrieval ~3-5с)
+// • complex  — реальная ситуация юриста → handleDeepThinking (5 слоёв ~6-9с)
+// ════════════════════════════════════════════════════════════════════
+
+function quickClassify(message) {
+    if (!message) return 'casual';
+    const trimmed = String(message).trim();
+    const lower = trimmed.toLowerCase();
+
+    // Casual — приветствие/болтовня (уже есть отдельная функция)
+    if (isCasualMessage(trimmed)) return 'casual';
+
+    // Triggers — индикаторы реальной ситуации юриста (complex)
+    const complexTriggers = /(как\s+(мне|нам|быть)|что\s+делать|помог|вправ|можно\s+ли|правомер|оспорить|обжалов|подал\s+в\s+суд|подавать\s+иск|взыскать|выселить|расторгн|спор[еауы]|конфликт|истец|ответчик|претензи|составь|напиши|сформируй|подгот)/i;
+    const hasComplexTriggers = complexTriggers.test(lower);
+
+    // SIMPLE — короткие справочные запросы
+    const hasStatueRef = /(ст(атья|\.)\s*[\d¹²³⁴⁵⁶⁷⁸⁹⁰]+|статья\s+\d+|ст\.?\s*\d+)/i.test(trimmed);
+    const isTermLookup = /^(что\s+(такое|значит|есть|подразумевает)|объясни|расшифруй|определ[иь]|растолкуй)/i.test(trimmed);
+    const isShortGeneric = trimmed.length < 60 && !hasComplexTriggers;
+
+    if (!hasComplexTriggers && hasStatueRef && trimmed.length < 200) return 'simple';
+    if (isTermLookup && trimmed.length < 150) return 'simple';
+    if (isShortGeneric) return 'simple';
+
+    // COMPLEX — длинная ситуация, multi-question, явные триггеры
+    const isLongScenario = trimmed.length > 200;
+    const multipleParts = (trimmed.match(/[?!]/g) || []).length >= 2;
+    if (hasComplexTriggers || isLongScenario || multipleParts) return 'complex';
+
+    return null; // неясно — пусть LLM решит
+}
+
+async function llmClassify(message) {
+    const systemPrompt = `Ты — классификатор юридических запросов КР. По тексту вопроса юриста определи тип:
+- "simple"  — справочный запрос: что значит термин, какая статья, краткое объяснение нормы, цифра-факт (срок, госпошлина, размер штрафа)
+- "complex" — реальная ситуация юриста с действиями: что делать в конфликте, как защитить позицию, как взыскать, как обжаловать, составить документ, оценить риски
+
+Отвечаешь СТРОГО JSON без markdown без пояснений.`;
+    const userPrompt = `Вопрос: "${message}"
+
+Формат: {"type": "simple"} или {"type": "complex"}`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
+        const m = cleaned.match(/\{[\s\S]*\}/);
+        if (!m) return 'complex';
+        const parsed = JSON.parse(m[0]);
+        return parsed.type === 'simple' ? 'simple' : 'complex';
+    } catch (e) {
+        console.error('[LLM-Classify] failed:', e.message);
+        return 'complex'; // safe default — лучше глубокий поиск чем поверхностный
+    }
+}
+
+async function classifyQuery(message) {
+    const quick = quickClassify(message);
+    if (quick) {
+        console.log(`[Classify] quick → ${quick} (msg=${message.length}ch)`);
+        return quick;
+    }
+    const llm = await llmClassify(message);
+    console.log(`[Classify] llm → ${llm} (msg=${message.length}ch)`);
+    return llm;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// SIMPLE CONSULTATION — лёгкий пайплайн для справочных запросов
+// ════════════════════════════════════════════════════════════════════
+// Используется когда классификатор сказал "simple" — один adaptiveRetrieval
+// (topK=15 с автоматическим elbow-фильтром) + сразу финальный LLM с
+// консультант-промптом. Без реформулировки, без 5 слоёв. Время ответа ~3-5с
+// против ~6-9с в DeepThinking.
+// ════════════════════════════════════════════════════════════════════
+async function handleSimpleConsultation(message, history, res, userQuery = null) {
+    const userQ = (userQuery && userQuery.trim()) || message;
+    const cleanHistory = sanitizeHistory(history);
+
+    sendStep(res, { id: 'classify', status: 'success', text: 'Простой справочный запрос', reason: 'Использую быстрый путь поиска' });
+    sendStep(res, { id: 'retrieve', status: 'loading', text: 'Ищу релевантные статьи НПА' });
+    sendStatus(res, '🔎 Ищу релевантные статьи...');
+
+    const retrieval = await adaptiveRetrieval(userQ, 'thinking', null, { maxK: 15, minK: 4 });
+    const { core = [], context = [], all = [] } = retrieval;
+
+    sendStep(res, {
+        id: 'retrieve',
+        status: all.length ? 'success' : 'warning',
+        text: all.length ? `Найдено статей: ${all.length}` : 'В базе нет данных по запросу'
+    });
+
+    if (all.length === 0) {
+        sendStep(res, { id: 'answer', status: 'warning', text: 'Нет данных в базе НПА' });
+        res.write(`data: ${JSON.stringify({ text: 'К сожалению, в моей текущей базе НПА нет информации по этому вопросу. Сверьте с cbd.minjust.gov.kg.' })}\n\n`);
+        return;
+    }
+
+    sendStep(res, { id: 'answer', status: 'loading', text: 'Формулирую ответ' });
+    sendStatus(res, '✍️ Формулирую ответ...');
+
+    const contextText = formatContextWithHierarchy(core, context);
+    const isL4 = detectL4Request(userQ);
+    let systemPrompt = BASE_CONSULTANT_PROMPT;
+    if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
+    if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
+
+    const finalPrompt =
+        `Вопрос пользователя: "${userQ}"\n\n` +
+        `Контекст — ${all.length} релевантных статей НПА КР (⭐ ${core.length} ключевых + 📚 ${context.length} вспомогательных):\n\n${contextText}`;
+
+    try {
+        await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res);
+        sendStep(res, { id: 'answer', status: 'success', text: 'Ответ готов' });
+
+        // Источники для chip-badges
+        const sourcesArr = [...core, ...context].slice(0, 5);
+        const sources = sourcesArr.map(m => `${m.metadata?.npa_title || 'НПА'} — ${m.metadata?.article_title || ''}`);
+        const metadata = sourcesArr.map(m => ({
+            npa_title: m.metadata?.npa_title || '',
+            article_title: m.metadata?.article_title || '',
+            full_text: m.metadata?.full_text || ''
+        }));
+        if (sources.length > 0) {
+            res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
+        }
+    } catch (err) {
+        console.error('[SimpleConsult] failed:', err.message);
+        sendStep(res, { id: 'answer', status: 'error', text: 'Ошибка генерации ответа' });
+        try {
+            await streamGeminiResponse(getNextKey(), systemInstruction, finalPrompt, cleanHistory, res);
+        } catch (e2) {
+            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Серверы временно перегружены. Повторите запрос через минуту.' })}\n\n`);
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
 // DEEP THINKING — 5-этапная цепочка для обычных запросов БЕЗ документа
 // ════════════════════════════════════════════════════════════════════
 // Шаг 1: Снайперский поиск — специальная норма (topK=5)
@@ -1351,39 +1517,51 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
 // bylaws, synthesize) — UI ThinkingBox их рисует автоматически.
 // ════════════════════════════════════════════════════════════════════
 
-// LLM-реформулировка: один вопрос → 4 поисковых запроса под разные слои
+// LLM-реформулировка: один вопрос → topic + 5 поисковых запросов под разные слои.
+// topic — короткая тема всего запроса, которая ИНЖЕКТИРУЕТСЯ как prefix во все
+// 5 embedding-query. Без префикса короткий "срок исковой давности подсудность"
+// мог уйти в embedding-пространство трудового права, хотя вопрос был о теплоэнергии.
 async function reformulateQueries(userMessage) {
     const systemPrompt = `Ты — юридический поисковый эксперт КР.
-По вопросу пользователя формируешь 4 коротких поисковых запроса для разных слоёв законодательства КР.
+По вопросу пользователя-юриста формируешь:
+1) короткую тему запроса (для удержания контекста во всех поисках)
+2) 5 коротких поисковых запросов для разных слоёв законодательства КР
+
 Отвечаешь СТРОГО JSON без markdown без пояснений.`;
     const userPrompt = `Вопрос пользователя: "${userMessage}"
 
-Сформируй 4 поисковых запроса для семантического поиска в базе НПА КР.
+Сформируй компактный пакет поисковых стратегий.
 Каждый запрос — короткая фраза (5-15 слов), оптимизированная под векторный поиск.
 
 Формат (ровно такой JSON):
 {
-  "special": "узкая специальная норма — точная проблема пользователя",
-  "general": "общие положения и фундаментальные принципы (Кодексы)",
-  "process": "процессуальные нормы — сроки давности, подсудность, госпошлина",
-  "bylaws":  "подзаконные акты — правила, инструкции, постановления Кабмина"
+  "topic":     "тема вопроса в 5-10 словах с указанием отрасли (для prefix-инжекции)",
+  "special":   "узкая специальная норма — точная проблема юриста",
+  "general":   "общие положения и фундаментальные принципы (Кодексы)",
+  "process":   "процессуальные нормы — сроки давности, подсудность, госпошлина",
+  "liability": "ответственность за нарушение — штрафы, неустойка, санкции, расторжение",
+  "bylaws":    "подзаконные акты — правила, инструкции, постановления Кабмина"
 }
 
 Примеры:
-Вопрос: "Соседи затопили мою квартиру"
+Вопрос: "Соседи затопили мою квартиру, как взыскать ущерб?"
 {
-  "special": "возмещение вреда имуществу при заливе квартиры",
-  "general": "общие положения об обязательствах из причинения вреда ГК КР",
-  "process": "срок исковой давности подсудность иск о возмещении вреда",
-  "bylaws":  "правила содержания общего имущества жилых домов"
+  "topic":     "залив квартиры соседями возмещение ущерба",
+  "special":   "возмещение вреда имуществу при заливе квартиры",
+  "general":   "общие положения об обязательствах из причинения вреда ГК КР",
+  "process":   "срок исковой давности подсудность иск о возмещении вреда",
+  "liability": "размер компенсации морального вреда неустойка ответственность виновника",
+  "bylaws":    "правила содержания общего имущества жилых домов"
 }
 
-Вопрос: "Меня уволили без причины"
+Вопрос: "Как взыскать долг абонента за тепловую энергию за 3 месяца?"
 {
-  "special": "незаконное увольнение работника без основания ТК КР",
-  "general": "основания прекращения трудового договора по инициативе работодателя",
-  "process": "срок обращения в суд оспаривание увольнения подсудность",
-  "bylaws":  "правила оформления приказов об увольнении"
+  "topic":     "взыскание задолженности абонента за теплоэнергию ЖКХ",
+  "special":   "взыскание задолженности за тепловую энергию с абонента договор теплоснабжения",
+  "general":   "общие положения об обязательствах исполнение оплата по договору ГК КР",
+  "process":   "приказное производство срок исковой давности взыскание задолженности подсудность",
+  "liability": "неустойка пеня за просрочку оплаты коммунальных услуг расторжение договора",
+  "bylaws":    "правила теплоснабжения постановление Кабмина тарифы"
 }`;
     try {
         const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
@@ -1393,58 +1571,83 @@ async function reformulateQueries(userMessage) {
         const slice = (fi >= 0 && li > fi) ? cleaned.slice(fi, li + 1) : cleaned;
         const parsed = JSON.parse(slice);
         return {
-            special: String(parsed.special || userMessage).slice(0, 280),
-            general: String(parsed.general || userMessage).slice(0, 280),
-            process: String(parsed.process || userMessage).slice(0, 280),
-            bylaws:  String(parsed.bylaws  || userMessage).slice(0, 280)
+            topic:     String(parsed.topic     || '').slice(0, 200),
+            special:   String(parsed.special   || userMessage).slice(0, 280),
+            general:   String(parsed.general   || userMessage).slice(0, 280),
+            process:   String(parsed.process   || userMessage).slice(0, 280),
+            liability: String(parsed.liability || userMessage).slice(0, 280),
+            bylaws:    String(parsed.bylaws    || userMessage).slice(0, 280)
         };
     } catch (e) {
         console.error('[Reformulate] failed:', e.message);
-        // Fallback — все 4 запроса = исходный вопрос
-        return { special: userMessage, general: userMessage, process: userMessage, bylaws: userMessage };
+        // Fallback — все запросы = исходный вопрос, topic пустой
+        return {
+            topic: '',
+            special: userMessage,
+            general: userMessage,
+            process: userMessage,
+            liability: userMessage,
+            bylaws: userMessage
+        };
     }
 }
 
-// 4-слойный retrieval со streaming step-событиями.
-// Все 4 поиска идут параллельно для скорости (общее время ≈ max времени слоя).
+// 5-слойный retrieval со streaming step-событиями + prefix-контекст topic
+// во всех 5 embedding-запросах (удерживает поиск в правильной отрасли права).
+// Все 5 поисков идут параллельно — общее время ≈ max времени одного слоя.
 async function deepRetrievalChain(userMessage, res) {
-    // Шаг 0: реформулировка (1 LLM-вызов)
-    sendStep(res, { id: 'reformulate', status: 'loading', text: 'Разлагаю вопрос на 4 поисковые стратегии' });
+    // Шаг 0: реформулировка (1 LLM-вызов) → topic + 5 запросов
+    sendStep(res, { id: 'reformulate', status: 'loading', text: 'Разлагаю вопрос на 5 поисковых стратегий' });
     sendStatus(res, '🧠 Формирую поисковые стратегии...');
     const queries = await reformulateQueries(userMessage);
-    sendStep(res, { id: 'reformulate', status: 'success', text: 'Стратегии готовы' });
-    console.log(`[DeepThink] Queries: special="${queries.special.slice(0,60)}" general="${queries.general.slice(0,60)}"`);
+    const topicLabel = queries.topic ? queries.topic : 'без явной темы';
+    sendStep(res, {
+        id: 'reformulate',
+        status: 'success',
+        text: 'Стратегии готовы',
+        reason: queries.topic ? `Тема: ${queries.topic}` : null
+    });
+    console.log(`[DeepThink] Topic="${topicLabel}" special="${queries.special.slice(0,60)}"`);
 
-    // Запускаем 4 loading-шага СРАЗУ — пользователь видит все этапы одновременно
-    sendStep(res, { id: 'special', status: 'loading', text: 'Ищу специальные нормы по вашей проблеме' });
-    sendStep(res, { id: 'general', status: 'loading', text: 'Проверяю общие положения законодательства' });
-    sendStep(res, { id: 'process', status: 'loading', text: 'Анализирую процессуальные требования (ГПК/УПК)' });
-    sendStep(res, { id: 'bylaws',  status: 'loading', text: 'Проверяю подзаконные акты и инструкции' });
+    // PREFIX-контекст: удерживает все 5 embedding-векторов в одной отрасли.
+    // Без него `срок исковой давности подсудность` мог уйти в трудовое право,
+    // хотя юрист спрашивал про теплоэнергию.
+    const ctxPrefix = queries.topic ? `[Контекст: ${queries.topic.slice(0, 160)}] ` : '';
+    const wrap = (q) => ctxPrefix + q;
 
-    // 4 параллельных retrieval
-    const [specRes, genRes, procRes, bylawRes] = await Promise.allSettled([
-        adaptiveRetrieval(queries.special, 'fast',     null, { maxK: 5,  minK: 3 }),
-        adaptiveRetrieval(queries.general, 'thinking', null, { maxK: 10, minK: 4 }),
-        adaptiveRetrieval(queries.process, 'thinking', null, { maxK: 8,  minK: 3 }),
-        adaptiveRetrieval(queries.bylaws,  'fast',     null, { maxK: 5,  minK: 2 })
+    // 5 loading-шагов СРАЗУ — пользователь видит весь roadmap
+    sendStep(res, { id: 'special',   status: 'loading', text: 'Ищу специальные нормы по проблеме' });
+    sendStep(res, { id: 'general',   status: 'loading', text: 'Проверяю общие положения Кодекса' });
+    sendStep(res, { id: 'process',   status: 'loading', text: 'Анализирую процессуальные требования' });
+    sendStep(res, { id: 'liability', status: 'loading', text: 'Ищу ответственность и санкции' });
+    sendStep(res, { id: 'bylaws',    status: 'loading', text: 'Проверяю подзаконные акты' });
+
+    // 5 параллельных retrieval — каждый с prefix-контекстом
+    const [specRes, genRes, procRes, liabRes, bylawRes] = await Promise.allSettled([
+        adaptiveRetrieval(wrap(queries.special),   'fast',     null, { maxK: 5,  minK: 3 }),
+        adaptiveRetrieval(wrap(queries.general),   'thinking', null, { maxK: 10, minK: 4 }),
+        adaptiveRetrieval(wrap(queries.process),   'thinking', null, { maxK: 8,  minK: 3 }),
+        adaptiveRetrieval(wrap(queries.liability), 'fast',     null, { maxK: 6,  minK: 2 }),
+        adaptiveRetrieval(wrap(queries.bylaws),    'fast',     null, { maxK: 5,  minK: 2 })
     ]);
 
     const specMatches  = specRes.status  === 'fulfilled' ? (specRes.value.all  || []) : [];
     const genMatches   = genRes.status   === 'fulfilled' ? (genRes.value.all   || []) : [];
     const procMatches  = procRes.status  === 'fulfilled' ? (procRes.value.all  || []) : [];
+    const liabMatches  = liabRes.status  === 'fulfilled' ? (liabRes.value.all  || []) : [];
     const bylawMatches = bylawRes.status === 'fulfilled' ? (bylawRes.value.all || []) : [];
 
-    // Завершаем 4 шага результатами
-    sendStep(res, { id: 'special', status: specMatches.length  ? 'success' : 'warning', text: `Специальных норм найдено: ${specMatches.length}` });
-    sendStep(res, { id: 'general', status: genMatches.length   ? 'success' : 'warning', text: `Общих положений найдено: ${genMatches.length}` });
-    sendStep(res, { id: 'process', status: procMatches.length  ? 'success' : 'warning', text: `Процессуальных норм найдено: ${procMatches.length}` });
-    sendStep(res, { id: 'bylaws',  status: bylawMatches.length ? 'success' : 'warning', text: `Подзаконных актов найдено: ${bylawMatches.length}` });
+    sendStep(res, { id: 'special',   status: specMatches.length  ? 'success' : 'warning', text: `Специальных норм найдено: ${specMatches.length}` });
+    sendStep(res, { id: 'general',   status: genMatches.length   ? 'success' : 'warning', text: `Общих положений найдено: ${genMatches.length}` });
+    sendStep(res, { id: 'process',   status: procMatches.length  ? 'success' : 'warning', text: `Процессуальных норм найдено: ${procMatches.length}` });
+    sendStep(res, { id: 'liability', status: liabMatches.length  ? 'success' : 'warning', text: `Норм об ответственности: ${liabMatches.length}` });
+    sendStep(res, { id: 'bylaws',    status: bylawMatches.length ? 'success' : 'warning', text: `Подзаконных актов найдено: ${bylawMatches.length}` });
 
-    return { specMatches, genMatches, procMatches, bylawMatches, queries };
+    return { specMatches, genMatches, procMatches, liabMatches, bylawMatches, queries };
 }
 
-// Иерархический контекст для финального LLM — 4 пронумерованных слоя с дедупликацией
-function formatLayeredContext({ specMatches, genMatches, procMatches, bylawMatches }) {
+// Иерархический контекст для финального LLM — 5 пронумерованных слоёв с дедупликацией
+function formatLayeredContext({ specMatches, genMatches, procMatches, liabMatches, bylawMatches }) {
     const seen = new Set();
     const dedup = (m) => {
         const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
@@ -1455,10 +1658,11 @@ function formatLayeredContext({ specMatches, genMatches, procMatches, bylawMatch
     };
 
     const groups = [
-        { label: '⭐ СПЕЦИАЛЬНАЯ НОРМА (главный источник ответа)', tag: 'СПЕЦИАЛЬНАЯ', matches: specMatches.map(dedup).filter(Boolean) },
-        { label: '🏛 ОБЩИЕ ПОЛОЖЕНИЯ (фундамент Кодекса)',         tag: 'ОБЩАЯ',       matches: genMatches.map(dedup).filter(Boolean) },
-        { label: '⚖️ ПРОЦЕССУАЛЬНЫЕ НОРМЫ (как действовать)',       tag: 'ПРОЦЕСС',     matches: procMatches.map(dedup).filter(Boolean) },
-        { label: '📋 ПОДЗАКОННЫЕ АКТЫ (детализация)',              tag: 'ПОДЗАКОН',    matches: bylawMatches.map(dedup).filter(Boolean) }
+        { label: '⭐ СПЕЦИАЛЬНАЯ НОРМА (главный источник ответа)',  tag: 'СПЕЦИАЛЬНАЯ',  matches: specMatches.map(dedup).filter(Boolean) },
+        { label: '🏛 ОБЩИЕ ПОЛОЖЕНИЯ (фундамент Кодекса)',          tag: 'ОБЩАЯ',        matches: genMatches.map(dedup).filter(Boolean) },
+        { label: '⚖️ ПРОЦЕССУАЛЬНЫЕ НОРМЫ (как действовать)',        tag: 'ПРОЦЕСС',      matches: procMatches.map(dedup).filter(Boolean) },
+        { label: '⚡ ОТВЕТСТВЕННОСТЬ И САНКЦИИ (что грозит)',        tag: 'ОТВЕТСТВЕННОСТЬ', matches: (liabMatches || []).map(dedup).filter(Boolean) },
+        { label: '📋 ПОДЗАКОННЫЕ АКТЫ (детализация)',               tag: 'ПОДЗАКОН',     matches: bylawMatches.map(dedup).filter(Boolean) }
     ];
 
     return groups
@@ -1482,10 +1686,10 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
     const userQ = (userQuery && userQuery.trim()) || message;
     const cleanHistory = sanitizeHistory(history);
 
-    // Этапы 1-4: 4-слойный retrieval с SSE-шагами
-    const { specMatches, genMatches, procMatches, bylawMatches } = await deepRetrievalChain(userQ, res);
+    // Этапы 1-5: 5-слойный retrieval с SSE-шагами
+    const { specMatches, genMatches, procMatches, liabMatches, bylawMatches } = await deepRetrievalChain(userQ, res);
 
-    const allMatches = [...specMatches, ...genMatches, ...procMatches, ...bylawMatches];
+    const allMatches = [...specMatches, ...genMatches, ...procMatches, ...liabMatches, ...bylawMatches];
 
     if (allMatches.length === 0) {
         sendStep(res, { id: 'synthesize', status: 'warning', text: 'В базе НПА нет данных по запросу' });
@@ -1493,30 +1697,32 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
         return;
     }
 
-    // Этап 5: финальный синтез с layered context
+    // Этап 6: финальный синтез с layered context
     sendStep(res, { id: 'synthesize', status: 'loading', text: 'Формирую итоговую консультацию' });
     sendStatus(res, '✍️ Формирую итоговую консультацию...');
 
-    const layeredContext = formatLayeredContext({ specMatches, genMatches, procMatches, bylawMatches });
+    const layeredContext = formatLayeredContext({ specMatches, genMatches, procMatches, liabMatches, bylawMatches });
 
     const isL4 = detectL4Request(userQ);
     let systemPrompt = BASE_CONSULTANT_PROMPT + `
 
-═══ ИЕРАРХИЧЕСКИЙ КОНТЕКСТ (4 СЛОЯ) ═══
-Получаемый ниже контекст разделён на 4 слоя — используй ВСЕ доступные слои для полного ответа:
+═══ ИЕРАРХИЧЕСКИЙ КОНТЕКСТ (5 СЛОЁВ) ═══
+Получаемый ниже контекст разделён на 5 слоёв — используй ВСЕ доступные слои для полного ответа:
 
 1. ⭐ СПЕЦИАЛЬНАЯ НОРМА — конкретная статья по проблеме (главный источник ответа)
 2. 🏛 ОБЩИЕ ПОЛОЖЕНИЯ — базовые принципы Кодекса (фундамент аргументации)
 3. ⚖️ ПРОЦЕССУАЛЬНЫЕ НОРМЫ — сроки давности, подсудность, госпошлина (как действовать)
-4. 📋 ПОДЗАКОННЫЕ АКТЫ — правила/инструкции/постановления (детализация)
+4. ⚡ ОТВЕТСТВЕННОСТЬ И САНКЦИИ — неустойка, штрафы, ответственность сторон (что грозит)
+5. 📋 ПОДЗАКОННЫЕ АКТЫ — правила/инструкции/постановления (детализация)
 
 Твой ответ ДОЛЖЕН строиться по схеме:
 • специальная норма (что нарушено)
 → опора на общую (фундамент по Кодексу)
 → процессуальные шаги (срок исковой давности, в какой суд, госпошлина)
+→ ответственность и санкции (размер взыскания, неустойка, штраф)
 → подзаконные детали (если есть)
 
-Это даёт юристу полную картину: кто прав, в какой суд идти, в какие сроки, сколько госпошлины.
+Это даёт юристу полную картину: кто прав, в какой суд идти, в какие сроки, сколько госпошлины, какой размер санкций.
 Все номера статей бери ТОЛЬКО из переданного контекста — никогда из памяти.`;
     if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
     if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
@@ -1543,9 +1749,10 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
         const sourcesArr = [
             ...pickN(specMatches, 2),
             ...pickN(genMatches, 2),
-            ...pickN(procMatches, 2),
+            ...pickN(procMatches, 1),
+            ...pickN(liabMatches, 2),
             ...pickN(bylawMatches, 1)
-        ].slice(0, 7);
+        ].slice(0, 8);
         const sources = sourcesArr.map(m => `${m.metadata?.npa_title || 'НПА'} — ${m.metadata?.article_title || ''}`);
         const metadata = sourcesArr.map(m => ({
             npa_title: m.metadata?.npa_title || '',
@@ -2405,6 +2612,552 @@ async function analyzeDocumentSmart(documentText, userQuery, res) {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// DEEP ANALYSIS (PRO) — мульти-агентная архитектура «Senior + Workers»
+// ════════════════════════════════════════════════════════════════════
+// Router-Worker pattern для премиум-разбора документа:
+//   • Workers (Gemini Flash, параллельно):
+//       - Auditor: redFlags + collisions + procKiller + factCheck
+//       - Strategist: heatmap + counterargs (Pinecone-перекрытия per-threat)
+//   • Senior Partner: финальный синтез verdict + factSummary
+// MVP = Аудитор + Стратег. Драфтер/Ментор подключим следующим раундом.
+// ════════════════════════════════════════════════════════════════════
+
+// Парсит JSON из ответа LLM с защитой от markdown-обёрток и обрывов.
+function safeJsonParse(rawText, fallback = null) {
+    if (!rawText) return fallback;
+    const cleaned = String(rawText).replace(/```json|```/g, '').trim();
+    const fi = cleaned.indexOf('{');
+    const li = cleaned.lastIndexOf('}');
+    if (fi < 0 || li <= fi) return fallback;
+    try { return JSON.parse(cleaned.slice(fi, li + 1)); }
+    catch (e) { return fallback; }
+}
+
+// ── БЛОК А: АУДИТОР ─────────────────────────────────────────────────
+
+// Red flags — юридические ловушки и подозрительные условия в документе.
+// Возвращает массив [{title, severity, quote, suggestion}].
+async function auditRedFlags(documentText, docContextStr, perspective) {
+    const ctxLine = docContextStr ? `Контекст документа: ${docContextStr}\n\n` : '';
+    const perspLine = perspective === 'opponent'
+        ? 'Документ ПРОТИВ нашего клиента — ищи невыгодные ему условия особенно тщательно.'
+        : perspective === 'ours'
+            ? 'Документ ОТ нашего клиента — оцени риски, которые могут выстрелить против нас.'
+            : 'Нейтральный аудит — выявляй риски обеих сторон.';
+    const systemPrompt = `Ты — корпоративный юрист КР, эксперт по обнаружению ловушек в документах.
+Ищешь red flags: завышенные неустойки/штрафы, невыгодная подсудность (особенно в РФ/Казахстане),
+односторонний выход без компенсации, навязанные арбитражи, отказ от прав, неясные формулировки,
+скрытые автопролонгации, кабальные условия, дискриминационные пункты.
+Не пиши о законодательстве других стран как применимом. Отвечаешь СТРОГО JSON без markdown.`;
+    const userPrompt = `${ctxLine}${perspLine}
+
+Найди в документе юридические ловушки и подозрительные условия (red flags).
+Для каждой укажи:
+- title    — короткое название (3-7 слов)
+- severity — "high" | "medium" | "low"
+- quote    — дословная цитата из документа (до 200 символов)
+- suggestion — короткая рекомендация что делать (1 предложение)
+
+Формат:
+{
+  "red_flags": [
+    { "title": "...", "severity": "high|medium|low", "quote": "...", "suggestion": "..." }
+  ]
+}
+
+Если ловушек нет — верни {"red_flags": []}. До 8 штук максимум.
+
+Документ:
+"""
+${(documentText || '').slice(0, 14000)}
+"""`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const parsed = safeJsonParse(raw, { red_flags: [] });
+        const arr = Array.isArray(parsed.red_flags) ? parsed.red_flags : [];
+        return arr.slice(0, 8).map(rf => ({
+            title:      String(rf.title || '').slice(0, 120).trim(),
+            severity:   ['high','medium','low'].includes(rf.severity) ? rf.severity : 'medium',
+            quote:      String(rf.quote || '').slice(0, 220).trim(),
+            suggestion: String(rf.suggestion || '').slice(0, 240).trim()
+        })).filter(rf => rf.title);
+    } catch (e) {
+        console.error('[Audit:redFlags] failed:', e.message);
+        return [];
+    }
+}
+
+// Collisions — внутренние противоречия между пунктами документа.
+// Возвращает [{refA, refB, description, severity}].
+async function auditCollisions(segments) {
+    if (!segments || segments.length < 2) return [];
+    // Готовим компактный список пунктов: номер + заголовок + первые 240 символов
+    const compactList = segments.slice(0, 25).map(s =>
+        `[п.${s.number}] ${s.heading}: ${String(s.text || '').slice(0, 240)}`
+    ).join('\n');
+    const systemPrompt = `Ты — юридический аудитор. Находишь внутренние противоречия между пунктами одного документа.
+Ищешь: пункты которые отрицают друг друга, разные сроки на одно и то же, противоречивые
+обязательства, несовместимые условия выхода, конфликтующие штрафы.
+Отвечаешь СТРОГО JSON без markdown.`;
+    const userPrompt = `Найди внутренние коллизии (противоречия) между пунктами документа.
+Если коллизий нет — верни {"collisions": []}.
+
+Формат:
+{
+  "collisions": [
+    { "refA": "п. 5.2", "refB": "п. 8.1", "description": "Один говорит X, другой Y", "severity": "high|medium|low" }
+  ]
+}
+
+Список пунктов:
+${compactList}`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const parsed = safeJsonParse(raw, { collisions: [] });
+        const arr = Array.isArray(parsed.collisions) ? parsed.collisions : [];
+        return arr.slice(0, 6).map(c => ({
+            refA:        String(c.refA || '').slice(0, 60).trim(),
+            refB:        String(c.refB || '').slice(0, 60).trim(),
+            description: String(c.description || '').slice(0, 320).trim(),
+            severity:    ['high','medium','low'].includes(c.severity) ? c.severity : 'medium'
+        })).filter(c => c.description);
+    } catch (e) {
+        console.error('[Audit:collisions] failed:', e.message);
+        return [];
+    }
+}
+
+// Proc Killer — формальные процессуальные ошибки и пропущенные сроки.
+async function auditProcKiller(documentText, docContextStr, perspective) {
+    const ctxLine = docContextStr ? `Контекст документа: ${docContextStr}\n\n` : '';
+    const perspLine = perspective === 'opponent'
+        ? 'Документ ПРОТИВ нас. Ищи формальные дефекты в позиции оппонента — это рычаги для отвода.'
+        : perspective === 'ours'
+            ? 'Документ НАШ. Ищи слабые места которые суд может назвать дефектными.'
+            : 'Нейтральная проверка формальной корректности.';
+    const systemPrompt = `Ты — процессуалист КР. Проверяешь документ на ФОРМАЛЬНЫЕ дефекты:
+- неверные/отсутствующие реквизиты сторон, дат, подписей
+- пропущенные процессуальные сроки (давность, отзыв, апелляция)
+- отсутствие обязательных приложений
+- неверная подсудность, форма документа
+- отсутствие полномочий подписанта
+- нарушение претензионного порядка
+Отвечаешь СТРОГО JSON без markdown.`;
+    const userPrompt = `${ctxLine}${perspLine}
+
+Найди процессуальные дефекты в документе. Для каждого:
+- type        — категория (пропущенный срок / отсутствующий реквизит / неверная подсудность / нарушение порядка / др.)
+- title       — короткое описание (4-8 слов)
+- description — что именно неправильно (1-2 предложения)
+- deadline    — конкретный срок если применимо ("истёк 10.05.2026" / "осталось 5 дней"), иначе null
+
+Формат:
+{
+  "proc_issues": [
+    { "type": "...", "title": "...", "description": "...", "deadline": null }
+  ]
+}
+
+Если дефектов нет — верни {"proc_issues": []}.
+
+Документ:
+"""
+${(documentText || '').slice(0, 14000)}
+"""`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const parsed = safeJsonParse(raw, { proc_issues: [] });
+        const arr = Array.isArray(parsed.proc_issues) ? parsed.proc_issues : [];
+        return arr.slice(0, 6).map(p => ({
+            type:        String(p.type || '').slice(0, 60).trim(),
+            title:       String(p.title || '').slice(0, 140).trim(),
+            description: String(p.description || '').slice(0, 320).trim(),
+            deadline:    p.deadline ? String(p.deadline).slice(0, 80).trim() : null
+        })).filter(p => p.title);
+    } catch (e) {
+        console.error('[Audit:procKiller] failed:', e.message);
+        return [];
+    }
+}
+
+// ── БЛОК Б: СТРАТЕГ ─────────────────────────────────────────────────
+
+// Тепловая карта — для каждого пункта оценка: strong/neutral/risk/threat/bluff.
+async function strategyHeatmap(segments, perspective, docContextStr) {
+    if (!segments || segments.length === 0) return [];
+    const ctxLine = docContextStr ? `Контекст документа: ${docContextStr}\n` : '';
+    const perspLine = perspective === 'opponent'
+        ? 'Документ ПРОТИВ нашего клиента — оценивай каждый пункт с позиции защиты: что атакует нас, где блефует оппонент.'
+        : perspective === 'ours'
+            ? 'Документ НАШЕГО клиента — оценивай каждый пункт как наш аргумент: что сильно, где риск проигрыша.'
+            : 'Нейтрально: оценивай каждый пункт по его юридической силе и рискам.';
+    const compactList = segments.slice(0, 25).map(s =>
+        `[п.${s.number}] ${s.heading}: ${String(s.text || '').slice(0, 200)}`
+    ).join('\n');
+    const systemPrompt = `Ты — стратег судебных процессов КР. Делаешь тепловую карту документа: для каждого
+пункта присваиваешь tone и короткий комментарий с точки зрения юридической силы.
+
+Tones:
+- strong  — пункт сильно работает в нашу пользу
+- neutral — нейтральный/процедурный пункт без критической нагрузки
+- risk    — есть юридический риск, требует внимания
+- threat  — серьёзная угроза, нужно контраргумент или защита
+- bluff   — оппонент ссылается на нерелевантные нормы / запугивает
+
+Отвечаешь СТРОГО JSON без markdown.`;
+    const userPrompt = `${ctxLine}${perspLine}
+
+Оцени каждый пункт по тону и дай короткий комментарий (1 предложение).
+
+Формат:
+{
+  "heatmap": [
+    { "number": "1", "heading": "Предмет договора", "tone": "neutral", "comment": "Стандартная норма, рисков нет." },
+    { "number": "5.2", "heading": "Неустойка", "tone": "threat", "comment": "Размер неустойки 50% — кабальный, можно оспорить." }
+  ]
+}
+
+Пункты документа:
+${compactList}`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const parsed = safeJsonParse(raw, { heatmap: [] });
+        const arr = Array.isArray(parsed.heatmap) ? parsed.heatmap : [];
+        const VALID = ['strong','neutral','risk','threat','bluff'];
+        return arr.slice(0, 25).map(h => ({
+            number:  String(h.number || '').slice(0, 30).trim(),
+            heading: String(h.heading || 'Пункт').slice(0, 80).trim(),
+            tone:    VALID.includes(h.tone) ? h.tone : 'neutral',
+            comment: String(h.comment || '').slice(0, 240).trim()
+        })).filter(h => h.number || h.heading);
+    } catch (e) {
+        console.error('[Strategy:heatmap] failed:', e.message);
+        return [];
+    }
+}
+
+// Counterargs — для каждой угрозы 1 Pinecone + 1 LLM-выжимка нормы-перекрытия.
+// Параллельно через Promise.allSettled.
+async function strategyCounterargs(threats, perspective, docContextStr) {
+    if (!threats || threats.length === 0) return [];
+    const ctxPrefix = docContextStr ? `[Контекст: ${docContextStr.slice(0, 160)}] ` : '';
+    const perspGoal = perspective === 'opponent'
+        ? 'Найди норму КР которая ПЕРЕКРЫВАЕТ эту угрозу — поможет нашей защите.'
+        : perspective === 'ours'
+            ? 'Найди норму КР которая ПОДКРЕПЛЯЕТ наш аргумент по этому пункту или закрывает риск.'
+            : 'Найди норму КР по этому риску.';
+    const promises = threats.slice(0, 6).map(async (t, i) => {
+        const query = ctxPrefix + `Норма КР перекрывающая угрозу: ${t.heading || ''}. ${t.comment || ''}`.slice(0, 350);
+        try {
+            const vec = await getEmbedding(query);
+            const candidates = await searchPinecone(vec, 5);
+            const top = (candidates || []).filter(c => c.metadata?.full_text).slice(0, 3);
+            if (top.length === 0) return null;
+            // LLM-выжимка: какая из найденных норм лучше всего перекрывает + 1 предложение аргумента
+            const articlesText = top.map((c, k) => `[${k+1}] ${c.metadata?.npa_title || ''} — ${c.metadata?.article_title || ''}\n${(c.metadata?.full_text || '').slice(0, 800)}`).join('\n\n');
+            const sysP = `Ты — юрист-стратег КР. По угрозе и списку статей выбираешь ОДНУ норму
+которая лучше всего её перекрывает, и формулируешь короткий аргумент (1-2 предложения).
+Отвечаешь СТРОГО JSON без markdown.`;
+            const userP = `${perspGoal}
+
+Угроза/риск: «${t.comment || t.heading}»
+${t.number ? `Из пункта документа: п.${t.number}` : ''}
+
+Статьи КР (выбери одну, индекс 1-${top.length}):
+${articlesText}
+
+Формат:
+{
+  "best_index": 1,
+  "argument": "1-2 предложения юридического аргумента на основе выбранной статьи"
+}`;
+            const raw = await callOnce(getNextKey(), sysP, userP, 1);
+            const parsed = safeJsonParse(raw, {});
+            const idx = Number(parsed.best_index) - 1;
+            const pick = (Number.isInteger(idx) && top[idx]) ? top[idx] : top[0];
+            return {
+                threat:   String(t.comment || t.heading || '').slice(0, 200),
+                citation: `${pick.metadata?.npa_title || 'НПА'} — ${pick.metadata?.article_title || ''}`,
+                norm:     String(pick.metadata?.full_text || '').slice(0, 240),
+                argument: String(parsed.argument || '').slice(0, 320).trim()
+            };
+        } catch (e) {
+            console.error(`[Strategy:counterarg ${i}] failed:`, e.message);
+            return null;
+        }
+    });
+    const results = await Promise.allSettled(promises);
+    return results
+        .filter(r => r.status === 'fulfilled' && r.value)
+        .map(r => r.value);
+}
+
+// ── SENIOR PARTNER: синтез verdict + factSummary из всех выводов ─────
+const SENIOR_PARTNER_PROMPT = `Ты — **Старший партнёр** юридической фирмы КР. Опытный стратег, готовишь итоговое заключение
+для младшего юриста (пользователя) по результатам работы команды младших агентов (Аудитор, Стратег).
+
+═══ ИСТОЧНИК ИСТИНЫ ═══
+Ты НЕ ищешь нормы сам — все факты и статьи приходят от младших агентов в "ОТЧЁТЕ КОМАНДЫ".
+Если номера/нормы нет в отчёте — ты не знаешь её и не упоминаешь.
+
+═══ ПОЛЬЗОВАТЕЛЬ — ЮРИСТ ═══
+Не пиши "обратитесь к юристу" — пользователь сам юрист. Дай стратегическое заключение.
+Дисклеймер опционально, формат: "Перед использованием в производстве сверьте номера с cbd.minjust.gov.kg".
+
+═══ ФОРМАТ ОТВЕТА — СТРОГО JSON ═══
+{
+  "verdict": "markdown 3-6 предложений: общая оценка позиции, главные риски и сильные стороны",
+  "factSummary": "markdown 1-3 предложения: краткий итог фактчека статей"
+}
+
+═══ ТОН ═══
+Профессиональный, конкретный, без воды. Если perspective='opponent' — пиши с позиции защиты.
+Если 'ours' — с позиции нашего клиента. Если 'audit' — нейтрально.`;
+
+// Senior Partner НЕ получает сырой текст документа — только отчёты агентов.
+// Это сознательное архитектурное решение: исключает дублирование контекста
+// и риск того, что Senior будет искать факты в исходнике в обход worker'ов.
+async function seniorPartnerSynthesis(docContext, perspective, userQuery, auditResults, strategyResults) {
+    const blocks = [];
+    if (docContext) {
+        blocks.push(`ПАСПОРТ ДОКУМЕНТА: ${formatDocContext(docContext)}`);
+    }
+    if (auditResults) {
+        const a = [];
+        if (auditResults.factSummary) a.push(`Фактчек: ${auditResults.factSummary}`);
+        if (auditResults.redFlags?.length) {
+            a.push(`Red flags (${auditResults.redFlags.length}):\n` + auditResults.redFlags.slice(0, 6).map((rf, i) =>
+                `${i + 1}. [${rf.severity}] ${rf.title} — ${rf.suggestion || rf.quote?.slice(0, 80) || ''}`
+            ).join('\n'));
+        }
+        if (auditResults.collisions?.length) {
+            a.push(`Коллизии (${auditResults.collisions.length}):\n` + auditResults.collisions.map((c, i) =>
+                `${i + 1}. ${c.refA} ↔ ${c.refB}: ${c.description}`
+            ).join('\n'));
+        }
+        if (auditResults.procIssues?.length) {
+            a.push(`Процессуальные дефекты (${auditResults.procIssues.length}):\n` + auditResults.procIssues.map((p, i) =>
+                `${i + 1}. [${p.type}] ${p.title}${p.deadline ? ` (${p.deadline})` : ''}`
+            ).join('\n'));
+        }
+        if (a.length) blocks.push(`═══ ОТЧЁТ АУДИТОРА ═══\n${a.join('\n\n')}`);
+    }
+    if (strategyResults) {
+        const s = [];
+        if (strategyResults.heatmap?.length) {
+            const counts = strategyResults.heatmap.reduce((acc, h) => { acc[h.tone] = (acc[h.tone] || 0) + 1; return acc; }, {});
+            s.push(`Тепловая карта (${strategyResults.heatmap.length} пунктов): ` +
+                Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(' · '));
+            const threats = strategyResults.heatmap.filter(h => h.tone === 'threat' || h.tone === 'risk').slice(0, 5);
+            if (threats.length) {
+                s.push('Ключевые угрозы:\n' + threats.map((t, i) =>
+                    `${i + 1}. [п.${t.number}] ${t.heading}: ${t.comment}`
+                ).join('\n'));
+            }
+        }
+        if (strategyResults.counterArgs?.length) {
+            s.push(`Контраргументы (${strategyResults.counterArgs.length}):\n` + strategyResults.counterArgs.map((c, i) =>
+                `${i + 1}. ${c.citation} → ${c.argument}`
+            ).join('\n'));
+        }
+        if (s.length) blocks.push(`═══ ОТЧЁТ СТРАТЕГА ═══\n${s.join('\n\n')}`);
+    }
+
+    const perspLine = {
+        ours:     'Перспектива: защищаем нашего клиента.',
+        opponent: 'Перспектива: документ ПРОТИВ нашего клиента — стратегия защиты.',
+        audit:    'Перспектива: нейтральный аудит документа.'
+    }[perspective] || '';
+
+    const userPrompt = `${perspLine}
+${userQuery ? `Запрос пользователя-юриста: «${userQuery}»\n` : ''}
+${blocks.join('\n\n')}
+
+Сформируй итоговое заключение Старшего партнёра в формате JSON.`;
+    try {
+        const judgeCfg = { temperature: 0.25, topP: 0.85, maxOutputTokens: 1500 };
+        // Не стримим — нам нужен JSON целиком
+        const genAI = new GoogleGenerativeAI(getNextKey());
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-flash-latest',
+            systemInstruction: SENIOR_PARTNER_PROMPT,
+            generationConfig: judgeCfg
+        });
+        const result = await model.generateContent(userPrompt);
+        const raw = result.response.text();
+        const parsed = safeJsonParse(raw, {});
+        return {
+            verdict:     String(parsed.verdict || '').trim(),
+            factSummary: String(parsed.factSummary || '').trim()
+        };
+    } catch (e) {
+        console.error('[SeniorPartner] failed:', e.message);
+        return { verdict: '', factSummary: '' };
+    }
+}
+
+// ── ОРКЕСТРАТОР ──────────────────────────────────────────────────────
+async function runDeepAnalysis(documentText, userQuery, perspective, modules, res) {
+    const startTime = Date.now();
+    try {
+        // Этап 0: паспорт документа + сегментация (переиспользуем из обычного pipeline)
+        sendStep(res, { id: 'context', status: 'loading', text: 'Определяю тип и предметную область' });
+        sendStatus(res, '🧭 Определяю контекст документа...');
+        const docContext = await extractDocumentContext(documentText);
+        const docContextStr = formatDocContext(docContext);
+        sendStep(res, {
+            id: 'context',
+            status: docContext ? 'success' : 'warning',
+            text: docContext?.document_type || 'Контекст не определён',
+            reason: docContext?.subject_area || null
+        });
+
+        sendStep(res, { id: 'segment', status: 'loading', text: 'Разбиваю документ на пункты' });
+        const segments = await segmentDocument(documentText, docContextStr);
+        sendStep(res, {
+            id: 'segment',
+            status: segments.length ? 'success' : 'warning',
+            text: segments.length ? `Пунктов: ${segments.length}` : 'Не удалось разбить'
+        });
+
+        const runAudit    = modules.includes('audit');
+        const runStrategy = modules.includes('strategy');
+        let auditResults = null, strategyResults = null;
+
+        const tasks = [];
+
+        if (runAudit) {
+            tasks.push((async () => {
+                sendStep(res, { id: 'audit', status: 'loading', text: 'Аудитор: red flags + коллизии + проц.ошибки + фактчек' });
+                const [rfR, colR, prR, factR] = await Promise.allSettled([
+                    auditRedFlags(documentText, docContextStr, perspective),
+                    auditCollisions(segments),
+                    auditProcKiller(documentText, docContextStr, perspective),
+                    (async () => {
+                        const articles = await extractArticles(documentText);
+                        if (articles.length === 0) return { summary: '', results: [] };
+                        const results = await verifyAllArticles(articles, null);
+                        const conf = calculateConfidence(results);
+                        return {
+                            summary: `Проверено статей: **${conf.total}** · ✅ ${conf.verified} · ⚠️ ${conf.mismatched} · ❌ ${conf.notFound}.`,
+                            results: results.map(buildArticleDetail)
+                        };
+                    })()
+                ]);
+                const redFlags   = rfR.status   === 'fulfilled' ? rfR.value   : [];
+                const collisions = colR.status  === 'fulfilled' ? colR.value  : [];
+                const procIssues = prR.status   === 'fulfilled' ? prR.value   : [];
+                const factCheck  = factR.status === 'fulfilled' ? factR.value : { summary: '', results: [] };
+                auditResults = { factSummary: factCheck.summary, factResults: factCheck.results, redFlags, collisions, procIssues };
+                sendStep(res, {
+                    id: 'audit',
+                    status: 'success',
+                    text: `Аудит готов: ${redFlags.length} red-flags · ${collisions.length} коллизий · ${procIssues.length} проц.дефектов`
+                });
+            })());
+        }
+
+        if (runStrategy) {
+            tasks.push((async () => {
+                sendStep(res, { id: 'strategy', status: 'loading', text: 'Стратег: тепловая карта + контраргументы' });
+                const heatmap = await strategyHeatmap(segments, perspective, docContextStr);
+                const threats = heatmap.filter(h => h.tone === 'threat' || h.tone === 'risk').slice(0, 6);
+                const counterArgs = threats.length > 0
+                    ? await strategyCounterargs(threats, perspective, docContextStr)
+                    : [];
+                strategyResults = { heatmap, counterArgs };
+                sendStep(res, {
+                    id: 'strategy',
+                    status: 'success',
+                    text: `Стратегия готова: ${heatmap.length} пунктов · ${counterArgs.length} контраргументов`
+                });
+            })());
+        }
+
+        await Promise.allSettled(tasks);
+
+        // Senior Partner — синтез
+        sendStep(res, { id: 'senior', status: 'loading', text: 'Старший партнёр формирует стратегию' });
+        sendStatus(res, '⚖️ Старший партнёр формирует стратегию...');
+        const synthesis = await seniorPartnerSynthesis(docContext, perspective, userQuery, auditResults, strategyResults);
+        sendStep(res, { id: 'senior', status: 'success', text: 'Стратегия готова' });
+
+        const deepReport = {
+            perspective,
+            docType: docContext?.document_type || null,
+            audit: auditResults ? {
+                factSummary: synthesis.factSummary || auditResults.factSummary || null,
+                redFlags:    auditResults.redFlags,
+                collisions:  auditResults.collisions,
+                procIssues:  auditResults.procIssues
+            } : null,
+            strategy: strategyResults ? {
+                verdict:     synthesis.verdict || null,
+                heatmap:     strategyResults.heatmap,
+                counterArgs: strategyResults.counterArgs
+            } : null,
+            drafter: null,
+            mentor:  null
+        };
+        res.write(`data: ${JSON.stringify({ deepReport })}\n\n`);
+        console.log(`[DeepAnalysis] Done in ${Date.now() - startTime}ms (perspective=${perspective}, modules=${modules.join(',')})`);
+    } catch (err) {
+        console.error('[runDeepAnalysis] fatal:', err);
+        sendStep(res, { id: 'senior', status: 'error', text: 'Ошибка глубокого анализа' });
+        res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Ошибка глубокого анализа: ' + (err && err.message || 'unknown') })}\n\n`);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// POST /api/deep-analyze-document — Premium pipeline endpoint
+// ════════════════════════════════════════════════════════════════════
+app.post('/api/deep-analyze-document', async (req, res) => {
+    serverStats.totalRequests++;
+    try {
+        const {
+            documentText = '',
+            userQuery = '',
+            perspective = 'audit',
+            modules = ['audit', 'strategy']
+        } = req.body || {};
+
+        const trimmedLen = String(documentText || '').trim().length;
+        if (trimmedLen < DOC_ANALYSIS_CONFIG.minDocumentLength) {
+            return res.status(400).json({
+                error: `Документ слишком короткий (${trimmedLen}/${DOC_ANALYSIS_CONFIG.minDocumentLength} символов).`
+            });
+        }
+        const VALID_PERSP = ['ours', 'opponent', 'audit'];
+        const persp = VALID_PERSP.includes(perspective) ? perspective : 'audit';
+        const VALID_MODULES = ['audit', 'strategy', 'drafter', 'mentor'];
+        const mods = Array.isArray(modules)
+            ? modules.filter(m => VALID_MODULES.includes(m))
+            : ['audit', 'strategy'];
+        if (mods.length === 0) mods.push('audit', 'strategy');
+
+        console.log(`\n[DeepAnalysis] doc=${documentText.length}ch | persp=${persp} | modules=${mods.join(',')} | query="${(userQuery || '').slice(0, 60)}"`);
+
+        res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+        await runDeepAnalysis(documentText, userQuery, persp, mods, res);
+
+        res.write('data: [DONE]\n\n');
+        res.end();
+    } catch (error) {
+        console.error('[/api/deep-analyze-document] global error:', error.message);
+        try {
+            res.write(`data: ${JSON.stringify({ text: '\n\nСистемная ошибка глубокого анализа. Повторите запрос.' })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            res.end();
+        } catch {}
+    }
+});
+
 // ============================================================
 // ГЛАВНЫЙ МАРШРУТ
 // ============================================================
@@ -2470,12 +3223,19 @@ app.post('/api/chat', async (req, res) => {
                 console.log(`Режим: ${skipRetrieval ? 'skipRetrieval' : 'приветствие'} — Pinecone пропущен (Thinking)`);
                 await handleFast(message, history, { core: [], context: [], all: [] }, res);
             } else {
-                // НОВОЕ: 5-этапная цепочка с многослойным retrieval (special →
-                // general → process → bylaws → synthesize). Делает несколько
-                // целевых поисков вместо одного, даёт юристу полную картину:
-                // что нарушено + фундамент Кодекса + сроки/госпошлина/подсудность
-                // + подзаконные правила. SSE-шаги ThinkingBox автоматически.
-                await handleDeepThinking(message, history, res, userQuery);
+                // SMART ROUTER: классификатор определяет глубину поиска.
+                // • simple  → handleSimpleConsultation (1 retrieval, ~3-5с)
+                // • complex → handleDeepThinking (5 слоёв, ~6-9с)
+                // Юристу не нужно выбирать режим вручную — система сама понимает.
+                sendStep(res, { id: 'classify', status: 'loading', text: 'Определяю тип запроса' });
+                const queryForClassify = (userQuery && userQuery.trim()) || message;
+                const queryType = await classifyQuery(queryForClassify);
+                if (queryType === 'simple') {
+                    await handleSimpleConsultation(message, history, res, userQuery);
+                } else {
+                    sendStep(res, { id: 'classify', status: 'success', text: 'Сложный запрос — запускаю глубокий анализ' });
+                    await handleDeepThinking(message, history, res, userQuery);
+                }
             }
         }
 
