@@ -1220,21 +1220,33 @@ async function handleFast(message, history, retrievalResult, res, retryCount = 0
 // ============================================================
 async function handleAgent(message, history, res, retryCount = 0, userQuery = null) {
     // ─────────────────────────────────────────────────────────────
-    // РОУТЕР: если запрос юриста без документа (нет editor-маркеров
-    // в message и сам message короткий) — переадресуем в 5-этапную
-    // deep-thinking цепочку. Agent-режим (JSON для редактирования) не
-    // подходит для обычной консультации.
+    // РОУТЕР: если запрос юриста БЕЗ реального документа — переадресуем
+    // в 5-этапную deep-thinking цепочку. Agent-режим (JSON для редактирования)
+    // не подходит для обычной консультации.
+    //
+    // ВАЖНО: фронт IDE всегда подмешивает в message системный промпт со
+    // словом "ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА:" и JSON-полем "insertion_text" —
+    // даже когда документа нет. Поэтому ищем ТЕЛО блока между """...""",
+    // а не сам маркер.
     // ─────────────────────────────────────────────────────────────
     if (retryCount === 0) {
-        const hasDocMarker = /(ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА|═══ ДОКУМЕНТ|EDITOR_HTML|insertion_text)/i.test(message);
-        const looksLikeDocument = message.length > 1500;
-        const hasUserQuery = userQuery && userQuery.trim().length > 0;
-        const isDocumentRequest = hasDocMarker || (looksLikeDocument && hasUserQuery);
+        // 1) Тянем содержимое блока  ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА: """...""""
+        const docBlockMatch = message.match(/ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА[^"]*"""([\s\S]*?)"""/i);
+        const docBody = docBlockMatch ? docBlockMatch[1].trim() : '';
+        const hasRealDoc = docBody.length >= 100;
+
+        // 2) Fallback: явный analyze-document блок (когда вызывается из
+        //    analyzeDocumentSmart как fallback с собранным промптом)
+        const hasFallbackDoc = /═══ ДОКУМЕНТ ПОЛЬЗОВАТЕЛЯ ═══|═══ ДОКУМЕНТ:\n"""/i.test(message);
+
+        const isDocumentRequest = hasRealDoc || hasFallbackDoc;
         if (!isDocumentRequest) {
+            const hasUserQuery = userQuery && userQuery.trim().length > 0;
             const consultQuery = hasUserQuery ? userQuery : message;
-            console.log(`[ROUTER] handleAgent → handleDeepThinking (no document context, query: "${consultQuery.slice(0, 60)}")`);
+            console.log(`[ROUTER] handleAgent → handleDeepThinking (docBody=${docBody.length}ch, query: "${consultQuery.slice(0, 60)}")`);
             return handleDeepThinking(message, history, res, consultQuery);
         }
+        console.log(`[ROUTER] handleAgent stays (docBody=${docBody.length}ch, fallback=${hasFallbackDoc})`);
     }
 
     const cleanHistory = sanitizeHistory(history);
