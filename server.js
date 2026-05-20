@@ -1103,7 +1103,9 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 //   • Если просто retry без jitter — синхронная вторая волна.
 //   • 503 в gemini-flash-latest решается фолбэком на конкретную версию.
 const PRIMARY_MODEL = 'gemini-flash-latest';
-const FALLBACK_MODEL = 'gemini-2.5-flash';
+// Фолбэк на preview-версию: gemini-flash-latest сейчас = gemini-3.5-flash,
+// у которой большие лимиты после релиза. Preview-эндпоинт менее загружен.
+const FALLBACK_MODEL = 'gemini-3-flash-preview';
 
 function classifyError(err) {
     const msg = String(err?.message || err || '');
