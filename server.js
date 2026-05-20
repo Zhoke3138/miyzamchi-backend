@@ -1088,23 +1088,77 @@ const JUDGE_SYSTEM_PROMPT = `
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function callOnce(apiKey, systemPrompt, userPrompt, retryCount = 0) {
-    try {
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({
-            model: "gemini-flash-latest",
-            systemInstruction: systemPrompt
-        });
-        const result = await model.generateContent(userPrompt);
-        return result.response.text();
-    } catch (error) {
-        if (retryCount < 2) {
-            console.warn(`[callOnce] Ошибка. Ждем 2с и повторяем...`);
-            await delay(2000);
-            return callOnce(getNextKey(), systemPrompt, userPrompt, retryCount + 1);
+// ── РЕЗИЛЬЕНТНАЯ ГЕНЕРАЦИЯ ─────────────────────────────────────────
+// Универсальный helper с обработкой 503 (перегрузка модели на стороне Google),
+// 429 (исчерпан ключ), и общего сетевого 5xx. Делает до 4 попыток с
+// экспоненциальным backoff + jitter, ротирует ключи, и при последней попытке
+// переключается на стабильную модель-фолбэк (gemini-2.5-flash или
+// gemini-flash-latest как умолчание).
+//
+// Использовать вместо прямого genAI.getGenerativeModel().generateContent.
+//
+// Почему 3 retry+fallback мало для 503-шторма Gemini:
+//   • Все агенты Deep Analysis (Auditor+Strategist+Drafter+Mentor+Senior =
+//     ~10 параллельных запросов) бьют синхронно в одну модель.
+//   • Если просто retry без jitter — синхронная вторая волна.
+//   • 503 в gemini-flash-latest решается фолбэком на конкретную версию.
+const PRIMARY_MODEL = 'gemini-flash-latest';
+const FALLBACK_MODEL = 'gemini-2.5-flash';
+
+function classifyError(err) {
+    const msg = String(err?.message || err || '');
+    const lower = msg.toLowerCase();
+    if (msg.includes('503') || lower.includes('high demand') || lower.includes('overload') || lower.includes('unavailable')) return '503';
+    if (msg.includes('429') || lower.includes('rate limit') || lower.includes('quota') || lower.includes('exceeded')) return '429';
+    if (msg.includes('500') || msg.includes('502') || msg.includes('504')) return '5xx';
+    return 'other';
+}
+
+async function generateContentResilient({ systemInstruction, userPrompt, generationConfig = null, maxRetries = 3 }) {
+    let lastErr;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const apiKey = getNextKey();
+        // Последняя попытка — переключаемся на стабильную модель-фолбэк,
+        // т.к. *-latest alias чаще получает 503 на пиках.
+        const useModel = (attempt === maxRetries) ? FALLBACK_MODEL : PRIMARY_MODEL;
+        try {
+            const genAI = new GoogleGenerativeAI(apiKey);
+            const modelOpts = { model: useModel, systemInstruction };
+            if (generationConfig) modelOpts.generationConfig = generationConfig;
+            const model = genAI.getGenerativeModel(modelOpts);
+            const result = await model.generateContent(userPrompt);
+            if (attempt > 0) console.log(`[resilient] recovered on attempt ${attempt + 1} (model=${useModel})`);
+            return result.response.text();
+        } catch (err) {
+            lastErr = err;
+            const kind = classifyError(err);
+            // 429 — ключ исчерпан, блокируем его на короткое окно
+            // 503 / 5xx — Google-side issue, ключ не виноват — НЕ блокируем
+            if (kind === '429') blockKey(apiKey);
+            serverStats.apiErrors++;
+            if (attempt < maxRetries) {
+                // Exponential backoff: 800ms, 1.6s, 3.2s + jitter 0-800ms
+                // Разные jitter'ы у параллельных вызовов разводят синхронную волну.
+                const base = 800 * Math.pow(2, attempt);
+                const jitter = Math.floor(Math.random() * 800);
+                const wait = Math.min(8000, base) + jitter;
+                console.warn(`[resilient] attempt ${attempt + 1}/${maxRetries + 1} → ${kind} | wait ${wait}ms | next model=${attempt + 1 === maxRetries ? FALLBACK_MODEL : PRIMARY_MODEL}`);
+                await delay(wait);
+            }
         }
-        throw error;
     }
+    throw lastErr;
+}
+
+// Совместимость: callOnce — теперь просто обёртка над resilient-хелпером.
+// Старая сигнатура `(apiKey, systemPrompt, userPrompt, retryCount)` сохранена,
+// но apiKey/retryCount игнорируются — helper сам ротирует ключи.
+async function callOnce(_apiKey, systemPrompt, userPrompt, _retryCount = 0) {
+    return generateContentResilient({
+        systemInstruction: systemPrompt,
+        userPrompt,
+        maxRetries: 3
+    });
 }
 
 async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, res, generationConfig = null) {
@@ -3031,14 +3085,12 @@ ${inputBlocks.join('\n\n')}
 
 Сформируй документ.`;
     try {
-        const genAI = new GoogleGenerativeAI(getNextKey());
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-flash-latest',
+        const raw = await generateContentResilient({
             systemInstruction: systemPrompt,
-            generationConfig: { temperature: 0.35, topP: 0.9, maxOutputTokens: 3500 }
+            userPrompt,
+            generationConfig: { temperature: 0.35, topP: 0.9, maxOutputTokens: 3500 },
+            maxRetries: 3
         });
-        const result = await model.generateContent(userPrompt);
-        const raw = result.response.text();
         const parsed = safeJsonParse(raw, {});
         const notes = Array.isArray(parsed.notes) ? parsed.notes.slice(0, 5).map(n => String(n).slice(0, 240).trim()).filter(Boolean) : [];
         return {
@@ -3249,16 +3301,12 @@ ${blocks.join('\n\n')}
 
 Сформируй итоговое заключение Старшего партнёра в формате JSON.`;
     try {
-        const judgeCfg = { temperature: 0.25, topP: 0.85, maxOutputTokens: 1500 };
-        // Не стримим — нам нужен JSON целиком
-        const genAI = new GoogleGenerativeAI(getNextKey());
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-flash-latest',
+        const raw = await generateContentResilient({
             systemInstruction: SENIOR_PARTNER_PROMPT,
-            generationConfig: judgeCfg
+            userPrompt,
+            generationConfig: { temperature: 0.25, topP: 0.85, maxOutputTokens: 1500 },
+            maxRetries: 3
         });
-        const result = await model.generateContent(userPrompt);
-        const raw = result.response.text();
         const parsed = safeJsonParse(raw, {});
         return {
             verdict:     String(parsed.verdict || '').trim(),
