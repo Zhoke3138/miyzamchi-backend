@@ -2893,6 +2893,233 @@ ${articlesText}
         .map(r => r.value);
 }
 
+// ── БЛОК В: ДРАФТЕР ─────────────────────────────────────────────────
+
+// Генерирует процессуальный документ-ответ на основе всех выводов Аудитора и Стратега.
+// В зависимости от perspective:
+//   opponent → отзыв на иск / возражение / контр-претензия
+//   ours     → шаблон позиции в защиту нашего документа
+//   audit    → краткое заключение-меморандум
+// Возвращает { docType, title, body (markdown), notes[] }
+async function drafterGenerate(docContext, userQuery, perspective, auditResults, strategyResults) {
+    const targetDoc = perspective === 'opponent'
+        ? 'Отзыв/возражение на этот документ (если иск — отзыв; если претензия — контр-претензия; если требование — мотивированный отказ)'
+        : perspective === 'ours'
+            ? 'Меморандум-позиция в защиту нашего документа (как отбиваться, если контрагент атакует пункты)'
+            : 'Юридический меморандум для внутреннего использования с выводами и рекомендациями';
+
+    const inputBlocks = [];
+    if (docContext) {
+        inputBlocks.push(`ПАСПОРТ ИСХОДНОГО ДОКУМЕНТА: ${formatDocContext(docContext)}`);
+    }
+    if (userQuery) {
+        inputBlocks.push(`ЗАПРОС ЮРИСТА: «${userQuery}»`);
+    }
+    if (auditResults) {
+        const a = [];
+        if (auditResults.redFlags?.length) {
+            a.push('Red flags (для атаки):\n' + auditResults.redFlags.slice(0, 6).map((rf, i) =>
+                `${i + 1}. [${rf.severity}] ${rf.title} — ${rf.suggestion || ''} (цитата: «${(rf.quote || '').slice(0, 120)}»)`
+            ).join('\n'));
+        }
+        if (auditResults.collisions?.length) {
+            a.push('Внутренние коллизии:\n' + auditResults.collisions.map((c, i) =>
+                `${i + 1}. ${c.refA} ↔ ${c.refB}: ${c.description}`
+            ).join('\n'));
+        }
+        if (auditResults.procIssues?.length) {
+            a.push('Процессуальные дефекты:\n' + auditResults.procIssues.map((p, i) =>
+                `${i + 1}. [${p.type}] ${p.title}${p.deadline ? ` (${p.deadline})` : ''} — ${p.description || ''}`
+            ).join('\n'));
+        }
+        if (auditResults.factResults?.length) {
+            const verifiable = auditResults.factResults.filter(f => f.status === 'verified').slice(0, 6);
+            if (verifiable.length) {
+                a.push('Подтверждённые статьи (можно цитировать):\n' + verifiable.map((f, i) =>
+                    `${i + 1}. ${f.npa || ''} ст. ${f.number || ''} — ${(f.title || '').slice(0, 80)}`
+                ).join('\n'));
+            }
+        }
+        if (a.length) inputBlocks.push(`═══ ВЫВОДЫ АУДИТОРА ═══\n${a.join('\n\n')}`);
+    }
+    if (strategyResults) {
+        const s = [];
+        if (strategyResults.counterArgs?.length) {
+            s.push('Контраргументы со статьями:\n' + strategyResults.counterArgs.map((c, i) =>
+                `${i + 1}. Угроза: «${c.threat}»\n   Норма: ${c.citation}\n   Аргумент: ${c.argument}`
+            ).join('\n\n'));
+        }
+        if (strategyResults.heatmap?.length) {
+            const threats = strategyResults.heatmap.filter(h => h.tone === 'threat').slice(0, 4);
+            if (threats.length) {
+                s.push('Главные угрозы (нужно опровергнуть):\n' + threats.map((t, i) =>
+                    `${i + 1}. п.${t.number} ${t.heading}: ${t.comment}`
+                ).join('\n'));
+            }
+        }
+        if (s.length) inputBlocks.push(`═══ ВЫВОДЫ СТРАТЕГА ═══\n${s.join('\n\n')}`);
+    }
+
+    const systemPrompt = `Ты — практикующий судебный юрист КР, готовишь процессуальные документы.
+Пишешь готовый к использованию документ на основе выводов команды (Аудитор+Стратег).
+
+═══ ПРАВИЛА ═══
+- Цитируешь ТОЛЬКО те статьи, что указаны во "ВЫВОДАХ" — не выдумываешь нормы.
+- Структурируй документ профессионально: преамбула → фактические обстоятельства →
+  правовое обоснование (со ссылками на нормы) → требования/просьба.
+- Используешь markdown для структуры (## заголовки, **жирный**, нумерованные списки).
+- Пишешь на русском, языком процессуальных документов КР.
+- Если данных мало — честно отмечаешь "[требует уточнения от юриста]".
+
+═══ ФОРМАТ ОТВЕТА — СТРОГО JSON ═══
+{
+  "title": "Название документа (1 строка, например: «Отзыв на исковое заявление о взыскании задолженности»)",
+  "body":  "Полный текст документа в markdown (15-50 строк, можно длиннее если задача требует)",
+  "notes": ["1-3 коротких заметки для юриста: что подставить, что уточнить, на что обратить внимание"]
+}`;
+
+    const userPrompt = `Перспектива: ${perspective}.
+Целевой документ: ${targetDoc}.
+
+${inputBlocks.join('\n\n')}
+
+Сформируй документ.`;
+    try {
+        const genAI = new GoogleGenerativeAI(getNextKey());
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-flash-latest',
+            systemInstruction: systemPrompt,
+            generationConfig: { temperature: 0.35, topP: 0.9, maxOutputTokens: 3500 }
+        });
+        const result = await model.generateContent(userPrompt);
+        const raw = result.response.text();
+        const parsed = safeJsonParse(raw, {});
+        const notes = Array.isArray(parsed.notes) ? parsed.notes.slice(0, 5).map(n => String(n).slice(0, 240).trim()).filter(Boolean) : [];
+        return {
+            docType: perspective === 'opponent' ? 'response' : perspective === 'ours' ? 'memo' : 'memorandum',
+            title:   String(parsed.title || 'Документ').slice(0, 200).trim(),
+            body:    String(parsed.body  || '').trim(),
+            notes
+        };
+    } catch (e) {
+        console.error('[Drafter] failed:', e.message);
+        return null;
+    }
+}
+
+// ── БЛОК Г: МЕНТОР ──────────────────────────────────────────────────
+
+// Симулирует атаки оппонента — какие аргументы он выдвинет против нас.
+// Возвращает [{ attack, weakSpot, ourResponse }]
+async function mentorOpponentSim(documentText, docContextStr, perspective, strategyResults) {
+    const ctxLine = docContextStr ? `Контекст документа: ${docContextStr}\n` : '';
+    const perspLine = perspective === 'opponent'
+        ? 'Документ ПРОТИВ нашего клиента. Симулируй как ИСТЕЦ будет атаковать нашу будущую защиту.'
+        : perspective === 'ours'
+            ? 'Документ НАШЕГО клиента. Симулируй как ОППОНЕНТ будет атаковать наш документ в суде.'
+            : 'Симулируй стандартные атаки оппонента на этот документ в спорной ситуации.';
+
+    const ourStrengths = strategyResults?.counterArgs?.length
+        ? `\nНаши контраргументы (на них оппонент будет давить):\n` + strategyResults.counterArgs.slice(0, 4).map((c, i) =>
+            `${i + 1}. ${c.citation}: ${c.argument}`
+        ).join('\n')
+        : '';
+
+    const systemPrompt = `Ты — опытный судебный юрист, играешь роль «адвоката дьявола».
+Твоя задача — встать на сторону оппонента и придумать самые острые атаки на нашу позицию.
+Это спарринг-сессия: чем жёстче атаки, тем лучше юрист подготовится.
+
+Отвечаешь СТРОГО JSON без markdown.`;
+
+    const userPrompt = `${ctxLine}${perspLine}
+
+Сгенерируй 3-5 атак оппонента. Для каждой:
+- attack       — конкретный аргумент оппонента (1-2 предложения, цитируй нормы если уместно)
+- weakSpot     — какое наше слабое место он эксплуатирует (1 предложение)
+- ourResponse  — как мы должны отвечать на эту атаку (1-2 предложения)
+
+Формат:
+{
+  "attacks": [
+    { "attack": "...", "weakSpot": "...", "ourResponse": "..." }
+  ]
+}
+${ourStrengths}
+
+Документ:
+"""
+${(documentText || '').slice(0, 10000)}
+"""`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const parsed = safeJsonParse(raw, { attacks: [] });
+        const arr = Array.isArray(parsed.attacks) ? parsed.attacks : [];
+        return arr.slice(0, 5).map(a => ({
+            attack:      String(a.attack || '').slice(0, 400).trim(),
+            weakSpot:    String(a.weakSpot || '').slice(0, 240).trim(),
+            ourResponse: String(a.ourResponse || '').slice(0, 400).trim()
+        })).filter(a => a.attack);
+    } catch (e) {
+        console.error('[Mentor:opponentSim] failed:', e.message);
+        return [];
+    }
+}
+
+// Симулирует вопросы судьи — что суд может спросить на заседании.
+// Возвращает [{ question, whyAsked, suggestedAnswer }]
+async function mentorJudgeSim(documentText, docContextStr, perspective, auditResults) {
+    const ctxLine = docContextStr ? `Контекст документа: ${docContextStr}\n` : '';
+
+    const weakPoints = [];
+    if (auditResults?.redFlags?.length) {
+        auditResults.redFlags.slice(0, 3).forEach(rf => weakPoints.push(`Red flag: ${rf.title}`));
+    }
+    if (auditResults?.procIssues?.length) {
+        auditResults.procIssues.slice(0, 2).forEach(p => weakPoints.push(`Проц.дефект: ${p.title}`));
+    }
+    const weakBlock = weakPoints.length
+        ? `\nИзвестные слабые места (вокруг них суд будет копать):\n- ${weakPoints.join('\n- ')}`
+        : '';
+
+    const systemPrompt = `Ты — опытный судья КР. По документу формулируешь вопросы которые задал бы
+сторонам на заседании. Вопросы должны быть конкретными, по существу, отражать слабые места.
+Отвечаешь СТРОГО JSON без markdown.`;
+
+    const userPrompt = `${ctxLine}
+Перспектива стороны: ${perspective === 'ours' ? 'наш клиент' : perspective === 'opponent' ? 'противная сторона' : 'нейтральная оценка'}
+
+Сгенерируй 3-5 вопросов суда. Для каждого:
+- question         — вопрос судьи (1-2 предложения)
+- whyAsked         — почему суд именно это спросит (1 предложение)
+- suggestedAnswer  — рекомендуемый ответ нашей стороны (1-2 предложения)
+
+Формат:
+{
+  "questions": [
+    { "question": "...", "whyAsked": "...", "suggestedAnswer": "..." }
+  ]
+}
+${weakBlock}
+
+Документ:
+"""
+${(documentText || '').slice(0, 10000)}
+"""`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const parsed = safeJsonParse(raw, { questions: [] });
+        const arr = Array.isArray(parsed.questions) ? parsed.questions : [];
+        return arr.slice(0, 5).map(q => ({
+            question:        String(q.question || '').slice(0, 320).trim(),
+            whyAsked:        String(q.whyAsked || '').slice(0, 240).trim(),
+            suggestedAnswer: String(q.suggestedAnswer || '').slice(0, 400).trim()
+        })).filter(q => q.question);
+    } catch (e) {
+        console.error('[Mentor:judgeSim] failed:', e.message);
+        return [];
+    }
+}
+
 // ── SENIOR PARTNER: синтез verdict + factSummary из всех выводов ─────
 const SENIOR_PARTNER_PROMPT = `Ты — **Старший партнёр** юридической фирмы КР. Опытный стратег, готовишь итоговое заключение
 для младшего юриста (пользователя) по результатам работы команды младших агентов (Аудитор, Стратег).
@@ -3023,7 +3250,10 @@ async function runDeepAnalysis(documentText, userQuery, perspective, modules, re
 
         const runAudit    = modules.includes('audit');
         const runStrategy = modules.includes('strategy');
+        const runDrafter  = modules.includes('drafter');
+        const runMentor   = modules.includes('mentor');
         let auditResults = null, strategyResults = null;
+        let drafterResult = null, mentorResult = null;
 
         const tasks = [];
 
@@ -3075,7 +3305,43 @@ async function runDeepAnalysis(documentText, userQuery, perspective, modules, re
             })());
         }
 
+        // Этап 1: Аудитор + Стратег запускаются параллельно (Аудитор+Стратег независимы)
         await Promise.allSettled(tasks);
+
+        // Этап 2: Драфтер и Ментор зависят от Аудитора/Стратега, но между собой параллельны
+        const dependentTasks = [];
+
+        if (runDrafter) {
+            dependentTasks.push((async () => {
+                sendStep(res, { id: 'drafter', status: 'loading', text: 'Драфтер: готовит документ-ответ' });
+                drafterResult = await drafterGenerate(docContext, userQuery, perspective, auditResults, strategyResults);
+                sendStep(res, {
+                    id: 'drafter',
+                    status: drafterResult ? 'success' : 'warning',
+                    text: drafterResult ? `Документ готов: «${drafterResult.title.slice(0, 80)}»` : 'Документ не сформирован'
+                });
+            })());
+        }
+
+        if (runMentor) {
+            dependentTasks.push((async () => {
+                sendStep(res, { id: 'mentor', status: 'loading', text: 'Ментор: симуляция оппонента и судьи' });
+                const [opR, jR] = await Promise.allSettled([
+                    mentorOpponentSim(documentText, docContextStr, perspective, strategyResults),
+                    mentorJudgeSim(documentText, docContextStr, perspective, auditResults)
+                ]);
+                const attacks  = opR.status === 'fulfilled' ? opR.value : [];
+                const judgeQs  = jR.status === 'fulfilled' ? jR.value : [];
+                mentorResult = { attacks, judgeQuestions: judgeQs };
+                sendStep(res, {
+                    id: 'mentor',
+                    status: 'success',
+                    text: `Спарринг готов: ${attacks.length} атак · ${judgeQs.length} вопросов суда`
+                });
+            })());
+        }
+
+        if (dependentTasks.length) await Promise.allSettled(dependentTasks);
 
         // Senior Partner — синтез
         sendStep(res, { id: 'senior', status: 'loading', text: 'Старший партнёр формирует стратегию' });
@@ -3097,8 +3363,8 @@ async function runDeepAnalysis(documentText, userQuery, perspective, modules, re
                 heatmap:     strategyResults.heatmap,
                 counterArgs: strategyResults.counterArgs
             } : null,
-            drafter: null,
-            mentor:  null
+            drafter: drafterResult,
+            mentor:  mentorResult
         };
         res.write(`data: ${JSON.stringify({ deepReport })}\n\n`);
         console.log(`[DeepAnalysis] Done in ${Date.now() - startTime}ms (perspective=${perspective}, modules=${modules.join(',')})`);
