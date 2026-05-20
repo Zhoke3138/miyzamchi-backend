@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { AsyncLocalStorage } = require('async_hooks');
 const path = require('path');
 const bot = require('./telegram/bot');
 
@@ -1111,6 +1112,55 @@ const PRIMARY_MODEL = 'gemini-2.5-flash';
 // (другой серверный пул). Раньше отношение было обратное.
 const FALLBACK_MODEL = 'gemini-flash-latest';
 
+// ── TOKEN TELEMETRY ─────────────────────────────────────────────────
+// Прайс-лист за 1 миллион токенов (Input/Output, USD).
+// Источники: prompt+input cache → input; candidates (output) → output.
+// gemini-embedding-001 — отдельно, у Google прайс ~$0.0001/M на эмбеддинги.
+const MODEL_PRICING = {
+    // Наши боевые модели (Gemini Flash tier)
+    'gemini-2.5-flash':       { input: 0.075, output: 0.30 },
+    'gemini-flash-latest':    { input: 0.075, output: 0.30 },
+    // Из плана пользователя (на случай если переключим модель)
+    'gemini-3.1-flash-lite':  { input: 0.25,  output: 1.50 },
+    'gemini-3.5-flash':       { input: 1.50,  output: 9.00 },
+    'gemini-3-flash-preview': { input: 0.25,  output: 1.50 },
+    'deepseek-reasoner':      { input: 0.55,  output: 2.19 },
+    // Эмбеддинги
+    'gemini-embedding-001':   { input: 0.0001, output: 0 }
+};
+
+function calculateCost(modelName, inputTokens = 0, outputTokens = 0) {
+    const key = String(modelName || '').replace(/^models\//, '');
+    const rates = MODEL_PRICING[key];
+    if (!rates) return 0;
+    const inCost  = (inputTokens  / 1_000_000) * rates.input;
+    const outCost = (outputTokens / 1_000_000) * rates.output;
+    return Number((inCost + outCost).toFixed(6));
+}
+
+// Per-request телеметрия через AsyncLocalStorage. Каждый route-handler
+// оборачивает свою работу в requestTelemetry.run({ res, label }, ...), и
+// дальше любой helper (generateContentResilient / streamGeminiResponse)
+// может прочитать текущий res и эмитнуть SSE-чанк без явного проброса
+// через все слои промежуточных функций.
+const requestTelemetry = new AsyncLocalStorage();
+
+function sendTelemetry(payload) {
+    const ctx = requestTelemetry.getStore();
+    const res = ctx && ctx.res;
+    if (!res || res.writableEnded) return;
+    try {
+        res.write(`data: ${JSON.stringify({ telemetry: payload })}\n\n`);
+    } catch (e) {}
+}
+
+// Удобный wrapper для тегирования телеметрии конкретным шагом ("audit:redFlags").
+// Если контекст уже есть — оборачиваем заново только label, res остаётся.
+function withTelemetryLabel(label, fn) {
+    const ctx = requestTelemetry.getStore() || {};
+    return requestTelemetry.run({ ...ctx, label }, fn);
+}
+
 function classifyError(err) {
     const msg = String(err?.message || err || '');
     const lower = msg.toLowerCase();
@@ -1134,6 +1184,26 @@ async function generateContentResilient({ systemInstruction, userPrompt, generat
             const model = genAI.getGenerativeModel(modelOpts);
             const result = await model.generateContent(userPrompt);
             if (attempt > 0) console.log(`[resilient] recovered on attempt ${attempt + 1} (model=${useModel})`);
+
+            // Token-telemetry: тянем usageMetadata и эмитим SSE-чанк
+            // (только если route-handler обернул запрос в requestTelemetry.run).
+            try {
+                const usage = result.response?.usageMetadata || {};
+                const inputTokens  = usage.promptTokenCount     || 0;
+                const outputTokens = usage.candidatesTokenCount || 0;
+                if (inputTokens || outputTokens) {
+                    const ctx = requestTelemetry.getStore();
+                    sendTelemetry({
+                        label: (ctx && ctx.label) || 'llm-call',
+                        model: useModel,
+                        inputTokens,
+                        outputTokens,
+                        totalTokens: usage.totalTokenCount || (inputTokens + outputTokens),
+                        cost: calculateCost(useModel, inputTokens, outputTokens)
+                    });
+                }
+            } catch (e) {}
+
             return result.response.text();
         } catch (err) {
             lastErr = err;
@@ -1168,9 +1238,10 @@ async function callOnce(_apiKey, systemPrompt, userPrompt, _retryCount = 0) {
 }
 
 async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, res, generationConfig = null) {
+    const useModel = "gemini-flash-latest";
     const genAI = new GoogleGenerativeAI(apiKey);
     const modelOpts = {
-        model: "gemini-flash-latest",
+        model: useModel,
         systemInstruction: systemPrompt
     };
     if (generationConfig) modelOpts.generationConfig = generationConfig;
@@ -1183,6 +1254,24 @@ async function streamGeminiResponse(apiKey, systemPrompt, userPrompt, history, r
             res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
         }
     }
+    // После завершения стрима в result.response доступен агрегированный usageMetadata.
+    try {
+        const finalResponse = await result.response;
+        const usage = finalResponse?.usageMetadata || {};
+        const inputTokens  = usage.promptTokenCount     || 0;
+        const outputTokens = usage.candidatesTokenCount || 0;
+        if (inputTokens || outputTokens) {
+            const ctx = requestTelemetry.getStore();
+            sendTelemetry({
+                label: (ctx && ctx.label) || 'stream-call',
+                model: useModel,
+                inputTokens,
+                outputTokens,
+                totalTokens: usage.totalTokenCount || (inputTokens + outputTokens),
+                cost: calculateCost(useModel, inputTokens, outputTokens)
+            });
+        }
+    } catch (e) {}
 }
 
 function sanitizeHistory(history) {
@@ -3479,6 +3568,9 @@ async function runDeepAnalysis(documentText, userQuery, perspective, modules, re
 // POST /api/deep-analyze-document — Premium pipeline endpoint
 // ════════════════════════════════════════════════════════════════════
 app.post('/api/deep-analyze-document', async (req, res) => {
+    // requestTelemetry.run пробрасывает res по AsyncLocalStorage во все
+    // вложенные LLM-вызовы — каждый эмитит свою token-телеметрию автоматически.
+    return requestTelemetry.run({ res, label: 'deep-analyze' }, async () => {
     serverStats.totalRequests++;
     try {
         const {
@@ -3522,12 +3614,14 @@ app.post('/api/deep-analyze-document', async (req, res) => {
             res.end();
         } catch {}
     }
+    });
 });
 
 // ============================================================
 // ГЛАВНЫЙ МАРШРУТ
 // ============================================================
 app.post('/api/chat', async (req, res) => {
+    return requestTelemetry.run({ res, label: 'chat' }, async () => {
     serverStats.totalRequests++;
     try {
         const { message, history, mode = 'fast', agentMode = false, userQuery = null, skipRetrieval = false } = req.body;
@@ -3618,6 +3712,7 @@ app.post('/api/chat', async (req, res) => {
             console.error("Не удалось записать ошибку в поток:", writeErr.message);
         }
     }
+    });
 });
 
 // ════════════════════════════════════════════════════════════════════
@@ -3632,6 +3727,7 @@ app.post('/api/chat', async (req, res) => {
 //   [DONE]                          — конец
 // ════════════════════════════════════════════════════════════════════
 app.post('/api/analyze-document', async (req, res) => {
+    return requestTelemetry.run({ res, label: 'analyze-document' }, async () => {
     serverStats.totalRequests++;
     try {
         const { documentText = '', userQuery = '' } = req.body || {};
@@ -3665,6 +3761,7 @@ app.post('/api/analyze-document', async (req, res) => {
             console.error('Не удалось записать ошибку в поток:', writeErr.message);
         }
     }
+    });
 });
 
 // ============================================================
