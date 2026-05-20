@@ -1102,10 +1102,14 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 //     ~10 параллельных запросов) бьют синхронно в одну модель.
 //   • Если просто retry без jitter — синхронная вторая волна.
 //   • 503 в gemini-flash-latest решается фолбэком на конкретную версию.
-const PRIMARY_MODEL = 'gemini-flash-latest';
-// Фолбэк на preview-версию: gemini-flash-latest сейчас = gemini-3.5-flash,
-// у которой большие лимиты после релиза. Preview-эндпоинт менее загружен.
-const FALLBACK_MODEL = 'gemini-3-flash-preview';
+// Primary — стабильная production-версия с устоявшимся серверным пулом.
+// Раньше был gemini-flash-latest, но *-latest alias регулярно ловит 503-волны
+// при релизах новых моделей (например, gemini-3.5-flash) и тратит секунды
+// на ретраи и фолбэк. gemini-2.5-flash — быстрый и предсказуемый.
+const PRIMARY_MODEL = 'gemini-2.5-flash';
+// Фолбэк на *-latest — если 2.5-flash вдруг ляжет, latest скорее всего жив
+// (другой серверный пул). Раньше отношение было обратное.
+const FALLBACK_MODEL = 'gemini-flash-latest';
 
 function classifyError(err) {
     const msg = String(err?.message || err || '');
