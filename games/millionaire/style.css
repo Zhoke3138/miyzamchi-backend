@@ -1,0 +1,370 @@
+body {
+    margin: 0;
+    padding: 0;
+    /* Тот самый градиентный фон телевизионной студии */
+    background: radial-gradient(circle, #001f3f, #000000); 
+    color: white;
+    font-family: 'Arial', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+.login-container {
+    background: rgba(0, 0, 0, 0.7);
+    padding: 40px;
+    border-radius: 15px;
+    border: 2px solid #ffd700; /* Золотая рамка */
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+    text-align: center;
+    width: 90%;
+    max-width: 400px;
+}
+
+.logo h1 {
+    margin: 0 0 30px 0;
+    font-size: 24px;
+    font-weight: normal;
+}
+
+.logo span {
+    font-size: 36px;
+    font-weight: bold;
+    color: #ffd700;
+    text-shadow: 0 0 15px #ffd700; /* Золотое свечение текста */
+    display: block;
+    margin-top: 10px;
+}
+
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+input {
+    padding: 12px;
+    border-radius: 25px;
+    border: 1px solid #ffd700;
+    background: #001a33;
+    color: white;
+    font-size: 16px;
+    outline: none;
+    text-align: center;
+}
+
+input::placeholder {
+    color: #888;
+}
+
+input:focus {
+    box-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+}
+
+.btn-start {
+    padding: 15px;
+    border-radius: 25px;
+    border: none;
+    background: linear-gradient(90deg, #ffd700, #ffaa00);
+    color: #000;
+    font-size: 18px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.3s;
+    margin-top: 10px;
+}
+
+.btn-start:hover {
+    box-shadow: 0 0 20px #ffd700;
+    transform: scale(1.05); /* Легкое увеличение кнопки при наведении */
+}
+/* --- СТИЛИ ДЛЯ ГЛАВНОГО МЕНЮ --- */
+.menu-container {
+    background: rgba(0, 0, 0, 0.8);
+    padding: 30px;
+    border-radius: 15px;
+    border: 2px solid #0055ff; /* Синяя рамка для меню */
+    box-shadow: 0 0 20px rgba(0, 85, 255, 0.3);
+    text-align: center;
+    width: 90%;
+    max-width: 600px;
+}
+
+.menu-container h2 {
+    color: #ffd700;
+    margin-top: 0;
+}
+
+/* Сетка кнопок */
+.categories-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.category-btn {
+    padding: 15px;
+    border-radius: 10px;
+    border: 2px solid #ffd700;
+    background: #001a33;
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.category-btn:hover {
+    background: #ffd700;
+    color: black;
+    box-shadow: 0 0 15px #ffd700;
+}
+
+/* Красная кнопка смешанного режима */
+.collision-btn {
+    width: 100%;
+    border-color: #ff3333;
+    color: #ff3333;
+    font-size: 16px;
+    margin-bottom: 20px;
+}
+
+.collision-btn:hover {
+    background: #ff3333;
+    color: white;
+    box-shadow: 0 0 20px #ff3333;
+}
+
+.leaderboard-preview {
+    border-top: 1px solid #444;
+    padding-top: 15px;
+    color: #aaa;
+}
+/* --- СТИЛИ ДЛЯ ГАЛОЧКИ И КНОПКИ ВЫХОДА --- */
+.remember-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: #ccc;
+    font-size: 14px;
+    margin-top: -5px;
+    margin-bottom: 5px;
+}
+
+/* Делаем сам квадратик галочки аккуратным */
+.remember-container input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.logout-btn {
+    margin-top: 15px;
+    padding: 10px 20px;
+    background: transparent;
+    border: 1px solid #888;
+    color: #aaa;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.logout-btn:hover {
+    color: white;
+    border-color: white;
+}
+/* --- СТИЛИ ИГРОВОГО ЭКРАНА --- */
+.game-container {
+    width: 100%;
+    max-width: 800px;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 20px;
+    border-radius: 15px;
+    border: 2px solid #ffd700;
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.2);
+}
+
+.top-panel {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #444;
+}
+
+.lifelines {
+    display: flex;
+    gap: 10px;
+}
+
+.lifeline-btn {
+    background: #001a33;
+    border: 1px solid #0055ff;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 15px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: 0.3s;
+}
+
+.lifeline-btn:hover { background: #0055ff; }
+
+.current-rank {
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffd700;
+}
+
+.question-box {
+    margin-bottom: 30px;
+    padding: 20px;
+    font-size: 20px;
+    min-height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.answers-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.answer-btn {
+    background: #001a33;
+    border: 2px solid #ffd700;
+    color: white;
+    padding: 15px;
+    border-radius: 30px;
+    font-size: 16px;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.3s, border-color 0.3s;
+}
+
+.answer-btn .letter {
+    color: #ffd700;
+    font-weight: bold;
+    margin-right: 10px;
+}
+
+.answer-btn:hover { background: #003366; }
+
+/* Анимации правильных и неправильных ответов */
+.answer-btn.selected { background: #ffaa00; border-color: #ffaa00; color: black; }
+.answer-btn.correct { background: #00aa00; border-color: #00aa00; color: white; }
+.answer-btn.wrong { background: #cc0000; border-color: #cc0000; color: white; }
+
+/* Для мобильных телефонов - ответы в один столбик */
+@media (max-width: 600px) {
+    .answers-grid { grid-template-columns: 1fr; }
+    .top-panel { flex-direction: column; gap: 15px; }
+}
+/* --- СТИЛИ ДЛЯ ТАЙМЕРА --- */
+.timer {
+    font-size: 24px;
+    font-weight: bold;
+    color: white;
+    background: #001a33;
+    border: 2px solid #ffd700;
+    padding: 5px 20px;
+    border-radius: 10px;
+    min-width: 60px;
+    text-align: center;
+    box-shadow: 0 0 10px rgba(255, 215, 0, 0.2);
+}
+
+/* Красный мигающий таймер (когда остается мало времени) */
+.timer.warning {
+    color: #ff3333;
+    border-color: #ff3333;
+    box-shadow: 0 0 15px rgba(255, 51, 51, 0.5);
+    animation: pulseTimer 1s infinite;
+}
+
+@keyframes pulseTimer {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+/* --- СТИЛИ ДЛЯ ГРАМОТЫ --- */
+.certificate-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 700px;
+}
+
+.certificate-content {
+    background: #fdf5e6; /* Цвет старой бумаги */
+    color: #333;
+    font-family: 'Times New Roman', serif;
+    padding: 40px;
+    border: 12px double #b8860b; /* Двойная золотая рамка */
+    text-align: center;
+    width: 100%;
+    box-shadow: 0 0 30px rgba(184, 134, 11, 0.4);
+    position: relative;
+}
+
+.cert-header {
+    font-size: 16px;
+    font-weight: bold;
+    color: #555;
+    letter-spacing: 2px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #b8860b;
+    padding-bottom: 10px;
+}
+
+.cert-title {
+    font-size: 36px;
+    font-weight: bold;
+    color: #b8860b;
+    margin-bottom: 20px;
+}
+
+.cert-body {
+    font-size: 20px;
+    line-height: 1.6;
+    margin-bottom: 30px;
+}
+
+.cert-footer {
+    font-size: 18px;
+    margin-top: 30px;
+}
+
+.seal {
+    position: absolute;
+    bottom: 30px;
+    right: 40px;
+    width: 100px;
+    height: 100px;
+    border: 4px solid #cc0000;
+    border-radius: 50%;
+    color: #cc0000;
+    font-size: 14px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform: rotate(-15deg);
+    opacity: 0.8;
+}
+
+/* При печати убираем черный фон сайта и оставляем только грамоту */
+@media print {
+    body { background: white; }
+    #certificateScreen { display: block !important; }
+    .certificate-content { box-shadow: none; border-color: #000; }
+    #btnPrint, #btnCertToMenu { display: none; }
+}

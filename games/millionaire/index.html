@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Кто хочет стать Юристом? | Miyzamchy</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .hidden { visibility: hidden; pointer-events: none; }
+        
+        /* Стили для красивого окна подсказок */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); z-index: 1000; justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background: linear-gradient(135deg, #1a1a2e, #16213e); border: 2px solid #b8860b;
+            padding: 30px; border-radius: 15px; text-align: center; color: #fff; max-width: 400px;
+            box-shadow: 0 0 20px rgba(184, 134, 11, 0.5); font-family: sans-serif;
+        }
+        .modal-content p { font-size: 20px; margin-bottom: 25px; line-height: 1.5; }
+        .modal-btn {
+            background: #b8860b; color: #000; border: none; padding: 12px 25px;
+            font-size: 18px; font-weight: bold; border-radius: 8px; cursor: pointer;
+        }
+        .modal-btn:hover { background: #daa520; }
+        
+        /* Стили для печати сертификата */
+        @media print {
+            body * { visibility: hidden; }
+            #printArea, #printArea * { visibility: visible; }
+            #printArea { position: absolute; left: 0; top: 0; width: 100%; }
+            #btnPrint, #btnCertToMenu { display: none !important; }
+        }
+
+        /* Стили для блока статистики в игре */
+        .game-stats { text-align: right; color: white; }
+        .game-stats .rank { font-weight: bold; color: #b8860b; font-size: 18px; margin-bottom: 5px; text-transform: uppercase; }
+        .game-stats .counter { font-size: 14px; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div id="gameModal" class="modal-overlay">
+        <div class="modal-content">
+            <p id="modalText"></p>
+            <button id="modalBtn" class="modal-btn">Понятно</button>
+        </div>
+    </div>
+
+    <div class="login-container" id="loginScreen">
+        <div class="logo">
+            <h1>Кто хочет стать<br><span>ЮРИСТОМ?</span></h1>
+        </div>
+        <form id="loginForm">
+            <input type="text" id="fio" placeholder="ФИО (например: Асиров Ж.С.)" required>
+            <input type="text" id="username" placeholder="Логин" required>
+            <input type="password" id="password" placeholder="Пароль" required>
+            <div class="remember-container" style="margin: 15px 0; color: white; text-align: left;">
+                <input type="checkbox" id="rememberMe">
+                <label for="rememberMe" style="cursor: pointer;">Запомнить меня</label>
+            </div>
+            <button type="submit" class="btn-start">Войти в систему</button>
+        </form>
+    </div>
+
+    <div class="menu-container" id="mainMenu" style="display: none;">
+        <h2>Выберите материалы дела:</h2>
+        <div class="categories-grid">
+            <button class="category-btn" data-category="Гражданское право">Гражданское право</button>
+            <button class="category-btn" data-category="ГПК">ГПК</button>
+            <button class="category-btn" data-category="Уголовное право">Уголовное право</button>
+            <button class="category-btn" data-category="УПК">УПК</button>
+            <button class="category-btn" data-category="Трудовое право">Трудовое право</button>
+            <button class="category-btn" data-category="Кодекс о правонарушениях">Кодекс о правонарушениях</button>
+            <button class="category-btn" data-category="Конституционное право">Конституционное право</button>
+            <button class="category-btn" data-category="ТГП">ТГП</button>
+        </div>
+        <button class="category-btn collision-btn" data-category="ALL">ПРАВОВАЯ КОЛЛИЗИЯ (Все вопросы)</button>
+        
+        <div class="leaderboard-preview" id="leaderboardBox" style="margin-top: 30px; background: rgba(0,0,0,0.5); padding: 15px; border-radius: 10px; color: white;">
+            <h3 style="color: #b8860b;">🏆 Рейтинг адвокатуры</h3>
+            <div id="leaderboardList">Загрузка архива дел...</div>
+        </div>
+
+        <button id="logoutBtn" class="logout-btn" style="margin-top: 20px;">Сменить аккаунт</button>
+    </div>
+
+    <div class="game-container" id="gameScreen" style="display: none;">
+        <div class="top-panel" style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="lifelines">
+                <button class="lifeline-btn" id="life50">50/50</button>
+                <button class="lifeline-btn" id="lifeCall">📞 Адвокат</button>
+                <button class="lifeline-btn" id="lifeAudience">👥 Зал</button>
+            </div>
+            
+            <div class="timer" id="timerDisplay">⏳ 30</div>
+            
+            <div class="game-stats">
+                <div class="rank" id="rankDisplay">Школьник</div>
+                <div class="counter" id="questionCounter">Дело № 1 из 15</div>
+            </div>
+        </div>
+
+        <div class="question-box">
+            <h2 id="questionText">Загрузка материалов дела...</h2>
+        </div>
+        <div class="answers-grid">
+            <button class="answer-btn" id="btnA"><span class="letter">A:</span> <span id="textA">...</span></button>
+            <button class="answer-btn" id="btnB"><span class="letter">B:</span> <span id="textB">...</span></button>
+            <button class="answer-btn" id="btnC"><span class="letter">C:</span> <span id="textC">...</span></button>
+            <button class="answer-btn" id="btnD"><span class="letter">D:</span> <span id="textD">...</span></button>
+        </div>
+    </div>
+
+    <div class="certificate-wrapper" id="certificateScreen" style="display: none;">
+        <div class="certificate-content" id="printArea">
+            <div class="cert-header">РЕШЕНИЕ ВЕРХОВНОГО СУДА MIYZAMCHI</div>
+            <div class="cert-title">СЕРТИФИКАТ ЭКСПЕРТА</div>
+            <div class="cert-body">
+                Настоящим удостоверяется, что гражданин<br>
+                <strong id="certName" style="font-size: 28px; display: block; margin: 15px 0; color: #000;">ФИО</strong>
+                прошел аттестацию по дисциплине <b id="certCategory">...</b>, <br>
+                набрал <b id="certScore">...</b> правильных ответов из <b id="certTotal">15</b>.
+            </div>
+            <div class="cert-footer">
+                <p>Присвоено звание: <strong id="certRank" style="color: #b8860b;">...</strong></p>
+                <div class="seal">Miyzamchy<br>Одобрено</div>
+            </div>
+        </div>
+        <button id="btnPrint" class="btn-start" style="margin-top: 20px;">🖨️ Скачать / Распечатать</button>
+        <button id="btnCertToMenu" class="logout-btn" style="margin-top: 10px; border: 1px solid white; color: white;">Вернуться в меню</button>
+    </div>
+
+    <audio id="audioBg" src="bg.mp3" loop></audio>
+    <audio id="audioTick" src="tick.mp3" loop></audio>
+    <audio id="audioWait" src="wait.mp3" loop></audio>
+    <audio id="audioWin" src="win.mp3"></audio>
+    <audio id="audioLose" src="lose.mp3"></audio>
+    <audio id="audio5050" src="50-50.mp3"></audio>
+    <audio id="audioCall" src="call.mp3"></audio>
+    <audio id="audioAudience" src="audience.mp3"></audio>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Miyzamchy Academy - 3D Edition</title>
+    <style>
+        :root {
+            --bg-color: #1e1e24;
+            --text-color: #ffffff;
+            --primary: #4CAF50;
+            --gold: #FFD700;
+            --danger: #F44336;
+            --card-bg: #2b2b36;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden; /* Запрещаем скролл страницы при свайпах */
+        }
+
+        /* --- СИСТЕМА ЭКРАНОВ --- */
+        .screen {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            width: 100vw;
+            height: 100vh;
+            padding: 20px;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        .screen.active {
+            display: flex;
+        }
+
+        /* --- ФОРМЫ И КНОПКИ --- */
+        input {
+            width: 100%;
+            max-width: 300px;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: none;
+            background: #3a3a48;
+            color: white;
+            font-size: 16px;
+        }
+
+        button {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            background-color: var(--primary);
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: transform 0.2s;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0;
+        }
+
+        /* --- СПИСКИ И КАРТОЧКИ ДИСЦИПЛИН --- */
+        #branchList, #topicList {
+            width: 100%;
+            max-width: 400px;
+            overflow-y: auto;
+            margin-top: 20px;
+            padding-bottom: 20px;
+        }
+
+        .category-card {
+            background: var(--card-bg);
+            padding: 15px 20px;
+            margin-bottom: 10px;
+            border-radius: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: background 0.3s;
+        }
+
+        .category-card:active {
+            background: #3a3a48;
+        }
+
+        .completion-mark {
+            font-size: 20px;
+        }
+
+        /* --- ПРОГРЕСС БАР --- */
+        .progress-container {
+            width: 100%;
+            max-width: 400px;
+            height: 10px;
+            background: #3a3a48;
+            border-radius: 5px;
+            margin-top: 20px;
+            overflow: hidden;
+        }
+
+        #globalProgress {
+            height: 100%;
+            background: var(--gold);
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+
+        /* --- ИГРОВОЙ ЭКРАН И 3D КАРТОЧКА --- */
+        .game-header {
+            width: 100%;
+            max-width: 400px;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            color: gray;
+        }
+
+        #cardZone {
+            flex: 1;
+            width: 100%;
+            max-width: 400px;
+            position: relative;
+            perspective: 1000px; /* Добавляем глубину для 3D */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #card {
+            width: 100%;
+            height: 60vh;
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            position: absolute;
+            transform-style: preserve-3d;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            user-select: none;
+            will-change: transform;
+        }
+
+        #qText {
+            font-size: 22px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        #qOrigin {
+            font-size: 14px;
+            color: var(--gold);
+        }
+
+        /* Бейджи ИСТИНА / ЛОЖЬ при свайпе */
+        .badge {
+            position: absolute;
+            top: 20px;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 24px;
+            opacity: 0;
+            text-transform: uppercase;
+        }
+
+        #badgeLeft {
+            right: 20px;
+            color: var(--danger);
+            border: 3px solid var(--danger);
+            transform: rotate(15deg);
+        }
+
+        #badgeRight {
+            left: 20px;
+            color: var(--primary);
+            border: 3px solid var(--primary);
+            transform: rotate(-15deg);
+        }
+
+        /* --- ВСПЛЫВАЮЩИЕ ОКНА (ОБЪЯСНЕНИЯ И НАГРАДЫ) --- */
+        .overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.85);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+            z-index: 100;
+            padding: 20px;
+        }
+
+        .overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .overlay-box {
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 20px;
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+            transform: translateY(50px);
+            transition: transform 0.3s;
+        }
+
+        .overlay.active .overlay-box {
+            transform: translateY(0);
+        }
+
+        #expResult { font-size: 24px; font-weight: bold; margin-bottom: 15px; }
+        #expText { font-size: 16px; line-height: 1.5; color: #ccc; margin-bottom: 25px; }
+        
+        #rewardIcon { font-size: 60px; margin-bottom: 10px; }
+        #rewardTitle { font-size: 22px; color: var(--gold); margin-bottom: 10px; }
+        #rewardDesc { color: #ccc; margin-bottom: 20px; }
+
+        /* --- ЭКРАН РЕЗУЛЬТАТОВ --- */
+        #resIcon { font-size: 80px; margin: 20px 0; }
+        .res-text { font-size: 20px; margin: 10px 0; }
+
+    </style>
+</head>
+<body>
+
+    <div id="screenLogin" class="screen active">
+        <h1 style="margin-bottom: 30px; color: var(--gold);">Miyzamchy Academy</h1>
+        <input type="text" id="fio" placeholder="Ваше ФИО (Обязательно)">
+        <input type="text" id="username" placeholder="Группа / Должность (необязательно)">
+        <input type="password" id="password" placeholder="Пароль (необязательно)">
+        
+        <div class="checkbox-group">
+            <input type="checkbox" id="rememberMe" style="width: auto;">
+            <label for="rememberMe">Запомнить меня</label>
+        </div>
+        
+        <button id="btnLogin">Войти в Академию</button>
+    </div>
+
+    <div id="screenBranches" class="screen">
+        <h2>Академия Права</h2>
+        <div class="progress-container">
+            <div id="globalProgress"></div>
+        </div>
+        <div id="branchList"></div>
+    </div>
+
+    <div id="screenTopics" class="screen">
+        <h2 id="branchTitle">Дисциплина</h2>
+        <div id="topicList"></div>
+        <button id="btnBack" style="background-color: #555;">Назад</button>
+    </div>
+
+    <div id="screenGame" class="screen">
+        <div class="game-header">
+            <span id="gameRank">Студент</span>
+            <span id="gameProgress">1 / 10</span>
+        </div>
+        
+        <div id="cardZone">
+            <div id="card">
+                <div id="badgeLeft" class="badge">Ложь</div>
+                <div id="badgeRight" class="badge">Истина</div>
+                <div id="qText">Текст вопроса появится здесь...</div>
+                <div id="qOrigin"></div>
+            </div>
+        </div>
+        <p style="color: gray; margin-top: 20px; font-size: 14px;">Свайп вправо - ИСТИНА, влево - ЛОЖЬ</p>
+    </div>
+
+    <div id="overlayExp" class="overlay">
+        <div class="overlay-box">
+            <div id="explanationContent">
+                <div id="expResult">ВЕРНО!</div>
+                <div id="expText">Объяснение статьи закона...</div>
+                <button id="btnNext">Далее</button>
+            </div>
+            
+            <div id="rewardContent" style="display: none;">
+                <div id="rewardIcon">🏆</div>
+                <div id="rewardTitle">Награда!</div>
+                <div id="rewardDesc">Описание награды...</div>
+                <button id="btnCollectReward">Забрать награду</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="screenResult" class="screen">
+        <h2>Итоги тестирования</h2>
+        <div id="resIcon">🏅</div>
+        <h3 id="resName" style="color: var(--gold);"></h3>
+        <div id="resScoreText" class="res-text">Результат: 0 из 10</div>
+        <div id="resRankText" class="res-text" style="font-weight: bold;">Звание</div>
+        <button id="btnFinish">Вернуться в меню</button>
+    </div>
+
+    <audio id="sSwipe" src=""></audio>
+    <audio id="sCorrect" src=""></audio>
+    <audio id="sLose" src=""></audio>
+    <audio id="sWin" src=""></audio>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+    <script src="script.js"></script>
+
+</body>
+</html>

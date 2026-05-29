@@ -1,0 +1,1228 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Режимы Мыйзамчы</title><style>
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:15px;line-height:1.55;color:#1c1c1c;max-width:840px;margin:0 auto;padding:18px;}
+h1{font-size:23px;color:#3b45c4;border-bottom:2px solid #5C66DE;padding-bottom:6px;margin-top:8px;}
+h2{font-size:19px;color:#3b45c4;margin-top:26px;border-bottom:1px solid #dfe1f0;padding-bottom:3px;}
+h3{font-size:16px;color:#2a2a2a;margin-top:18px;}
+p{margin:8px 0;}
+.tw{overflow-x:auto;margin:12px 0;}
+table{border-collapse:collapse;width:100%;font-size:12.5px;}
+th,td{border:1px solid #c4c4d4;padding:5px 7px;text-align:left;vertical-align:top;}
+th{background:#5C66DE;color:#ffffff;font-weight:600;}
+tr:nth-child(even) td{background:#f3f4fb;}
+code{background:#eceef7;padding:1px 4px;border-radius:3px;font-family:Consolas,'Courier New',monospace;font-size:90%;color:#2a2a8a;}
+pre{background:#f3f4fb;border:1px solid #d3d6ea;padding:11px 13px;border-radius:6px;overflow-x:auto;font-size:12.5px;line-height:1.4;}
+pre code{background:none;color:#1c1c1c;padding:0;}
+blockquote{border-left:3px solid #5C66DE;margin:10px 0;padding:6px 12px;background:#f3f4fb;color:#444;}
+hr{border:none;border-top:1px solid #dcdce4;margin:22px 0;}
+</style></head><body><h1>Режимы Мыйзамчы — полная карта (расширенная)</h1>
+<p>Полная техническая карта всех режимов ИИ в проекте Мыйзамчы (<code>server.js</code>):
+агенты, топ-K, пороги score, число вызовов, модели, параметры генерации, ретраи.</p>
+<blockquote>
+<p>Актуально на: 2026-05-22. Источник истины — <code>server.js</code>.
+Все числа взяты из констант кода, не приблизительные.</p>
+</blockquote>
+<hr />
+<h2>0. Краткая карта (TL;DR)</h2>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Группа</th>
+<th>Режим</th>
+<th>Эндпоинт</th>
+<th>Pinecone topK</th>
+<th>LLM-вызовов*</th>
+<th>Макс. агентов</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>А</strong></td>
+<td>Болталка</td>
+<td><code>/api/chat</code> <code>fast</code></td>
+<td>— (поиск выключен)</td>
+<td>1</td>
+<td>1</td>
+</tr>
+<tr>
+<td><strong>А</strong></td>
+<td>Быстрый</td>
+<td><code>/api/chat</code> <code>fast</code></td>
+<td>10</td>
+<td>2</td>
+<td>1</td>
+</tr>
+<tr>
+<td><strong>А</strong></td>
+<td>Думающий → Простой</td>
+<td><code>/api/chat</code> <code>thinking</code></td>
+<td>15</td>
+<td>2–3</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>А</strong></td>
+<td>Думающий → Глубокий</td>
+<td><code>/api/chat</code> <code>thinking</code></td>
+<td>5+10+8+6+5 = <strong>34</strong></td>
+<td>7–8</td>
+<td>7</td>
+</tr>
+<tr>
+<td><strong>Б</strong></td>
+<td>Агент-редактор</td>
+<td><code>/api/chat</code> <code>agentMode</code></td>
+<td>10 / 15 / 22 (адаптив)</td>
+<td>2</td>
+<td>1</td>
+</tr>
+<tr>
+<td><strong>Б</strong></td>
+<td>AI-редактор</td>
+<td><code>/api/edit</code></td>
+<td>—</td>
+<td>1</td>
+<td>1</td>
+</tr>
+<tr>
+<td><strong>В</strong></td>
+<td>Проверка документа</td>
+<td><code>/api/analyze-document</code></td>
+<td>5 на статью/пункт</td>
+<td>~25–35</td>
+<td><strong>до 56</strong></td>
+</tr>
+<tr>
+<td><strong>В</strong></td>
+<td>Глубокий анализ (PRO)</td>
+<td><code>/api/deep-analyze-document</code></td>
+<td>5</td>
+<td>~12–20</td>
+<td><strong>17 LLM + до 30 проверок</strong></td>
+</tr>
+<tr>
+<td><strong>Г</strong></td>
+<td>Сравнение редакций</td>
+<td><code>/api/compare-documents</code></td>
+<td>— (cos-выравнивание)</td>
+<td>~104 (1 конт + 2 сегм + 100 ворк + 1 DS)</td>
+<td><strong>до 104</strong></td>
+</tr>
+</tbody>
+</table></div>
+<p>* «LLM-вызов» = запрос к генеративной модели. Эмбеддинги и Pinecone — отдельно.</p>
+<hr />
+<h2>1. Инфраструктура (общая для всех режимов)</h2>
+<h3>1.1 Модели</h3>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Назначение</th>
+<th>Модель</th>
+<th>Константа</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Основная (PRIMARY)</td>
+<td><code>gemini-2.5-flash</code> (Google, stable)</td>
+<td><code>PRIMARY_MODEL</code></td>
+</tr>
+<tr>
+<td>Резервная (FALLBACK)</td>
+<td><code>gemini-2.5-flash-lite</code> (Google)</td>
+<td><code>FALLBACK_MODEL</code></td>
+</tr>
+<tr>
+<td>Эмбеддинги</td>
+<td><code>gemini-embedding-001</code>, <strong>768 измерений</strong></td>
+<td><code>EMBEDDING_MODEL</code></td>
+</tr>
+<tr>
+<td>Судья / Старший партнёр</td>
+<td><code>deepseek-v4-pro</code> (DeepSeek)</td>
+<td><code>DEEPSEEK_MODEL</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>DeepSeek V4 Pro:</strong> OpenAI-совместимый SDK, <code>baseURL: https://api.deepseek.com</code>,
+<code>reasoning_effort: 'high'</code>, <code>thinking: {type:'enabled'}</code>. Мягкая зависимость —
+если ключа нет или DeepSeek упал, автоматический откат на Gemini.</p>
+<h3>1.2 RAG — профили <code>adaptiveRetrieval</code></h3>
+<p><code>adaptiveRetrieval(query, mode, res, opts)</code> шлёт в Pinecone <code>topK = maxK</code>,
+затем фильтрует elbow-методом до <code>minK..maxK</code> статей.</p>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Профиль</th>
+<th>maxK (= Pinecone topK)</th>
+<th>minK (минимум после фильтра)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fast</code></td>
+<td>10</td>
+<td>3</td>
+</tr>
+<tr>
+<td><code>agent</code></td>
+<td>15</td>
+<td>4</td>
+</tr>
+<tr>
+<td><code>thinking</code></td>
+<td>25</td>
+<td>5</td>
+</tr>
+</tbody>
+</table></div>
+<blockquote>
+<p><code>opts.maxK</code> / <code>opts.minK</code> переопределяют дефолт профиля — многие режимы так и делают.</p>
+</blockquote>
+<h3>1.3 Пороги отбора статей (score)</h3>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Параметр</th>
+<th>Значение</th>
+<th>Смысл</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>absoluteMinScore</code></td>
+<td><strong>0.45</strong></td>
+<td>ниже — статья отбрасывается полностью</td>
+</tr>
+<tr>
+<td><code>coreScoreThreshold</code></td>
+<td><strong>0.75</strong></td>
+<td>≥ 0.75 → ⭐ ключевая, ниже → 📚 вспомогательная</td>
+</tr>
+<tr>
+<td><code>elbowDropRatio</code></td>
+<td><strong>0.15</strong></td>
+<td>обрыв ранжирования: падение score &gt;15% → отсечка</td>
+</tr>
+<tr>
+<td><code>confidenceThresholds</code></td>
+<td>high 0.75 · medium 0.70 · low 0.60</td>
+<td>уверенность сверки статьи в анализе документа</td>
+</tr>
+</tbody>
+</table></div>
+<h3>1.4 Параметры генерации</h3>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Вызов</th>
+<th>temperature</th>
+<th>maxOutputTokens</th>
+<th>стриминг</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Болталка / Быстрый (<code>handleFast</code>)</td>
+<td>по умолчанию (~1.0)</td>
+<td>по умолчанию</td>
+<td>да</td>
+</tr>
+<tr>
+<td>Простой / Глубокий синтез (<code>streamGeminiResponse</code>)</td>
+<td>по умолчанию</td>
+<td>по умолчанию</td>
+<td>да</td>
+</tr>
+<tr>
+<td>Агент-редактор (<code>handleAgent</code>)</td>
+<td><strong>0.4</strong> · topP 0.9</td>
+<td><strong>4096</strong></td>
+<td>да</td>
+</tr>
+<tr>
+<td>AI-редактор (<code>/api/edit</code>)</td>
+<td>по умолчанию</td>
+<td>по умолчанию</td>
+<td>нет</td>
+</tr>
+<tr>
+<td>Судья — анализ документа (<code>runJudge</code>)</td>
+<td><strong>0.2</strong></td>
+<td>4096 (при откате на Gemini)</td>
+<td>да</td>
+</tr>
+<tr>
+<td>Старший партнёр (<code>seniorPartnerSynthesis</code>)</td>
+<td><strong>0.25</strong></td>
+<td>2048 (при откате)</td>
+<td>нет</td>
+</tr>
+<tr>
+<td>Драфтер (<code>drafterGenerate</code>)</td>
+<td><strong>0.35</strong> · topP 0.9</td>
+<td><strong>3500</strong></td>
+<td>нет</td>
+</tr>
+<tr>
+<td>Воркеры (<code>callOnce</code>)</td>
+<td>по умолчанию</td>
+<td>по умолчанию</td>
+<td>нет</td>
+</tr>
+</tbody>
+</table></div>
+<h3>1.5 Надёжность и ретраи</h3>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Механизм</th>
+<th>Где</th>
+<th>Поведение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>generateContentResilient</code></td>
+<td>все воркеры через <code>callOnce</code></td>
+<td><strong>4 попытки</strong> (maxRetries=3), backoff <code>800мс·2ⁿ</code> + jitter 0–800мс, потолок 8с. <strong>Последняя попытка → FALLBACK_MODEL.</strong> На 404 — сразу на резерв.</td>
+</tr>
+<tr>
+<td><code>handleFast</code> собственный ретрай</td>
+<td>Болталка, Быстрый</td>
+<td>до <code>KEYS.length</code> повторов, пауза 800мс, <strong>модель не меняется</strong> (всегда PRIMARY)</td>
+</tr>
+<tr>
+<td><code>handleAgent</code> собственный ретрай</td>
+<td>Агент-редактор</td>
+<td>до <code>min(KEYS.length, 3)</code>, пауза 1500мс</td>
+</tr>
+<tr>
+<td><code>deepseekCall</code></td>
+<td>Старший партнёр</td>
+<td><strong>3 попытки</strong>, backoff потолок 4с, затем откат на Gemini</td>
+</tr>
+<tr>
+<td><code>streamDeepSeekResponse</code></td>
+<td>Судья</td>
+<td>1 попытка; сбой до 1-го чанка → откат на Gemini-стрим</td>
+</tr>
+<tr>
+<td>Блокировка ключа (<code>blockKey</code>)</td>
+<td>ротация</td>
+<td><strong>15 сек</strong>, ТОЛЬКО при 429 (не при 503)</td>
+</tr>
+<tr>
+<td>Ротация ключей</td>
+<td>Gemini</td>
+<td>round-robin по <code>GEMINI_API_KEY</code> (через запятую)</td>
+</tr>
+<tr>
+<td>Rate limit <code>/api/chat</code></td>
+<td>—</td>
+<td><strong>30 запросов / мин</strong></td>
+</tr>
+<tr>
+<td>Rate limit <code>/api/analyze-document</code></td>
+<td>—</td>
+<td><strong>30 запросов / мин</strong></td>
+</tr>
+<tr>
+<td>Rate limit <code>/api/deep-analyze-document</code></td>
+<td>—</td>
+<td><strong>6 запросов / мин</strong></td>
+</tr>
+<tr>
+<td>Rate limit <code>/api/compare-documents</code></td>
+<td>—</td>
+<td><strong>8 запросов / мин</strong></td>
+</tr>
+</tbody>
+</table></div>
+<h3>1.6 Лимиты контекста и объёмов</h3>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Параметр</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>История чата (<code>sanitizeHistory</code>)</td>
+<td>последние <strong>10</strong> сообщений</td>
+</tr>
+<tr>
+<td>Текст для эмбеддинга (<code>getEmbedding</code>)</td>
+<td>обрезка до <strong>8000</strong> символов</td>
+</tr>
+<tr>
+<td>Кэш эмбеддингов</td>
+<td><strong>200</strong> записей (LRU)</td>
+</tr>
+<tr>
+<td>Кэш прокси Минюста</td>
+<td>200 записей, TTL 1 час</td>
+</tr>
+<tr>
+<td>Запрос тела API</td>
+<td>лимит <strong>2 МБ</strong></td>
+</tr>
+<tr>
+<td>Мин. длина документа для анализа</td>
+<td><strong>50</strong> символов</td>
+</tr>
+<tr>
+<td>Макс. статей из документа (<code>maxArticles</code>)</td>
+<td><strong>30</strong></td>
+</tr>
+<tr>
+<td>Макс. пунктов документа (<code>SEGMENT_LIMIT</code>)</td>
+<td><strong>25</strong></td>
+</tr>
+<tr>
+<td>Макс. пунктов для сравнения (<code>COMPARE_SEG_LIMIT</code>)</td>
+<td><strong>60</strong></td>
+</tr>
+<tr>
+<td>Чанк экстрактора статей</td>
+<td>7000 симв., overlap 500</td>
+</tr>
+<tr>
+<td>Чанк сегментатора</td>
+<td>7500 симв., overlap 400</td>
+</tr>
+<tr>
+<td>Голова для «паспорта» документа</td>
+<td>первые 4500 симв.</td>
+</tr>
+<tr>
+<td>Документ в промпт Судьи</td>
+<td>обрезка до 15000 симв.</td>
+</tr>
+<tr>
+<td>Запрос эмбеддинга при проверке пункта</td>
+<td>обрезка до 450 симв.</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h1>ГРУППА А — ЧАТ (вкладка «Чат»)</h1>
+<p>Тело запроса: <code>{ message, history, mode }</code>, <code>mode</code> = <code>fast</code> | <code>thinking</code>.</p>
+<hr />
+<h2>А.0 — Болталка (приветствие)</h2>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Параметр</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Триггер</td>
+<td><code>isCasualMessage()</code> — regex по <code>GREETING_PATTERNS</code>, длина ≤ 60 символов</td>
+</tr>
+<tr>
+<td>Эндпоинт</td>
+<td><code>/api/chat</code>, <code>mode: fast</code></td>
+</tr>
+<tr>
+<td>Агентов</td>
+<td><strong>1</strong></td>
+</tr>
+<tr>
+<td>Pinecone topK</td>
+<td>— (поиск выключен)</td>
+</tr>
+<tr>
+<td>Эмбеддингов</td>
+<td>0</td>
+</tr>
+<tr>
+<td>LLM-вызовов</td>
+<td><strong>1</strong> (стриминг)</td>
+</tr>
+<tr>
+<td>Модель</td>
+<td><code>gemini-2.5-flash</code>, ретрай без смены модели</td>
+</tr>
+<tr>
+<td>Промпт</td>
+<td><code>systemInstruction</code> (раздел «Режим 0»)</td>
+</tr>
+<tr>
+<td>Контекст</td>
+<td>только история (10 сообщений)</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2>А.1 — Быстрый режим (fast)</h2>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Параметр</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Триггер</td>
+<td><code>mode: fast</code>, сообщение не болталка</td>
+</tr>
+<tr>
+<td>Агентов</td>
+<td><strong>1</strong></td>
+</tr>
+<tr>
+<td>Pinecone topK</td>
+<td><strong>10</strong> (профиль <code>fast</code>, minK 3)</td>
+</tr>
+<tr>
+<td>Эмбеддингов</td>
+<td>1 (+ кэш)</td>
+</tr>
+<tr>
+<td>LLM-вызовов</td>
+<td><strong>1</strong> (стриминг)</td>
+</tr>
+<tr>
+<td>Модель</td>
+<td><code>gemini-2.5-flash</code></td>
+</tr>
+<tr>
+<td>Промпт</td>
+<td><code>systemInstruction</code> (+ <code>L4_WARNING_ADDON</code> при просьбе составить иск)</td>
+</tr>
+<tr>
+<td>Контекст</td>
+<td>до 10 статей, ⭐ ≥0.75 / 📚 &lt;0.75</td>
+</tr>
+<tr>
+<td>Ретрай</td>
+<td>свой, до <code>KEYS.length</code>, без смены модели</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2>А.2 — Думающий режим (thinking)</h2>
+<p>Сначала классификатор <code>classifyQuery()</code>: <code>quickClassify()</code> (regex) → если неясно,
+<code>llmClassify()</code> (1 LLM-вызов). Далее один из двух подрежимов.</p>
+<h3>А.2a — Простой запрос (<code>handleSimpleConsultation</code>)</h3>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Параметр</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Триггер</td>
+<td>классификатор → <code>simple</code> (термин, «какая статья», цифра-факт)</td>
+</tr>
+<tr>
+<td>Агентов</td>
+<td><strong>2</strong> (классификатор + синтезатор)</td>
+</tr>
+<tr>
+<td>Pinecone topK</td>
+<td><strong>15</strong> (профиль <code>thinking</code> с <code>opts.maxK=15</code>, minK 4)</td>
+</tr>
+<tr>
+<td>Эмбеддингов</td>
+<td>1</td>
+</tr>
+<tr>
+<td>LLM-вызовов</td>
+<td><strong>2–3</strong> (0–1 классификатор + 1 синтез)</td>
+</tr>
+<tr>
+<td>Модель</td>
+<td><code>gemini-2.5-flash</code></td>
+</tr>
+<tr>
+<td>Промпт</td>
+<td><code>BASE_CONSULTANT_PROMPT</code> (+ <code>ACADEMIC_PROMPT_ADDON</code> / <code>L4_WARNING_ADDON</code>)</td>
+</tr>
+<tr>
+<td>Ретрай синтеза</td>
+<td>1 повтор (на запасном промпте <code>systemInstruction</code>)</td>
+</tr>
+</tbody>
+</table></div>
+<h3>А.2b — Глубокий запрос (<code>handleDeepThinking</code>) — 5 слоёв</h3>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Параметр</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Триггер</td>
+<td>классификатор → <code>complex</code> (реальная ситуация, действия, документ)</td>
+</tr>
+<tr>
+<td>Агентов</td>
+<td><strong>7</strong> (реформулятор + 5 слоёв поиска + синтезатор)</td>
+</tr>
+<tr>
+<td>Эмбеддингов</td>
+<td><strong>5</strong></td>
+</tr>
+<tr>
+<td>LLM-вызовов</td>
+<td><strong>7–8</strong> (0–1 классиф. + 1 реформулировка + 1 синтез)</td>
+</tr>
+<tr>
+<td>Модель</td>
+<td><code>gemini-2.5-flash</code></td>
+</tr>
+<tr>
+<td>Промпт</td>
+<td><code>BASE_CONSULTANT_PROMPT</code> + блок «Иерархический контекст (5 слоёв)»</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>5 параллельных слоёв поиска (топ-K у каждого свой):</strong></p>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Слой</th>
+<th>Профиль</th>
+<th>Pinecone topK</th>
+<th>minK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>⭐ Специальная норма</td>
+<td><code>fast</code></td>
+<td><strong>5</strong></td>
+<td>3</td>
+</tr>
+<tr>
+<td>🏛 Общие положения</td>
+<td><code>thinking</code></td>
+<td><strong>10</strong></td>
+<td>4</td>
+</tr>
+<tr>
+<td>⚖️ Процессуальные нормы</td>
+<td><code>thinking</code></td>
+<td><strong>8</strong></td>
+<td>3</td>
+</tr>
+<tr>
+<td>⚡ Ответственность</td>
+<td><code>fast</code></td>
+<td><strong>6</strong></td>
+<td>2</td>
+</tr>
+<tr>
+<td>📋 Подзаконные акты</td>
+<td><code>fast</code></td>
+<td><strong>5</strong></td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>Итого</strong></td>
+<td></td>
+<td><strong>34</strong></td>
+<td></td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h1>ГРУППА Б — АГЕНТ (вкладка «Агент»)</h1>
+<hr />
+<h2>Б.1 — Агент-редактор (Cursor-style)</h2>
+<blockquote>
+<p>Роутер: документ &lt; 100 символов → запрос уходит в А.2 (Простой/Глубокий).</p>
+</blockquote>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Параметр</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Триггер</td>
+<td><code>agentMode: true</code> + открытый документ ≥ 100 символов</td>
+</tr>
+<tr>
+<td>Агентов</td>
+<td><strong>1</strong></td>
+</tr>
+<tr>
+<td>Pinecone topK</td>
+<td><strong>адаптивный</strong>: запрос &gt;200 симв. → 22 · &gt;60 → 15 · иначе → 10</td>
+</tr>
+<tr>
+<td>minK</td>
+<td>6 / 4 / 3 соответственно</td>
+</tr>
+<tr>
+<td>Эмбеддингов</td>
+<td>1</td>
+</tr>
+<tr>
+<td>LLM-вызовов</td>
+<td><strong>1</strong> (стриминг)</td>
+</tr>
+<tr>
+<td>Модель</td>
+<td><code>gemini-2.5-flash</code>, <code>temperature 0.4</code>, <code>topP 0.9</code>, <code>maxOutputTokens 4096</code></td>
+</tr>
+<tr>
+<td>Промпт</td>
+<td><code>AGENT_SYSTEM_PROMPT</code> (строгий JSON <code>{reasoning, anchor_text, insertion_text}</code>)</td>
+</tr>
+<tr>
+<td>Ретрай</td>
+<td>свой, до <code>min(KEYS.length, 3)</code>, пауза 1500мс</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2>Б.2 — AI-редактор (<code>/api/edit</code>)</h2>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Параметр</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Триггер</td>
+<td>действие «переписать выделенное» в IDE</td>
+</tr>
+<tr>
+<td>Агентов</td>
+<td><strong>1</strong></td>
+</tr>
+<tr>
+<td>Pinecone topK</td>
+<td>— (поиска нет)</td>
+</tr>
+<tr>
+<td>LLM-вызовов</td>
+<td><strong>1</strong> (НЕ стриминг, <code>generateContent</code>)</td>
+</tr>
+<tr>
+<td>Модель</td>
+<td><code>gemini-2.5-flash</code></td>
+</tr>
+<tr>
+<td>Промпт</td>
+<td>inline: «юрист-редактор КР, верни только исправленный текст»</td>
+</tr>
+<tr>
+<td>Rate limit</td>
+<td>отдельного нет (общий не применяется к <code>/api/edit</code>)</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h1>ГРУППА В — АНАЛИЗ ДОКУМЕНТА</h1>
+<hr />
+<h2>В.1 — Проверка документа (<code>/api/analyze-document</code>)</h2>
+<p>Оркестратор <code>analyzeDocumentSmart()</code>. Гибрид: проверка статей + проверка пунктов.</p>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Этап</th>
+<th>Агент</th>
+<th>Pinecone topK</th>
+<th>LLM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0. Паспорт документа</td>
+<td><code>extractDocumentContext</code></td>
+<td>—</td>
+<td>1</td>
+</tr>
+<tr>
+<td>1. Извлечь статьи</td>
+<td><code>extractArticles</code></td>
+<td>—</td>
+<td>1 + по 1 на чанк (7000/500)</td>
+</tr>
+<tr>
+<td>1. Разбить на пункты</td>
+<td><code>segmentDocument</code></td>
+<td>—</td>
+<td>1 + по 1 на чанк (7500/400)</td>
+</tr>
+<tr>
+<td>2. Проверка статей</td>
+<td><code>verifySingleArticle</code> ×N</td>
+<td><strong>5</strong> на статью</td>
+<td>0 (regex-сверка)</td>
+</tr>
+<tr>
+<td>2. Проверка пунктов</td>
+<td><code>verifySegment</code> ×N</td>
+<td><strong>5</strong> на пункт</td>
+<td><strong>1 на пункт</strong></td>
+</tr>
+<tr>
+<td>4. Заключение</td>
+<td><code>runJudge</code></td>
+<td>—</td>
+<td>1 DeepSeek V4 Pro</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Лимиты-агенты:</strong></p>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Что</th>
+<th>Макс.</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Верификаторы статей (параллельно)</td>
+<td><strong>30</strong> (<code>maxArticles</code>) — без LLM</td>
+</tr>
+<tr>
+<td>Верификаторы пунктов (параллельно)</td>
+<td><strong>25</strong> (<code>SEGMENT_LIMIT</code>) — каждый с LLM</td>
+</tr>
+<tr>
+<td>Судья</td>
+<td>1</td>
+</tr>
+<tr>
+<td><strong>Итого макс. параллельных агентов</strong></td>
+<td><strong>до 56</strong> (30 + 25 + 1)</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Пример</strong> (12 статей + 25 пунктов, скриншот «30/41»):
+~4–6 LLM (паспорт+извлечение+сегментация) + <strong>25 LLM-вердиктов по пунктам</strong> +
+37 эмбеддингов + 37 Pinecone (topK 5) + 1 DeepSeek ≈ <strong>30 LLM Gemini + 1 DeepSeek</strong>.</p>
+<hr />
+<h2>В.2 — Глубокий анализ PRO (<code>/api/deep-analyze-document</code>)</h2>
+<p>Оркестратор <code>runDeepAnalysis()</code>. Архитектура «Старший партнёр + команда».
+<strong>Параметры запроса:</strong> <code>perspective</code> (<code>ours</code>/<code>opponent</code>/<code>audit</code>) ·
+<code>modules</code> (любая комбинация <code>audit</code>, <code>strategy</code>, <code>drafter</code>, <code>mentor</code> — <strong>макс. 4</strong>).</p>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Агент / модуль</th>
+<th>Под-агенты</th>
+<th>Pinecone topK</th>
+<th>LLM-вызовов</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Паспорт + сегментация</td>
+<td>—</td>
+<td>—</td>
+<td>2 (+ чанки)</td>
+</tr>
+<tr>
+<td><strong>Аудитор</strong> (<code>audit</code>)</td>
+<td>redFlags · collisions · procKiller · factCheck</td>
+<td>factCheck: 5 на статью</td>
+<td>3 + 1 (экстрактор внутри factCheck)</td>
+</tr>
+<tr>
+<td>└ factCheck → верификаторы статей</td>
+<td>до 30</td>
+<td>5</td>
+<td>0 (regex)</td>
+</tr>
+<tr>
+<td><strong>Стратег</strong> (<code>strategy</code>)</td>
+<td>heatmap + контраргументы</td>
+<td>5 на контраргумент</td>
+<td>1 + до <strong>6</strong></td>
+</tr>
+<tr>
+<td><strong>Драфтер</strong> (<code>drafter</code>)</td>
+<td>—</td>
+<td>—</td>
+<td>1</td>
+</tr>
+<tr>
+<td><strong>Ментор</strong> (<code>mentor</code>)</td>
+<td>opponentSim · judgeSim</td>
+<td>—</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>Старший партнёр</strong></td>
+<td>—</td>
+<td>—</td>
+<td>1 DeepSeek V4 Pro</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Максимум агентов за один прогон (все 4 модуля включены):</strong></p>
+<pre><code>контекст(1) + сегментатор(1)
++ Аудитор: redFlags(1) + collisions(1) + procKiller(1) + factCheck-экстрактор(1)   = 4
++ Стратег: heatmap(1) + контраргументы(до 6)                                       = 7
++ Драфтер(1)
++ Ментор: opponentSim(1) + judgeSim(1)                                             = 2
++ Старший партнёр(1, DeepSeek)
+= 17 LLM-агентов  +  до 30 верификаторов статей (без LLM, внутри factCheck)
+</code></pre>
+<p><strong>Жёсткие лимиты:</strong> контраргументов — <strong>6</strong> (<code>threats.slice(0,6)</code>),
+red flags / коллизий / проц.дефектов — по 6–8, тепловая карта — 25 пунктов,
+атак ментора — 5, вопросов судьи — 5.</p>
+<p><strong>Порядок:</strong> Аудитор ∥ Стратег → (Драфтер ∥ Ментор) → Старший партнёр.</p>
+<hr />
+<h1>ГРУППА Г — СРАВНЕНИЕ РЕДАКЦИЙ (Semantic Legal Redlining)</h1>
+<p>Новый режим в IDE (вкладка <strong>«Сравнение»</strong> в pill «Чат · Агент · Сравнение»).
+Юрист загружает две версии документа — система показывает <strong>семантические</strong>
+изменения (не диффы букв), оценивает риски и выдаёт Executive Summary.</p>
+<hr />
+<h2>Г.1 — Сравнение двух редакций (<code>/api/compare-documents</code>)</h2>
+<p>Файл: <strong><code>routes/compare.js</code></strong> (единственный режим, вынесенный в отдельный модуль —
+фабрика, которой <code>server.js</code> передаёт хелперы; циркулярного require нет).</p>
+<p><strong>Архитектура Map-Reduce</strong> — четыре этапа:</p>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Этап</th>
+<th>Что делает</th>
+<th>Pinecone</th>
+<th>LLM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>0. CONTEXT</strong></td>
+<td><code>extractDocumentContext</code> извлекает тип, отрасль и стороны договора (инжектируется в сегментатор и воркеры)</td>
+<td>—</td>
+<td>1</td>
+</tr>
+<tr>
+<td><strong>1. ALIGN</strong></td>
+<td>сегментация обоих документов с лимитом <code>COMPARE_SEG_LIMIT = 60</code> + эмбеддинги каждого пункта + жадное сопоставление по cosine similarity (порог <strong>≥ 0.78</strong>)</td>
+<td>— (используются только эмбеддинги)</td>
+<td>2–4 (сегментаторы)</td>
+</tr>
+<tr>
+<td><strong>2. MAP</strong></td>
+<td>пары → 1 пара = 1 агент (<code>WORKER_BATCH_SIZE = 1</code>) → параллельные воркеры на <code>gemini-2.5-flash</code> (<code>temperature: 0.2</code>, <code>maxOutputTokens: 2048</code>) с учетом контекста документа дают вердикт: hasChanges / category / riskDetected / riskDescription</td>
+<td>—</td>
+<td>до <strong>~100</strong> воркеров (волнами по <code>WORKER_CONCURRENCY = 12</code>)</td>
+</tr>
+<tr>
+<td><strong>3. REDUCE</strong></td>
+<td>фильтр важных изменений → <strong>компактная дельта</strong> (НЕ полные тексты, чтобы уложиться в окно судьи 12K) → DeepSeek V4 Pro (с <code>reasoning_effort: 'medium'</code>) стримит Executive Summary</td>
+<td>—</td>
+<td>1 DeepSeek (с откатом на Gemini)</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Параметры:</strong></p>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Параметр</th>
+<th>Значение</th>
+<th>Где задано</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Порог выравнивания cos-similarity</td>
+<td><strong>0.78</strong></td>
+<td><code>ALIGN_THRESHOLD</code></td>
+</tr>
+<tr>
+<td>Размер батча воркера</td>
+<td><strong>1 пара</strong></td>
+<td><code>WORKER_BATCH_SIZE</code></td>
+</tr>
+<tr>
+<td>Макс. пар в обработке</td>
+<td><strong>100</strong></td>
+<td><code>MAX_PAIRS</code></td>
+</tr>
+<tr>
+<td>Макс. пунктов на документ</td>
+<td><strong>60</strong></td>
+<td><code>COMPARE_SEG_LIMIT</code> (отдельный)</td>
+</tr>
+<tr>
+<td>Мин. длина каждого документа</td>
+<td><strong>50 симв.</strong></td>
+<td><code>MIN_DOC_LEN</code></td>
+</tr>
+<tr>
+<td>Лимит одновременных LLM-воркеров</td>
+<td><strong>12</strong></td>
+<td><code>WORKER_CONCURRENCY</code></td>
+</tr>
+<tr>
+<td>Лимит одновременных эмбеддингов</td>
+<td><strong>20</strong></td>
+<td><code>EMBED_CONCURRENCY</code></td>
+</tr>
+<tr>
+<td>Запрос для эмбеддинга пункта</td>
+<td>до 1500 симв.</td>
+<td><code>EMBED_QUERY_MAX</code></td>
+</tr>
+<tr>
+<td>Текст пункта в промпте воркера</td>
+<td>до 1200 симв.</td>
+<td><code>SEGMENT_TEXT_LIMIT</code></td>
+</tr>
+<tr>
+<td>Дельта для судьи</td>
+<td>до 12000 симв.</td>
+<td><code>DELTA_CHARS_LIMIT</code></td>
+</tr>
+<tr>
+<td>temperature воркеров</td>
+<td><strong>0.2</strong></td>
+<td>inline в <code>runWorkerBatch</code></td>
+</tr>
+<tr>
+<td>temperature судьи</td>
+<td><strong>0.25</strong></td>
+<td>inline в вызове <code>streamDeepSeekResponse</code></td>
+</tr>
+<tr>
+<td>reasoning судьи (DeepSeek)</td>
+<td><strong>medium</strong></td>
+<td>inline в вызове <code>streamDeepSeekResponse</code></td>
+</tr>
+<tr>
+<td>Rate limit</td>
+<td><strong>8 / мин</strong></td>
+<td>отдельный <code>compareLimiter</code></td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Категории изменений (выдаёт воркер для каждой пары):</strong></p>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Категория</th>
+<th>Значение</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>стилистика</code></td>
+<td>формулировки переписаны, юр. смысл не изменился</td>
+</tr>
+<tr>
+<td><code>существенное изменение</code></td>
+<td>права/обязанности/сроки/суммы реально изменены</td>
+</tr>
+<tr>
+<td><code>добавление</code></td>
+<td>пункт есть только в новой редакции</td>
+</tr>
+<tr>
+<td><code>удаление</code></td>
+<td>пункт был в старой, в новой отсутствует</td>
+</tr>
+</tbody>
+</table></div>
+<p><code>riskDetected: true</code> ставится ТОЛЬКО когда новая редакция объективно хуже для
+нашей стороны (выше ответственность, сокращены права, иная подсудность и т.п.).</p>
+<p><strong>Максимум агентов за один прогон:</strong></p>
+<pre><code>1 экстрактор контекста
++ 2 сегментатора (старый ∥ новый)
++ до 200 эмбеддингов (100 + 100) — без LLM
++ до 100 воркеров-аудиторов (1 пара = 1 агент) — параллельно (волнами по 12)
++ 1 Старший партнёр (DeepSeek V4 Pro) — стрим финального резюме (reasoning: medium)
+= до 104 LLM-агентов + 200 эмбеддингов
+</code></pre>
+<p><strong>SSE-события клиенту</strong> (фронт <code>&lt;CompareMode/&gt;</code> уже умеет их рендерить):</p>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Событие</th>
+<th>Когда</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>{ step: { id, status, text } }</code></td>
+<td>для каждого этапа: segment / embed / align / map / judge</td>
+</tr>
+<tr>
+<td><code>{ protocolStatus }</code></td>
+<td>статусные строки для тоста</td>
+</tr>
+<tr>
+<td><code>{ compareReport: { total, matched, added, removed, risksCount, substantialCount, pairs[] } }</code></td>
+<td>один раз — ПОЛНЫЙ side-by-side отчёт ДО синтеза, фронт сразу рисует</td>
+</tr>
+<tr>
+<td><code>{ text }</code></td>
+<td>чанки Executive Summary от DeepSeek</td>
+</tr>
+<tr>
+<td><code>[DONE]</code></td>
+<td>конец</td>
+</tr>
+</tbody>
+</table></div>
+<p><strong>Промпты:</strong> <code>WORKER_SYSTEM_PROMPT</code>, <code>JUDGE_SYSTEM_PROMPT_COMPARE</code> —
+оба inline внутри <code>routes/compare.js</code>, у обоих явный запрет на упоминание
+внутренней кухни системы.</p>
+<p><strong>Фронтенд:</strong> компонент <code>&lt;CompareMode/&gt;</code> в IDE — две текст-зоны (или
+<code>.txt</code>-загрузка) → кнопка «Сравнить» → стриминговый степпер + Executive
+Summary сверху + двухколоночный side-by-side viewer с цветной подсветкой
+(🔴 риск · 🟡 сущ. изменение · 🟢 добавлено · ⚫ удалено) и кликом на пункт
+для всплывающей карточки с описанием риска.</p>
+<hr />
+<h2>2. Сводка вызовов</h2>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Режим</th>
+<th>Эмбеддинги</th>
+<th>Pinecone (topK)</th>
+<th>LLM Gemini</th>
+<th>DeepSeek</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Болталка</td>
+<td>0</td>
+<td>0</td>
+<td>1</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Быстрый</td>
+<td>1</td>
+<td>1 × topK10</td>
+<td>1</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Думающий → Простой</td>
+<td>1</td>
+<td>1 × topK15</td>
+<td>1–2</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Думающий → Глубокий</td>
+<td>5</td>
+<td>5 (topK 5/10/8/6/5)</td>
+<td>2–3</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Агент-редактор</td>
+<td>1</td>
+<td>1 × topK10–22</td>
+<td>1</td>
+<td>0</td>
+</tr>
+<tr>
+<td>AI-редактор</td>
+<td>0</td>
+<td>0</td>
+<td>1</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Проверка документа</td>
+<td>N статей + N пунктов</td>
+<td>каждый × topK5</td>
+<td>~3 + N пунктов</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Глубокий анализ PRO</td>
+<td>~6–36</td>
+<td>каждый × topK5</td>
+<td>~12–18</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Сравнение редакций</td>
+<td>до 200 (100+100)</td>
+<td>—</td>
+<td>до 103 (1 конт. + 2 сегм. + до 100 ворк.)</td>
+<td>1 (reasoning: medium)</td>
+</tr>
+</tbody>
+</table></div>
+<hr />
+<h2>3. Справочник промптов</h2>
+<div class="tw"><table border="1">
+<thead>
+<tr>
+<th>Константа</th>
+<th>Режим</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>systemInstruction</code></td>
+<td>Болталка, Быстрый</td>
+</tr>
+<tr>
+<td><code>BASE_CONSULTANT_PROMPT</code></td>
+<td>Думающий (Простой + Глубокий)</td>
+</tr>
+<tr>
+<td><code>ACADEMIC_PROMPT_ADDON</code></td>
+<td>+ при запросе курсовой / СРС / реферата</td>
+</tr>
+<tr>
+<td><code>L4_WARNING_ADDON</code></td>
+<td>+ при просьбе составить иск / жалобу в суд</td>
+</tr>
+<tr>
+<td><code>AGENT_SYSTEM_PROMPT</code></td>
+<td>Агент-редактор</td>
+</tr>
+<tr>
+<td><code>JUDGE_SYSTEM_PROMPT</code></td>
+<td>Финал «Проверки документа»</td>
+</tr>
+<tr>
+<td><code>SENIOR_PARTNER_PROMPT</code></td>
+<td>Финал «Глубокого анализа PRO»</td>
+</tr>
+<tr>
+<td><code>WORKER_SYSTEM_PROMPT</code> (compare.js)</td>
+<td>Воркер-аудитор пар в «Сравнении»</td>
+</tr>
+<tr>
+<td><code>JUDGE_SYSTEM_PROMPT_COMPARE</code> (compare.js)</td>
+<td>Старший партнёр — Executive Summary в «Сравнении»</td>
+</tr>
+</tbody>
+</table></div>
+<p>Промпты воркеров (экстрактор, сегментатор, посегментный судья, Аудитор,
+Стратег, Драфтер, Ментор) заданы inline внутри соответствующих функций.</p>
+<hr />
+<h2>4. Что НЕ относится к режимам IDE</h2>
+<ul>
+<li><strong>Telegram-бот</strong> (<code>./telegram/bot</code>) — отдельный канал.</li>
+<li><strong><code>/api/minjust/*</code></strong> — прокси к cbd.minjust.gov.kg с кэшем (200 записей, TTL 1ч).</li>
+<li><strong><code>/api/stats</code></strong>, <code>/health</code>, <code>/ping</code> — служебные эндпоинты.</li>
+</ul>
+<hr />
+<p><em>Сгенерировано по коду <code>server.js</code> на 2026-05-22.
+При изменении моделей, topK, лимитов или промптов — обновить этот файл.</em></p></body></html>
