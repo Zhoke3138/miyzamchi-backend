@@ -5,7 +5,6 @@
 
 // --- 1. FIREBASE CONFIG ---
 const firebaseConfig = {
-    apiKey: "AIzaSyA0LaxLJKvIpDY9AkLWbzj_3BDjSiHQXRU",
     authDomain: "millioner-aea5b.firebaseapp.com",
     projectId: "millioner-aea5b",
     storageBucket: "millioner-aea5b.firebasestorage.app",
