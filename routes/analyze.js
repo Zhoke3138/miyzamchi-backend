@@ -40,7 +40,13 @@ const { shouldRunPhase3 } = require('../lib/smartSkipPhase3');
 const { createHybridSegmenter } = require('../lib/hybridSegmenter');
 const { createSmoothBurstThrottle } = require('../lib/smoothBurstThrottle');
 const { createAgentDispatcher } = require('../lib/agentDispatcher');
-const { normalizeContext, injectGlobalContext, buildContextualSystemPrompt } = require('../lib/globalContext');
+const { normalizeContext } = require('../lib/globalContext');
+// ── 2026-05-30: Hierarchical Contextual RAG (Macro + Mezzo + Micro) ──────
+// Заменяет старые plain global/local-context injection. Универсальная
+// система: одна архитектура работает от расписки на салфетке до иска в ООН.
+const { generateDocumentPassport } = require('../lib/documentPassport');
+const { buildChunkTopology } = require('../lib/topology');
+const { buildHCREmbeddingQuery, buildHCRSystemPrompt, buildHCRUserPromptLine } = require('../lib/hierarchicalContext');
 
 class TelemetryCollector {
     constructor() {
@@ -708,13 +714,24 @@ ${compactSegments}
     }
 
     // ── VERIFIER AGENT ──────────────────────────────────────────────
-    // 2026-05-30: docContext теперь принимается как объект
-    // { summary, docType, branchHint, npaHints } (через normalizeContext).
-    // Принимается также legacy-string (backwards-compat) — normalizeContext()
-    // приведёт к объекту.
-    async function runVerifierAgent(task, docContext, segmentRef, metaContext, aborted, telemetry) {
+    // 2026-05-30 HCR: тройной контекст вместо плоского docContext.
+    //   • Macro: task.passport (AI-паспорт документа)
+    //   • Mezzo: task.topology (позиция чанка в документе)
+    //   • Micro: task.textToAnalyze (сам чанк)
+    // Все три собираются в одну embedding query (buildHCREmbeddingQuery)
+    // и в один system prompt (buildHCRSystemPrompt + docTypeHint).
+    // Унаследованный параметр `docContextOrPassport` принимается как
+    // passport (новый формат) или как legacy-string (backwards-compat —
+    // нормализуется как заголовок).
+    async function runVerifierAgent(task, docContextOrPassport, segmentRef, metaContext, aborted, telemetry) {
         if (aborted.value) return null;
         const { textToAnalyze, targetType, targetArticle, topK, articleGroup, preFetchedArticles } = task;
+        // HCR: passport берём из task (новый contract). Fallback на параметр,
+        // если caller передал готовый passport-подобный объект.
+        const passport = task.passport
+            || (docContextOrPassport && typeof docContextOrPassport === 'object' && docContextOrPassport.title
+                ? docContextOrPassport : null);
+        const topology = task.topology || null;
 
         // Phase 3 интеграция: с pre-fetched relevant_articles кэш не применяем
         // (контекст может отличаться даже на идентичных пунктах в разных документах).
@@ -734,9 +751,9 @@ ${compactSegments}
         if (aborted.value) return null;
 
         try {
-            // Global Context Injection — паспорт документа сильным сигналом
-            // пробрасывается в embedding (Pinecone) И в system prompt агента.
-            const ctx = normalizeContext(docContext);
+            // 2026-05-30 HCR: всё, что нужно для embedding и system prompt,
+            // живёт в passport (Macro) и topology (Mezzo). Helpers сами
+            // обрабатывают null (graceful: оригинальный текст в хвосте).
             const textHead = textToAnalyze.slice(0, 450);
 
             let applicableArticles = [];
@@ -758,19 +775,27 @@ ${compactSegments}
                 // Старый путь: keyword extraction → Pinecone search.
                 let allCandidates = [];
                 let pineconeStart = performance.now();
+                // 2026-05-30 HCR: buildHCREmbeddingQuery даёт ОДНУ строку для
+                // Pinecone с тройным контекстом: Macro (passport: title +
+                // branches + expectedNpas + semanticHints) + Mezzo (topology:
+                // п.N/M, раздел) + Micro (сам text). Универсально работает:
+                //   • для жалоб с явными "ст. 137" — expectedNpas={УК КР} даёт
+                //     точечный hit
+                //   • для договоров без явных статей — semanticHints={"кабальные
+                //     условия", "неустойка"} тащит Pinecone в ГК КР по смыслу.
                 if (targetType === 'multi-article' && Array.isArray(articleGroup) && articleGroup.length > 0) {
                     const searches = await Promise.all(articleGroup.map(async (art) => {
                         const q = `Статья ${art.number} ${art.act} ` + textHead;
-                        const v = await getEmbedding(injectGlobalContext(q, ctx));
+                        const v = await getEmbedding(buildHCREmbeddingQuery(q, passport, topology));
                         return searchPinecone(v, 3);
                     }));
                     allCandidates = searches.flat();
                 } else if (targetType === 'article') {
                     const q = `Статья ${targetArticle.number} ${targetArticle.act} ` + textHead;
-                    const v = await getEmbedding(injectGlobalContext(q, ctx));
+                    const v = await getEmbedding(buildHCREmbeddingQuery(q, passport, topology));
                     allCandidates = await searchPinecone(v, topK);
                 } else {
-                    const v = await getEmbedding(injectGlobalContext(textHead, ctx));
+                    const v = await getEmbedding(buildHCREmbeddingQuery(textHead, passport, topology));
                     allCandidates = await searchPinecone(v, topK);
                 }
                 if (telemetry) {
@@ -810,13 +835,22 @@ ${metaLine}Применяй ТОЛЬКО нормы из переданных RA
 Если найденные статьи относятся к ДРУГОЙ отрасли → status="warning" и поясни почему.
 Не упоминай в ответе слова "RAG", "база данных", "Pinecone", "система".
 Отвечаешь СТРОГО валидным JSON без markdown без пояснений.`;
-            // Global Context Injection в system prompt: жёсткая привязка к
-            // типу/отрасли/ожидаемым НПА. Снижает RAG-галлюцинации (агент не
-            // будет тащить Закон о рекламе на жалобу в ООН).
-            const systemPrompt = buildContextualSystemPrompt(baseSystemPrompt, ctx);
+            // 2026-05-30 HCR: buildHCRSystemPrompt добавляет 3 блока В НАЧАЛО
+            // basePrompt:
+            //   📋 ПАСПОРТ ДОКУМЕНТА (Macro: title, docType, summary, branches,
+            //      expectedNpas, semanticHints, parties)
+            //   📍 ТОПОЛОГИЯ ПУНКТА (Mezzo: chunkIndex/totalChunks, section,
+            //      prevHeading, nextHeading)
+            //   🎯 ФОКУС (docTypeHint: специфическая инструкция под тип
+            //      документа — расписка/жалоба/иск/договор и т.д.)
+            // Один промпт обслуживает любой документ.
+            const systemPrompt = buildHCRSystemPrompt(baseSystemPrompt, passport, topology);
 
-            const userPrompt = `КОНТЕКСТ ВСЕГО ДОКУМЕНТА: ${ctx?.summary || 'Не указан'}
-ФОКУС ТВОЕЙ ПРОВЕРКИ: ${focusInstruction}
+            // Sticky-строка в userPrompt — подстраховка если модель проигнорит system.
+            const localLine = buildHCRUserPromptLine(topology);
+
+            const userPrompt = `КОНТЕКСТ ВСЕГО ДОКУМЕНТА: ${passport?.summary || passport?.title || 'Не указан'}
+${localLine}ФОКУС ТВОЕЙ ПРОВЕРКИ: ${focusInstruction}
 
 Фрагмент (${segmentRef}):
 """
@@ -1028,7 +1062,7 @@ ${ragContext}
     }
 
     // ── MAP-фаза ────────────────────────────────────────────────────
-    async function verifySegmentsSmart(segmentsWithIdx, res, docContext, metaContext, aborted, telemetry, phase3ByAuditIdx = null) {
+    async function verifySegmentsSmart(segmentsWithIdx, res, passport, metaContext, aborted, telemetry, phase3ByAuditIdx = null, chunkContexts = null, allSegments = null) {
         if (!segmentsWithIdx || segmentsWithIdx.length === 0) return [];
 
         // ── 2026-05-30: Flat tasks через Smooth Burst Throttle (20 RPS) ────
@@ -1068,6 +1102,19 @@ ${ragContext}
             // Добавляем мета-поля к каждой task — нужны agentDispatcher
             // (он зовёт runVerifierAgent(task, docContext, task.segmentRef, task.metaContext, ...))
             // и onResult callback'у (segmentIdx / houndIdx для аккумуляции).
+            //
+            // 2026-05-30 HCR: топология — Mezzo-уровень. Strict: посчитать
+            // на ВСЁМ списке segments (allSegments), а не только на audit-подмножестве,
+            // чтобы chunkIndex/totalChunks отражали реальный документ.
+            const topologySource = Array.isArray(allSegments)
+                ? allSegments.map(s => String(s?.text || ''))
+                : segmentsWithIdx.map(s => String(s?.seg?.text || ''));
+            const topology = buildChunkTopology({
+                chunks: topologySource,
+                chunkIndex: originalIdx,
+                chunkContexts
+            });
+
             for (let houndIdx = 0; houndIdx < houndTasks.length; houndIdx++) {
                 allTasks.push({
                     ...houndTasks[houndIdx],
@@ -1075,7 +1122,11 @@ ${ragContext}
                     houndIdx,
                     originalIdx,
                     segmentRef: refLabel,
-                    metaContext
+                    metaContext,
+                    // HCR triple context: Macro (passport) + Mezzo (topology) +
+                    // Micro (task.textToAnalyze). runVerifierAgent композирует.
+                    passport,
+                    topology
                 });
             }
 
@@ -1089,7 +1140,11 @@ ${ragContext}
         const finalVerdicts = new Array(segmentsWithIdx.length);
 
         await agentDispatcher.dispatch(allTasks, {
-            docContext,                // объект {summary, docType, branchHint, npaHints}
+            // 2026-05-30 HCR: passport заменяет docContext. agentDispatcher
+            // прокидывает его дальше как первый позиционный параметр в
+            // runVerifierAgent (там читается из task.passport, но передаём
+            // и через dispatcher для совместимости с прежним контрактом).
+            docContext: passport,
             aborted,
             telemetry,
             stageLabel: 'verify_segments',
@@ -1256,6 +1311,14 @@ ${riskReports}
                         text: `Документ разбит на пунктов: ${cached.segments.length}`,
                         reason: '⚡ Из теневого кэша'
                     });
+                    if (cached.passport) {
+                        sendStep(res, {
+                            id: 'passport',
+                            status: 'success',
+                            text: `📋 ${cached.passport.title || 'Паспорт документа'}`,
+                            reason: '⚡ Из теневого кэша'
+                        });
+                    }
                     sendStep(res, {
                         id: 'triage',
                         status: 'success',
@@ -1304,12 +1367,17 @@ ${riskReports}
         // lightLLMCascade. Lossless-guard. См. SEGMENTATION_STRATEGY.md.
         if (telemetry) telemetry.startTimer('Segmentation_Time');
         let segments = [];
+        // chunkContexts параллельный массив: chunkContexts[i] относится к segments[i].
+        // Заполняется hybridSegmenter (sticky section + npa). Используется агентом
+        // через injectLocalContext / buildLocalContextBlock для борьбы с Orphan Chunks.
+        let chunkContexts = [];
         try {
             const hybridResult = await hybridSegmenter.segment(documentText, {
                 stageLabel: 'analyze_doc_segments',
                 telemetry
             });
             segments = wrapAsAnalyzeSegments(hybridResult.chunks);
+            chunkContexts = Array.isArray(hybridResult.chunkContexts) ? hybridResult.chunkContexts : [];
             // Засекаем какие слои использовались — полезно в telemetry
             if (telemetry?.incrementCounter) {
                 telemetry.incrementCounter('hybrid_segments_total', hybridResult.chunks.length);
@@ -1319,13 +1387,21 @@ ${riskReports}
                 if (hybridResult.layers?.includes('fallback')) {
                     telemetry.incrementCounter('hybrid_fallback_to_a');
                 }
+                const npaHits = chunkContexts.filter(c => c && c.npa).length;
+                if (npaHits > 0) telemetry.incrementCounter('local_ctx_npa_hits', npaHits);
             }
-            logger.info?.(`[Hybrid] layers=${(hybridResult.layers || []).join('+')} chunks=${segments.length} quality=${hybridResult.quality?.action || 'n/a'}`);
+            logger.info?.(`[Hybrid] layers=${(hybridResult.layers || []).join('+')} chunks=${segments.length} npa-hits=${chunkContexts.filter(c => c && c.npa).length} quality=${hybridResult.quality?.action || 'n/a'}`);
         } catch (segErr) {
             // Защитный catch — hybridSegmenter graceful degrade, но если совсем
             // упал — откатываемся на чистый Layer A (regex). Lossless гарантирован.
             logger.warn?.(`[Hybrid] unexpected throw, falling back to Layer A only: ${segErr.message}`);
-            segments = wrapAsAnalyzeSegments(segmentDocumentRegex(documentText, { telemetry }));
+            const rawChunks = segmentDocumentRegex(documentText, { telemetry });
+            segments = wrapAsAnalyzeSegments(rawChunks);
+            // На fallback-пути берём sticky-контекст из чистого Layer A.
+            try {
+                const { buildChunkContexts } = require('../lib/localContext');
+                chunkContexts = buildChunkContexts(rawChunks);
+            } catch (_) { chunkContexts = []; }
         }
         if (telemetry) telemetry.endTimer('Segmentation_Time');
 
@@ -1347,8 +1423,36 @@ ${riskReports}
         sendStatus(res, '🚦 Светофор: разделяю типовые и требующие проверки...');
         const triagePromise = runTriage(segments, aborted, telemetry);
 
-        // Ждём оба → max(Router, Triage) = ~Triage time
-        const [docContext, triageResult] = await Promise.all([docContextPromise, triagePromise]);
+        // ── 2026-05-30: Hierarchical Contextual RAG — Macro layer ──────
+        // AI-паспорт документа (1 LLM-вызов через lightLLMCascade Tier 1 ≈ 1с,
+        // ~600/200 токенов, ~$0.0001). Запускается параллельно с Router+Triage —
+        // на cold-start добавляет 0 латентности (max-параллельный). На warm-start
+        // (Shadow Pipeline) достаётся из session-кэша. Возвращает null на ошибке
+        // (graceful degradation: дальше pipeline работает без passport).
+        sendStep(res, { id: 'passport', status: 'loading', text: '📋 Формирую паспорт документа' });
+        const passportPromise = generateDocumentPassport({
+            text: documentText,
+            segmentsCount: segments.length,
+            cascade: lightLLMCascade,
+            telemetry,
+            logger
+        }).then(p => {
+            if (p) {
+                sendStep(res, { id: 'passport', status: 'success',
+                                text: `📋 ${p.title || 'Паспорт документа готов'}`,
+                                reason: p.expectedNpas?.length ? `Ожидаемые НПА: ${p.expectedNpas.slice(0, 3).join(', ')}` : null });
+            } else {
+                sendStep(res, { id: 'passport', status: 'warning', text: 'Паспорт документа не сформирован' });
+            }
+            return p;
+        }).catch(e => {
+            logger.warn?.('[Passport] unexpected throw:', e.message);
+            sendStep(res, { id: 'passport', status: 'warning', text: 'Паспорт документа не сформирован' });
+            return null;
+        });
+
+        // Ждём все три → max(Router, Triage, Passport) ≈ Triage (он обычно самый длинный)
+        const [docContext, triageResult, passport] = await Promise.all([docContextPromise, triagePromise, passportPromise]);
         const { triage, meta_context, mode: triageMode } = triageResult;
 
         const skipCount = triage.filter(t => t.action === 'skip').length;
@@ -1363,6 +1467,11 @@ ${riskReports}
         const state = {
             docContext,
             segments,
+            // chunkContexts параллельно с segments — нужен для topology builder
+            // (sticky section). Не используется напрямую в HCR-промптах.
+            chunkContexts,
+            // 2026-05-30: AI-паспорт документа — Macro-уровень HCR.
+            passport,
             triage,
             meta_context,
             documentTextHash: sessionHashDoc(documentText)
@@ -1522,22 +1631,13 @@ ${riskReports}
                     return res.end();
                 }
 
-                const { docContext, segments, triage, meta_context } = state;
+                const { docContext, segments, triage, meta_context, chunkContexts: stateChunkContexts, passport: statePassport } = state;
                 const docContextStr = formatDocContext(docContext);
 
-                // ── 2026-05-30: docContextForAgents — паспорт для injection в Ищеек ─
-                // Старый формат (docContextStr: string) остаётся для Final Judge
-                // (он принимает в userPrompt одной строкой). Новый формат — объект
-                // {summary, docType, branchHint, npaHints} — идёт в agentDispatcher
-                // → injectGlobalContext (Pinecone embedding) + buildContextualSystemPrompt
-                // (LLM system prompt). normalizeContext тащит valid поля, отбрасывает
-                // пустые.
-                const docContextForAgents = normalizeContext({
-                    summary:    docContextStr,
-                    docType:    docContext?.document_type,
-                    branchHint: docContext?.subject_area,
-                    npaHints:   Array.isArray(docContext?.expected_npa) ? docContext.expected_npa : undefined
-                });
+                // ── 2026-05-30: HCR-passport. Если генератор вернул null (cascade
+                // failed) — пробрасываем null, агенты работают без macro-блока
+                // (graceful degradation). Если есть — он будет в task.passport.
+                const passport = statePassport || null;
 
                 // Разводим пункты по двум корзинам по triage
                 const skipSegmentsWithIdx = [];
@@ -1628,8 +1728,8 @@ ${riskReports}
 
                     sendStatus(res, `🔬 Глубокий аудит ${auditSegmentsWithIdx.length} пунктов...`);
                     finalResults = await verifySegmentsSmart(
-                        auditSegmentsWithIdx, res, docContextForAgents, meta_context, aborted, telemetry,
-                        phase3ChunkAnalyses
+                        auditSegmentsWithIdx, res, passport, meta_context, aborted, telemetry,
+                        phase3ChunkAnalyses, stateChunkContexts, segments
                     );
                 } else {
                     console.log('[analyze-document] All segments triaged as skip — no deep audit needed');

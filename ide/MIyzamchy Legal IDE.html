@@ -687,8 +687,21 @@ const AnalyzeDocsMode = () => {
   const [activePair, setActivePair] = useState(null);
   const [error, setError]         = useState('');
   const [dragOverIdx, setDragOverIdx] = useState(-1);
+  // 2026-05-30: телеметрия. Каждый SSE-event {telemetry: {...}} аккумулируется.
+  // tele.elapsedMs тикает каждые 100ms пока running=true.
+  const EMPTY_TELE = { calls:0, input:0, output:0, cost:0, lastModel:null, lastLabel:null, startedAt:null, elapsedMs:0 };
+  const [tele, setTele] = useState({...EMPTY_TELE});
   const abortRef = useRef(null);
   const fileInputRefs = [useRef(null), useRef(null)];
+
+  // ── Live-таймер: тикает каждые 100ms пока running ─────────────
+  useEffect(() => {
+    if (!running || !tele.startedAt) return;
+    const id = setInterval(() => {
+      setTele(t => ({ ...t, elapsedMs: Date.now() - (t.startedAt || Date.now()) }));
+    }, 100);
+    return () => clearInterval(id);
+  }, [running, tele.startedAt]);
 
   const readyCount = slots.filter(s => s.status === 'ready').length;
   const loadingCount = slots.filter(s => s.status === 'loading').length;
@@ -744,10 +757,28 @@ const AnalyzeDocsMode = () => {
     return [...prev, s];
   });
 
+  // ── Telemetry SSE handler — аккумулирует per-call события ────
+  // Бэкенд (server.js sendTelemetry) шлёт {telemetry: {label, model,
+  // inputTokens, outputTokens, cost, ...}} на КАЖДЫЙ LLM-вызов.
+  const onTelemetryEvent = (t) => {
+    if (!t) return;
+    setTele(prev => ({
+      ...prev,
+      calls:     prev.calls  + 1,
+      input:     prev.input  + (t.inputTokens  || 0),
+      output:    prev.output + (t.outputTokens || 0),
+      cost:      prev.cost   + (t.cost         || 0),
+      lastModel: t.model || prev.lastModel,
+      lastLabel: t.label || prev.lastLabel
+    }));
+  };
+
   // ── Run (audit или compare в зависимости от mode) ─────────────
   const onRun = async () => {
     setRunning(true); setError('');
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null);
+    // Reset телеметрию с новым startedAt
+    setTele({ ...EMPTY_TELE, startedAt: Date.now() });
     const ac = new AbortController();
     abortRef.current = ac;
     try {
@@ -765,17 +796,18 @@ const AnalyzeDocsMode = () => {
           onText:         (chunk) => setSummary(p => p + chunk),
           onSources:      (s) => setSources(Array.isArray(s) ? s : []),
           onMetadata:     () => {},
-          onTelemetry:    () => {}
+          onTelemetry:    onTelemetryEvent
         });
       } else if (mode === 'compare') {
         await streamCompareDocuments({
           oldDocumentText: slots[0].text,
           newDocumentText: slots[1].text,
           signal: ac.signal,
-          onStep:    (s) => upsertStep(s),
-          onStatus:  () => {},
-          onReport:  (r) => setReport(r),
-          onText:    (chunk) => setSummary(p => p + chunk)
+          onStep:       (s) => upsertStep(s),
+          onStatus:     () => {},
+          onReport:     (r) => setReport(r),
+          onText:       (chunk) => setSummary(p => p + chunk),
+          onTelemetry:  onTelemetryEvent
         });
       }
     } catch (err) {
@@ -783,6 +815,8 @@ const AnalyzeDocsMode = () => {
     } finally {
       setRunning(false);
       abortRef.current = null;
+      // Финализируем elapsedMs (фиксируем финальную цифру, таймер остановится сам)
+      setTele(t => t.startedAt ? { ...t, elapsedMs: Date.now() - t.startedAt } : t);
     }
   };
 
@@ -791,6 +825,7 @@ const AnalyzeDocsMode = () => {
     setRunning(false);
     setSlots([{...EMPTY_SLOT}, {...EMPTY_SLOT}]);
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null); setError('');
+    setTele({...EMPTY_TELE});
   };
 
   // ── IDLE: drag&drop слоты ─────────────────────────────────────
@@ -915,6 +950,31 @@ const AnalyzeDocsMode = () => {
             <span>· 📌 Сущ.: <b>{report.substantialCount}</b></span>
             <span>· + {report.added}</span>
             <span>· − {report.removed}</span>
+          </div>
+        )}
+        {/* ── 2026-05-30: Live телеметрия (время / токены / стоимость) ── */}
+        {(running || tele.calls > 0) && (
+          <div className="ad-tele-row" title={tele.lastModel ? `Последний вызов: ${tele.lastLabel || '—'} · ${tele.lastModel}` : 'Телеметрия по SSE'}>
+            <div className={'ad-tele-badge' + (running ? ' ad-tele-badge--live' : '')}>
+              <span className="ad-tele-ico">⏱</span>
+              <span className="ad-tele-val">{(tele.elapsedMs / 1000).toFixed(1)}</span>
+              <span className="ad-tele-unit">сек</span>
+            </div>
+            <div className="ad-tele-badge">
+              <span className="ad-tele-ico">🪙</span>
+              <span className="ad-tele-val">{tele.input.toLocaleString('ru-RU')}</span>
+              <span className="ad-tele-sep">/</span>
+              <span className="ad-tele-val">{tele.output.toLocaleString('ru-RU')}</span>
+              <span className="ad-tele-unit">tok</span>
+            </div>
+            <div className="ad-tele-badge ad-tele-badge--cost">
+              <span className="ad-tele-ico">💵</span>
+              <span className="ad-tele-val">${tele.cost.toFixed(5)}</span>
+            </div>
+            <div className="ad-tele-badge ad-tele-badge--ghost" title="Количество LLM-вызовов в пайплайне">
+              <span className="ad-tele-val">{tele.calls}</span>
+              <span className="ad-tele-unit">×</span>
+            </div>
           </div>
         )}
       </div>

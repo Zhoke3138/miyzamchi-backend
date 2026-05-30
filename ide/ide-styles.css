@@ -3964,8 +3964,61 @@ body.dk .analyze-accordion-content {
 .ad-sources-list{ margin:0; padding-left:var(--s-3); color:var(--muted); }
 .ad-sources-list li{ margin:4px 0; }
 
+/* ── Telemetry badges (Live: время / токены / стоимость / calls) ─ */
+/* 2026-05-30: возвращаем счётчики после рефакторинга под drag&drop.
+   Минималистичный фирменный стиль: тонкий border-muted, font-mono,
+   accent-glow на hover. .ad-tele-badge--live пульсирует пока stream идёт. */
+.ad-tele-row{
+  display:inline-flex; align-items:center; gap:var(--s-1h);
+  margin-left:auto; flex-wrap:wrap;
+}
+.ad-tele-badge{
+  display:inline-flex; align-items:center; gap:5px;
+  padding:3px 9px; border-radius:999px;
+  border:1px solid var(--border);
+  background:var(--bg-panel);
+  font-family:var(--font-mono); font-size:11px; line-height:1;
+  color:var(--text); font-weight:500;
+  white-space:nowrap;
+  transition:border-color .15s, background .15s, color .15s, box-shadow .15s;
+}
+.ad-tele-badge:hover{
+  border-color:var(--accent);
+  box-shadow:0 0 0 2px var(--accent-dim);
+}
+.ad-tele-badge--live{
+  border-color:var(--accent);
+  background:var(--accent-dim);
+  color:var(--accent-strong, var(--accent));
+  animation:ad-tele-pulse 1.4s ease-in-out infinite;
+}
+.ad-tele-badge--cost{
+  color:#10b981;
+  border-color:rgba(16,185,129,.3);
+  background:rgba(16,185,129,.05);
+}
+.ad-tele-badge--cost:hover{
+  border-color:#10b981;
+  box-shadow:0 0 0 2px rgba(16,185,129,.15);
+}
+.ad-tele-badge--ghost{
+  color:var(--muted);
+  background:transparent;
+}
+.ad-tele-ico{ font-size:11px; opacity:.85; }
+.ad-tele-val{ font-weight:600; letter-spacing:.01em; }
+.ad-tele-unit{ color:var(--muted); font-size:10px; font-weight:500; }
+.ad-tele-sep{ color:var(--muted); opacity:.6; padding:0 1px; }
+
+@keyframes ad-tele-pulse{
+  0%, 100% { box-shadow:0 0 0 0 var(--accent-dim); }
+  50%      { box-shadow:0 0 0 4px var(--accent-dim); }
+}
+
 /* ── Mobile / narrow panel adapt ─────────────────────────────── */
 @media (max-width: 720px){
   .ad-slots{ grid-template-columns:1fr; }
+  .ad-tele-row{ width:100%; margin-left:0; margin-top:var(--s-1h); }
+  .ad-tele-badge{ font-size:10px; padding:2px 7px; }
 }
 
