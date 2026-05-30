@@ -768,10 +768,15 @@ const AnalyzeDocsMode = () => {
   // ── Telemetry SSE handler — аккумулирует per-call события ────
   // Бэкенд (server.js sendTelemetry) шлёт {telemetry: {label, model,
   // inputTokens, outputTokens, cost, ...}} на КАЖДЫЙ LLM-вызов.
-  // 2026-05-30: дублируем накопленное значение через window-event,
-  // чтобы LeftPanel мог отрендерить тот же блок "АНАЛИЗ".
+  // 2026-05-30: дублируем через 2 window-event'а:
+  //   • miyzamchi:tele-update — НАКОПЛЕННОЕ значение, для LeftPanel блока "АНАЛИЗ"
+  //   • miyzamchi:raw-telemetry — СЫРОЙ chunk, для AIChat (правая панель)
+  //     handleTelemetry → sessionStats. Так LeftTelemetryDrawer работает и
+  //     во время document analysis (не только во время прямого чата).
   const onTelemetryEvent = (t) => {
     if (!t) return;
+    // Сырая телеметрия → AIChat (для AntiGravityTracker / LeftTelemetryDrawer).
+    try { window.dispatchEvent(new CustomEvent('miyzamchi:raw-telemetry', { detail: t })); } catch(_) {}
     setTele(prev => {
       const next = {
         ...prev,
@@ -7182,6 +7187,29 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
       };
     });
   }, []);
+  // ── 2026-05-30: bridge для document-analysis телеметрии ─────────────
+  // AnalyzeDocsMode (центральная панель) шлёт сырые telemetry-чанки через
+  // window-event 'miyzamchi:raw-telemetry'. Тут мы их форвардим в
+  // handleTelemetry → sessionStats. Так AntiGravityTracker / LeftTelemetryDrawer
+  // (живут в правой панели AIChat) показывают live-статистику и во время
+  // document analysis, а не только при прямом чате.
+  //
+  // Старт/стоп таймера завязаны на tele-start/tele-done события, чтобы
+  // wallSec корректно считал время document analysis в правой панели.
+  useEffect(() => {
+    const onRaw = (e) => { if (e?.detail) handleTelemetry(e.detail); };
+    const onStart = () => { startTiming(); };
+    const onDone = () => { stopTiming(); };
+    window.addEventListener('miyzamchi:raw-telemetry', onRaw);
+    window.addEventListener('miyzamchi:tele-start', onStart);
+    window.addEventListener('miyzamchi:tele-done', onDone);
+    return () => {
+      window.removeEventListener('miyzamchi:raw-telemetry', onRaw);
+      window.removeEventListener('miyzamchi:tele-start', onStart);
+      window.removeEventListener('miyzamchi:tele-done', onDone);
+    };
+  }, [handleTelemetry, startTiming, stopTiming]);
+
   const resetSessionStats = useCallback(() => {
     setSessionStats({
       totalCalls: 0, totalInput: 0, totalOutput: 0, totalCost: 0,
