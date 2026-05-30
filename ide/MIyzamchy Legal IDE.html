@@ -476,7 +476,7 @@ async function streamUploadDocument({documentText, onStep, onStatus, signal}){
    PR3: принимает опциональный sessionId — если он есть, бэкенд
    пропускает context+segment+triage (фоновый прогрев уже сделал их).
    ═════════════════════════════════════════════════════════════ */
-async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStatus, onText, onSources, onMetadata, onConfidence, onStep, onTableRow, onPurityIndex, onTelemetry, signal}){
+async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStatus, onText, onSources, onMetadata, onConfidence, onStep, onTableRow, onPurityIndex, onTelemetry, onAgentSearch, signal}){
   const url = BACKEND_URL + '/api/analyze-document';
   console.log('[IDE Analyze] Sending to:', url, '| doc:', documentText?.length, 'ch | query:', (userQuery||'').slice(0,40), '| sessionId:', sessionId ? sessionId.slice(0,8) : 'none');
   let res;
@@ -520,6 +520,9 @@ async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStat
       if(parsed && parsed.tableRow){onTableRow && onTableRow(parsed.tableRow);}
       if(parsed && parsed.purityIndex !== undefined){onPurityIndex && onPurityIndex(parsed.purityIndex);}
       if(parsed && parsed.telemetry){onTelemetry && onTelemetry(parsed.telemetry);}
+      // 2026-05-30 Agentic RAG: модель сама вызывает search_legislation_kg.
+      // Показываем юристу в UI: "🔎 Агент ищет: <query>".
+      if(parsed && parsed.agent_search){onAgentSearch && onAgentSearch(parsed.agent_search);}
     }
   }
 }
@@ -695,10 +698,15 @@ const AnalyzeDocsMode = () => {
   const fileInputRefs = [useRef(null), useRef(null)];
 
   // ── Live-таймер: тикает каждые 100ms пока running ─────────────
+  // 2026-05-30: каждый тик дублирует tele в window-event для LeftPanel.
   useEffect(() => {
     if (!running || !tele.startedAt) return;
     const id = setInterval(() => {
-      setTele(t => ({ ...t, elapsedMs: Date.now() - (t.startedAt || Date.now()) }));
+      setTele(t => {
+        const next = { ...t, elapsedMs: Date.now() - (t.startedAt || Date.now()) };
+        try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-update', { detail: next })); } catch(_) {}
+        return next;
+      });
     }, 100);
     return () => clearInterval(id);
   }, [running, tele.startedAt]);
@@ -760,17 +768,33 @@ const AnalyzeDocsMode = () => {
   // ── Telemetry SSE handler — аккумулирует per-call события ────
   // Бэкенд (server.js sendTelemetry) шлёт {telemetry: {label, model,
   // inputTokens, outputTokens, cost, ...}} на КАЖДЫЙ LLM-вызов.
+  // 2026-05-30: дублируем накопленное значение через window-event,
+  // чтобы LeftPanel мог отрендерить тот же блок "АНАЛИЗ".
   const onTelemetryEvent = (t) => {
     if (!t) return;
-    setTele(prev => ({
-      ...prev,
-      calls:     prev.calls  + 1,
-      input:     prev.input  + (t.inputTokens  || 0),
-      output:    prev.output + (t.outputTokens || 0),
-      cost:      prev.cost   + (t.cost         || 0),
-      lastModel: t.model || prev.lastModel,
-      lastLabel: t.label || prev.lastLabel
-    }));
+    setTele(prev => {
+      const next = {
+        ...prev,
+        calls:     prev.calls  + 1,
+        input:     prev.input  + (t.inputTokens  || 0),
+        output:    prev.output + (t.outputTokens || 0),
+        cost:      prev.cost   + (t.cost         || 0),
+        lastModel: t.model || prev.lastModel,
+        lastLabel: t.label || prev.lastLabel
+      };
+      try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-update', { detail: next })); } catch(_) {}
+      return next;
+    });
+  };
+
+  // ── Agentic RAG: модель сама вызывает search_legislation_kg ─
+  // SSE-event { agent_search: { segmentRef, query, reason, turn, model } }
+  // Прокидываем во фронт через window-event для LeftPanel.
+  const onAgentSearch = (ev) => {
+    if (!ev || !ev.query) return;
+    try {
+      window.dispatchEvent(new CustomEvent('miyzamchi:agent-search', { detail: ev }));
+    } catch(_) {}
   };
 
   // ── Run (audit или compare в зависимости от mode) ─────────────
@@ -778,7 +802,9 @@ const AnalyzeDocsMode = () => {
     setRunning(true); setError('');
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null);
     // Reset телеметрию с новым startedAt
-    setTele({ ...EMPTY_TELE, startedAt: Date.now() });
+    const freshTele = { ...EMPTY_TELE, startedAt: Date.now() };
+    setTele(freshTele);
+    try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-start', { detail: freshTele })); } catch(_) {}
     const ac = new AbortController();
     abortRef.current = ac;
     try {
@@ -796,7 +822,8 @@ const AnalyzeDocsMode = () => {
           onText:         (chunk) => setSummary(p => p + chunk),
           onSources:      (s) => setSources(Array.isArray(s) ? s : []),
           onMetadata:     () => {},
-          onTelemetry:    onTelemetryEvent
+          onTelemetry:    onTelemetryEvent,
+          onAgentSearch:  onAgentSearch
         });
       } else if (mode === 'compare') {
         await streamCompareDocuments({
@@ -816,7 +843,11 @@ const AnalyzeDocsMode = () => {
       setRunning(false);
       abortRef.current = null;
       // Финализируем elapsedMs (фиксируем финальную цифру, таймер остановится сам)
-      setTele(t => t.startedAt ? { ...t, elapsedMs: Date.now() - t.startedAt } : t);
+      setTele(t => {
+        const final = t.startedAt ? { ...t, elapsedMs: Date.now() - t.startedAt } : t;
+        try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-done', { detail: final })); } catch(_) {}
+        return final;
+      });
     }
   };
 
@@ -826,6 +857,7 @@ const AnalyzeDocsMode = () => {
     setSlots([{...EMPTY_SLOT}, {...EMPTY_SLOT}]);
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null); setError('');
     setTele({...EMPTY_TELE});
+    try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-reset')); } catch(_) {}
   };
 
   // ── IDLE: drag&drop слоты ─────────────────────────────────────
@@ -952,31 +984,9 @@ const AnalyzeDocsMode = () => {
             <span>· − {report.removed}</span>
           </div>
         )}
-        {/* ── 2026-05-30: Live телеметрия (время / токены / стоимость) ── */}
-        {(running || tele.calls > 0) && (
-          <div className="ad-tele-row" title={tele.lastModel ? `Последний вызов: ${tele.lastLabel || '—'} · ${tele.lastModel}` : 'Телеметрия по SSE'}>
-            <div className={'ad-tele-badge' + (running ? ' ad-tele-badge--live' : '')}>
-              <span className="ad-tele-ico">⏱</span>
-              <span className="ad-tele-val">{(tele.elapsedMs / 1000).toFixed(1)}</span>
-              <span className="ad-tele-unit">сек</span>
-            </div>
-            <div className="ad-tele-badge">
-              <span className="ad-tele-ico">🪙</span>
-              <span className="ad-tele-val">{tele.input.toLocaleString('ru-RU')}</span>
-              <span className="ad-tele-sep">/</span>
-              <span className="ad-tele-val">{tele.output.toLocaleString('ru-RU')}</span>
-              <span className="ad-tele-unit">tok</span>
-            </div>
-            <div className="ad-tele-badge ad-tele-badge--cost">
-              <span className="ad-tele-ico">💵</span>
-              <span className="ad-tele-val">${tele.cost.toFixed(5)}</span>
-            </div>
-            <div className="ad-tele-badge ad-tele-badge--ghost" title="Количество LLM-вызовов в пайплайне">
-              <span className="ad-tele-val">{tele.calls}</span>
-              <span className="ad-tele-unit">×</span>
-            </div>
-          </div>
-        )}
+        {/* 2026-05-30: телеметрия (⏱ время / 🪙 токены / 💵 стоимость) переехала
+            в LeftPanel — блок "АНАЛИЗ". Здесь убран ad-tele-row, чтобы не
+            дублировать счётчики. Sync через window-events miyzamchi:tele-*. */}
       </div>
 
       {steps.length > 0 && (
@@ -3415,6 +3425,49 @@ const LeftPanel=({mode,actPanel,onClose,onCtx,onToast,onOpenFile,fsHandle,fsFile
   const [localTree, setLocalTree] = useState([]);
   const [expandedNav, setExpandedNav] = useState(null);  // null | 'recent' | 'starred' | ...
 
+  // ── 2026-05-30: Live-телеметрия пайплайна анализа ─────────────────────
+  // Принимаем из AnalyzeDocsMode через window-events:
+  //   miyzamchi:tele-start  — старт нового запроса
+  //   miyzamchi:tele-update — каждый telemetry chunk + каждый таймер-тик
+  //   miyzamchi:tele-done   — пайплайн завершён
+  //   miyzamchi:tele-reset  — startNew (юрист нажал "Новый документ")
+  //   miyzamchi:agent-search — модель вызвала search_legislation_kg
+  const EMPTY_TELE_LP = { calls:0, input:0, output:0, cost:0, lastModel:null, lastLabel:null, startedAt:null, elapsedMs:0 };
+  const [pipelineTele, setPipelineTele] = React.useState({ ...EMPTY_TELE_LP });
+  const [pipelineRunning, setPipelineRunning] = React.useState(false);
+  const [lastAgentSearch, setLastAgentSearch] = React.useState(null);
+
+  React.useEffect(() => {
+    const onStart  = (e) => { setPipelineRunning(true);  setPipelineTele(e.detail || { ...EMPTY_TELE_LP, startedAt: Date.now() }); setLastAgentSearch(null); };
+    const onUpdate = (e) => { if (e.detail) setPipelineTele(e.detail); };
+    const onDone   = (e) => { setPipelineRunning(false); if (e.detail) setPipelineTele(e.detail); };
+    const onReset  = ()  => { setPipelineRunning(false); setPipelineTele({ ...EMPTY_TELE_LP }); setLastAgentSearch(null); };
+    const onSearch = (e) => { if (e.detail && e.detail.query) setLastAgentSearch({ ...e.detail, at: Date.now() }); };
+    window.addEventListener('miyzamchi:tele-start',  onStart);
+    window.addEventListener('miyzamchi:tele-update', onUpdate);
+    window.addEventListener('miyzamchi:tele-done',   onDone);
+    window.addEventListener('miyzamchi:tele-reset',  onReset);
+    window.addEventListener('miyzamchi:agent-search', onSearch);
+    return () => {
+      window.removeEventListener('miyzamchi:tele-start',  onStart);
+      window.removeEventListener('miyzamchi:tele-update', onUpdate);
+      window.removeEventListener('miyzamchi:tele-done',   onDone);
+      window.removeEventListener('miyzamchi:tele-reset',  onReset);
+      window.removeEventListener('miyzamchi:agent-search', onSearch);
+    };
+  }, []);
+
+  // Свежий поисковый запрос держим в UI 6 секунд — потом скрываем.
+  const [searchVisible, setSearchVisible] = React.useState(false);
+  React.useEffect(() => {
+    if (!lastAgentSearch) { setSearchVisible(false); return; }
+    setSearchVisible(true);
+    const id = setTimeout(() => setSearchVisible(false), 6000);
+    return () => clearTimeout(id);
+  }, [lastAgentSearch]);
+
+  const showAnalysisBlock = pipelineRunning || pipelineTele.calls > 0;
+
   const navItems = [
     { id: 'recent',  label: 'Недавние',           icon: 'clock' },
     { id: 'starred', label: 'Избранное',          icon: 'star' },
@@ -3519,6 +3572,70 @@ const LeftPanel=({mode,actPanel,onClose,onCtx,onToast,onOpenFile,fsHandle,fsFile
           );
         })}
       </div>
+
+      {/* ── 2026-05-30: блок "АНАЛИЗ" — live-телеметрия пайплайна ── */}
+      {showAnalysisBlock && (
+        <div style={{padding: '0 var(--s-4)', marginBottom: 'var(--s-4)'}}>
+          <style>{`
+            .myz-tele-block { background: var(--hover); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--s-2h) var(--s-3); display: flex; flex-direction: column; gap: var(--s-1h); }
+            .myz-tele-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-1); }
+            .myz-tele-title { font-size: var(--text-xs); font-weight: 700; color: var(--muted); letterSpacing: 0.06em; }
+            .myz-tele-pulse { width: 8px; height: 8px; border-radius: 50%; background: #10b981; animation: myzPulse 1.2s infinite ease-in-out; }
+            .myz-tele-pulse--idle { background: #9ca3af; animation: none; }
+            @keyframes myzPulse { 0%,100% { opacity: 0.4; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.1); } }
+            .myz-tele-row { display: flex; align-items: center; gap: var(--s-2); font-size: var(--text-sm); color: var(--text); }
+            .myz-tele-ico { font-size: 13px; opacity: 0.75; }
+            .myz-tele-val { font-variant-numeric: tabular-nums; font-weight: 600; }
+            .myz-tele-unit { font-size: var(--text-2xs); color: var(--muted); }
+            .myz-tele-sep { color: var(--muted); margin: 0 2px; }
+            .myz-tele-last { font-size: var(--text-2xs); color: var(--muted); border-top: 1px solid var(--border); padding-top: var(--s-1h); margin-top: var(--s-1); display: flex; flex-direction: column; gap: 2px; }
+            .myz-tele-last b { color: var(--text); font-weight: 600; }
+            .myz-tele-search { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-xs); padding: var(--s-1h) var(--s-2); margin-top: var(--s-1h); font-size: var(--text-2xs); color: var(--text); animation: fadeInScale .15s ease; line-height: 1.4; }
+            .myz-tele-search-label { color: #10b981; font-weight: 700; margin-right: 4px; }
+          `}</style>
+          <div className="myz-tele-block">
+            <div className="myz-tele-head">
+              <span className="myz-tele-title">АНАЛИЗ</span>
+              <span className={'myz-tele-pulse' + (pipelineRunning ? '' : ' myz-tele-pulse--idle')} title={pipelineRunning ? 'Запрос обрабатывается' : 'Готово'}/>
+            </div>
+            <div className="myz-tele-row" title="Длительность обработки">
+              <span className="myz-tele-ico">⏱</span>
+              <span className="myz-tele-val">{(pipelineTele.elapsedMs / 1000).toFixed(1)}</span>
+              <span className="myz-tele-unit">сек</span>
+            </div>
+            <div className="myz-tele-row" title="Токены: input / output">
+              <span className="myz-tele-ico">🪙</span>
+              <span className="myz-tele-val">{(pipelineTele.input || 0).toLocaleString('ru-RU')}</span>
+              <span className="myz-tele-sep">/</span>
+              <span className="myz-tele-val">{(pipelineTele.output || 0).toLocaleString('ru-RU')}</span>
+              <span className="myz-tele-unit">tok</span>
+            </div>
+            <div className="myz-tele-row" title="Накопленная стоимость пайплайна">
+              <span className="myz-tele-ico">💵</span>
+              <span className="myz-tele-val">${(pipelineTele.cost || 0).toFixed(5)}</span>
+            </div>
+            <div className="myz-tele-row" title="Количество LLM-вызовов">
+              <span className="myz-tele-ico">🤖</span>
+              <span className="myz-tele-val">{pipelineTele.calls || 0}</span>
+              <span className="myz-tele-unit">вызовов</span>
+            </div>
+            {(pipelineTele.lastModel || pipelineTele.lastLabel) && (
+              <div className="myz-tele-last">
+                <span>Последний:</span>
+                {pipelineTele.lastModel && <span><b>{pipelineTele.lastModel}</b></span>}
+                {pipelineTele.lastLabel && <span style={{opacity:0.75}}>{pipelineTele.lastLabel}</span>}
+              </div>
+            )}
+            {searchVisible && lastAgentSearch && (
+              <div className="myz-tele-search" title={lastAgentSearch.reason || ''}>
+                <span className="myz-tele-search-label">🔎 Агент ищет:</span>
+                «{lastAgentSearch.query}»
+                {lastAgentSearch.segmentRef && <div style={{opacity:0.7, marginTop:2}}>· {lastAgentSearch.segmentRef}</div>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div style={{padding: '0 var(--s-4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--s-2)'}}>
         <div style={{fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em'}}>ФАЙЛЫ</div>

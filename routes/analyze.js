@@ -47,6 +47,12 @@ const { normalizeContext } = require('../lib/globalContext');
 const { generateDocumentPassport } = require('../lib/documentPassport');
 const { buildChunkTopology } = require('../lib/topology');
 const { buildHCREmbeddingQuery, buildHCRSystemPrompt, buildHCRUserPromptLine } = require('../lib/hierarchicalContext');
+// ── 2026-05-30: Agentic RAG — модель сама вызывает search_legislation_kg ──
+// Заменяет pre-fetch + склейку 3-10 статей в userPrompt. Tier1/2 (Gemini)
+// — multi-turn tool calling. Tier3 (DeepSeek) — legacy single-shot fallback.
+// MAX_TOOL_TURNS=3, watchdog=45s. SSE-событие agent_search показывает
+// юристу что именно ищет агент.
+const { createAgenticVerifier, TOOL_PROTOCOL_BLOCK } = require('../lib/agenticVerifier');
 
 class TelemetryCollector {
     constructor() {
@@ -473,6 +479,26 @@ module.exports = function registerAnalyzeRoute(deps) {
         logger
     });
 
+    // ── 2026-05-30: Agentic Verifier (Agentic RAG с function calling) ──
+    // Принимает Паспорт+Топологию+текст, отдаёт LLM с инструментом
+    // search_legislation_kg. Модель сама ищет, оценивает 5 статей,
+    // отбрасывает false positives, пишет вердикт.
+    //
+    // throttle прокинут — каждый turn внутри одного task'а проходит через
+    // verifierThrottle.submit() повторно. Это держит 20 RPS совокупно по
+    // ВСЕМ LLM-вызовам, а не только по запускам task'ов. Очередь не
+    // блокируется — пока turn 2 task'а A ждёт слот, task B стартует.
+    const agenticVerifier = createAgenticVerifier({
+        getNextKey,
+        searchPinecone,
+        getEmbedding,
+        deepseekJsonCall,
+        deepseekEnabled: DEEPSEEK_ENABLED !== false,
+        buildHCREmbeddingQuery,
+        throttle: verifierThrottle,
+        logger
+    });
+
     function extractArticleMentions(text) {
         const regex = /(?:ст\.|стать[ьяиеюямях])\s*(\d+(?:-\d+)*)(?:\s+([А-Яа-яЁёA-Za-z\s]{2,20}))?/gi;
         const matches = [];
@@ -713,28 +739,31 @@ ${compactSegments}
         }
     }
 
-    // ── VERIFIER AGENT ──────────────────────────────────────────────
-    // 2026-05-30 HCR: тройной контекст вместо плоского docContext.
-    //   • Macro: task.passport (AI-паспорт документа)
-    //   • Mezzo: task.topology (позиция чанка в документе)
-    //   • Micro: task.textToAnalyze (сам чанк)
-    // Все три собираются в одну embedding query (buildHCREmbeddingQuery)
-    // и в один system prompt (buildHCRSystemPrompt + docTypeHint).
-    // Унаследованный параметр `docContextOrPassport` принимается как
-    // passport (новый формат) или как legacy-string (backwards-compat —
-    // нормализуется как заголовок).
+    // ── VERIFIER AGENT (Agentic RAG · 2026-05-30) ───────────────────────
+    // 2026-05-30: убран pre-fetch Pinecone + склейка RAG в userPrompt.
+    // Модель сама вызывает search_legislation_kg(query, reason) через
+    // agenticVerifier.run(...). MAX_TOOL_TURNS=3, watchdog=45s.
+    // SSE-событие agent_search показывает юристу в UI что ищет агент.
+    //
+    // HCR-контекст (Macro/Mezzo/Micro) сохранён: buildHCRSystemPrompt
+    // обогащает baseSystemPrompt Паспортом+Топологией+focusHint.
+    //
+    // task поля:
+    //   • textToAnalyze, targetType, targetArticle, articleGroup
+    //   • passport, topology (HCR)
+    //   • preFetchedArticles — если Phase 3 уже нашёл точные статьи,
+    //     ПРОПУСКАЕМ tool-loop, идём через legacy (передаём как готовый
+    //     RAG-контекст; модель не делает поиск). Это экономит время на
+    //     явных кейсах "ст.137 УК КР".
     async function runVerifierAgent(task, docContextOrPassport, segmentRef, metaContext, aborted, telemetry) {
         if (aborted.value) return null;
-        const { textToAnalyze, targetType, targetArticle, topK, articleGroup, preFetchedArticles } = task;
-        // HCR: passport берём из task (новый contract). Fallback на параметр,
-        // если caller передал готовый passport-подобный объект.
+        const { textToAnalyze, targetType, targetArticle, articleGroup, preFetchedArticles } = task;
         const passport = task.passport
             || (docContextOrPassport && typeof docContextOrPassport === 'object' && docContextOrPassport.title
                 ? docContextOrPassport : null);
         const topology = task.topology || null;
 
-        // Phase 3 интеграция: с pre-fetched relevant_articles кэш не применяем
-        // (контекст может отличаться даже на идентичных пунктах в разных документах).
+        // Кэшируем только когда НЕ преднабор: pre-fetched может варьироваться.
         const isCacheable = !preFetchedArticles && (targetType === 'general' || targetType === 'article');
         if (isCacheable) {
             const cached = cacheGetClause(textToAnalyze);
@@ -750,117 +779,31 @@ ${compactSegments}
 
         if (aborted.value) return null;
 
-        try {
-            // 2026-05-30 HCR: всё, что нужно для embedding и system prompt,
-            // живёт в passport (Macro) и topology (Mezzo). Helpers сами
-            // обрабатывают null (graceful: оригинальный текст в хвосте).
-            const textHead = textToAnalyze.slice(0, 450);
+        const textHead = textToAnalyze.slice(0, 450);
+        const stageLabel = `agent_seg_${segmentRef.replace(/\W+/g, '_').slice(0, 30)}`;
 
-            let applicableArticles = [];
+        const focusInstruction = targetType === 'multi-article'
+            ? `соответствие пункта КАЖДОЙ из упомянутых в нём статей: ${articleGroup.map(a => `ст.${a.number} ${a.act}`).join(', ')}`
+            : targetType === 'article'
+                ? `соответствие конкретной статье ${targetArticle.number} ${targetArticle.act}`
+                : `общее соответствие законодательству КР по теме фрагмента`;
 
-            if (Array.isArray(preFetchedArticles) && preFetchedArticles.length > 0) {
-                // Phase 3 уже сделал точный RAG — берём готовые статьи, экономим Pinecone-вызов.
-                const seenArt = new Set();
-                for (const a of preFetchedArticles) {
-                    const npa = a.npa || '';
-                    const articleTitle = a.articleTitle || (a.article ? `Статья ${a.article}` : '');
-                    const full = (a.fullText || '').slice(0, 1000);
-                    if (!full) continue;
-                    const key = `${npa}|${articleTitle}`;
-                    if (seenArt.has(key)) continue;
-                    seenArt.add(key);
-                    applicableArticles.push({ npa_title: npa, article_title: articleTitle, full_text: full });
-                }
-            } else {
-                // Старый путь: keyword extraction → Pinecone search.
-                let allCandidates = [];
-                let pineconeStart = performance.now();
-                // 2026-05-30 HCR: buildHCREmbeddingQuery даёт ОДНУ строку для
-                // Pinecone с тройным контекстом: Macro (passport: title +
-                // branches + expectedNpas + semanticHints) + Mezzo (topology:
-                // п.N/M, раздел) + Micro (сам text). Универсально работает:
-                //   • для жалоб с явными "ст. 137" — expectedNpas={УК КР} даёт
-                //     точечный hit
-                //   • для договоров без явных статей — semanticHints={"кабальные
-                //     условия", "неустойка"} тащит Pinecone в ГК КР по смыслу.
-                if (targetType === 'multi-article' && Array.isArray(articleGroup) && articleGroup.length > 0) {
-                    const searches = await Promise.all(articleGroup.map(async (art) => {
-                        const q = `Статья ${art.number} ${art.act} ` + textHead;
-                        const v = await getEmbedding(buildHCREmbeddingQuery(q, passport, topology));
-                        return searchPinecone(v, 3);
-                    }));
-                    allCandidates = searches.flat();
-                } else if (targetType === 'article') {
-                    const q = `Статья ${targetArticle.number} ${targetArticle.act} ` + textHead;
-                    const v = await getEmbedding(buildHCREmbeddingQuery(q, passport, topology));
-                    allCandidates = await searchPinecone(v, topK);
-                } else {
-                    const v = await getEmbedding(buildHCREmbeddingQuery(textHead, passport, topology));
-                    allCandidates = await searchPinecone(v, topK);
-                }
-                if (telemetry) {
-                    telemetry.recordAgentTime('pineconeSearch', performance.now() - pineconeStart);
-                    telemetry.addTokens(telemetry.estimateTokens(textToAnalyze), 0);
-                }
+        const metaLine = metaContext ? `КОНТЕКСТ СДЕЛКИ: ${metaContext}\n` : '';
+        const localLine = buildHCRUserPromptLine(topology);
 
-                if (aborted.value) return null;
+        // Базовый промпт: убран старый блок "Применяй ТОЛЬКО нормы из
+        // переданных RAG-материалов" — теперь модель сама делает RAG.
+        // TOOL_PROTOCOL_BLOCK инструктирует как пользоваться функцией и
+        // как фильтровать false positives через ожидаемые НПА из Паспорта.
+        const baseSystemPrompt = `Ты — юрист-аудитор Кыргызской Республики. Проверяешь ОДИН фрагмент юридического документа.
+${metaLine}Не упоминай в ответе слова "RAG", "база данных", "Pinecone", "функция", "инструмент".
+Отвечаешь СТРОГО валидным JSON без markdown без пояснений.
 
-                const seenArt = new Set();
-                for (const c of (allCandidates || [])) {
-                    const npa = c.metadata?.npa_title || '';
-                    const art = c.metadata?.article_title || '';
-                    const full = (c.metadata?.full_text || '').slice(0, 1000);
-                    if (!full) continue;
-                    const key = `${npa}|${art}`;
-                    if (seenArt.has(key)) continue;
-                    seenArt.add(key);
-                    applicableArticles.push({ npa_title: npa, article_title: art, full_text: full });
-                }
-            }
+${TOOL_PROTOCOL_BLOCK}`;
 
-            const ragContext = applicableArticles.length
-                ? applicableArticles.map((a, i) => `[${i + 1}] ${a.npa_title} — ${a.article_title}\n${a.full_text}`).join('\n\n')
-                : 'Релевантные статьи в базе НПА не найдены.';
+        const systemPrompt = buildHCRSystemPrompt(baseSystemPrompt, passport, topology);
 
-            const focusInstruction = targetType === 'multi-article'
-                ? `соответствие пункта КАЖДОЙ из упомянутых в нём статей: ${articleGroup.map(a => `ст.${a.number} ${a.act}`).join(', ')}`
-                : targetType === 'article'
-                    ? `соответствие конкретной статье ${targetArticle.number} ${targetArticle.act}`
-                    : `общее соответствие законодательству КР по теме фрагмента`;
-
-            const metaLine = metaContext ? `КОНТЕКСТ СДЕЛКИ: ${metaContext}\n` : '';
-
-            const baseSystemPrompt = `Ты — юрист-аудитор Кыргызской Республики. Проверяешь ОДИН фрагмент юридического документа.
-${metaLine}Применяй ТОЛЬКО нормы из переданных RAG-материалов. Не выдумывай статьи.
-Если найденные статьи относятся к ДРУГОЙ отрасли → status="warning" и поясни почему.
-Не упоминай в ответе слова "RAG", "база данных", "Pinecone", "система".
-Отвечаешь СТРОГО валидным JSON без markdown без пояснений.`;
-            // 2026-05-30 HCR: buildHCRSystemPrompt добавляет 3 блока В НАЧАЛО
-            // basePrompt:
-            //   📋 ПАСПОРТ ДОКУМЕНТА (Macro: title, docType, summary, branches,
-            //      expectedNpas, semanticHints, parties)
-            //   📍 ТОПОЛОГИЯ ПУНКТА (Mezzo: chunkIndex/totalChunks, section,
-            //      prevHeading, nextHeading)
-            //   🎯 ФОКУС (docTypeHint: специфическая инструкция под тип
-            //      документа — расписка/жалоба/иск/договор и т.д.)
-            // Один промпт обслуживает любой документ.
-            const systemPrompt = buildHCRSystemPrompt(baseSystemPrompt, passport, topology);
-
-            // Sticky-строка в userPrompt — подстраховка если модель проигнорит system.
-            const localLine = buildHCRUserPromptLine(topology);
-
-            const userPrompt = `КОНТЕКСТ ВСЕГО ДОКУМЕНТА: ${passport?.summary || passport?.title || 'Не указан'}
-${localLine}ФОКУС ТВОЕЙ ПРОВЕРКИ: ${focusInstruction}
-
-Фрагмент (${segmentRef}):
-"""
-${textToAnalyze}
-"""
-
-Релевантные статьи КР:
-${ragContext}
-
-Верни строго JSON со следующей схемой (СТРОГО соблюдай лимиты длины):
+        const schemaBlock = `Верни строго JSON со следующей схемой (СТРОГО соблюдай лимиты длины):
 {
   "status": "ok" | "warning" | "critical",
   "confidence": <число от 0 до 100>,
@@ -876,85 +819,163 @@ ${ragContext}
 - warning  — формально валидно, но есть юридический риск / неточная формулировка
 - critical — прямое противоречие нормам КР или ущемление прав нашей стороны`;
 
-            if (aborted.value) return null;
+        // ── Ветка 1: pre-fetched (Phase 3 уже нашёл точные статьи) ──
+        // Не запускаем agentic loop, делаем один LLM-вызов с готовым RAG.
+        // Экономит ~3-5с на явных кейсах "ст.N УК".
+        if (Array.isArray(preFetchedArticles) && preFetchedArticles.length > 0) {
+            const applicableArticles = [];
+            const seenArt = new Set();
+            for (const a of preFetchedArticles) {
+                const npa = a.npa || '';
+                const articleTitle = a.articleTitle || (a.article ? `Статья ${a.article}` : '');
+                const full = (a.fullText || '').slice(0, 1000);
+                if (!full) continue;
+                const key = `${npa}|${articleTitle}`;
+                if (seenArt.has(key)) continue;
+                seenArt.add(key);
+                applicableArticles.push({ npa_title: npa, article_title: articleTitle, full_text: full });
+            }
+            const ragContext = applicableArticles.length
+                ? applicableArticles.map((a, i) => `[${i + 1}] ${a.npa_title} — ${a.article_title}\n${a.full_text}`).join('\n\n')
+                : 'Релевантные статьи в базе НПА не найдены.';
 
-            let agentStart = performance.now();
-            const stageLabel = `agent_seg_${segmentRef.replace(/\W+/g, '_').slice(0, 30)}`;
-            let provider = 'cascade-pending', raw = '';
+            const prefetchUserPrompt = `КОНТЕКСТ ВСЕГО ДОКУМЕНТА: ${passport?.summary || passport?.title || 'Не указан'}
+${localLine}ФОКУС ТВОЕЙ ПРОВЕРКИ: ${focusInstruction}
+
+Фрагмент (${segmentRef}):
+"""
+${textToAnalyze}
+"""
+
+Релевантные статьи КР (предзагружены, поиск не требуется):
+${ragContext}
+
+${schemaBlock}`;
+
+            const agentStart = performance.now();
+            let raw = '', provider = 'cascade-pending';
             try {
-                const cascadeResult = await callAgentCascade(systemPrompt, userPrompt, telemetry, stageLabel);
+                const cascadeResult = await callAgentCascade(systemPrompt, prefetchUserPrompt, telemetry, stageLabel);
                 provider = cascadeResult.provider;
                 raw = cascadeResult.raw;
             } catch (cascadeErr) {
-                // err.allFailed → все 3 tier'а легли для этого агента. Degraded result.
                 if (telemetry) telemetry.recordAgentTime('agentLlm', performance.now() - agentStart);
                 return {
-                    status: 'warning',
-                    confidence: 0,
+                    status: 'warning', confidence: 0,
                     finding: 'Анализ временно недоступен',
                     rationale: 'Все три модели каскада не ответили. Пункт требует ручной проверки юристом.',
-                    suggestion: '',
-                    articles: applicableArticles,
-                    provider: 'cascade-failed'
+                    suggestion: '', articles: applicableArticles, provider: 'cascade-failed'
                 };
             }
             if (telemetry) {
                 telemetry.recordAgentTime('agentLlm', performance.now() - agentStart);
-                telemetry.addTokens(telemetry.estimateTokens(systemPrompt + userPrompt), telemetry.estimateTokens(raw));
+                telemetry.addTokens(telemetry.estimateTokens(systemPrompt + prefetchUserPrompt), telemetry.estimateTokens(raw));
+            }
+            return finalizeVerifierResult(raw, applicableArticles, provider, isCacheable, textToAnalyze);
+        }
+
+        // ── Ветка 2: Agentic RAG (основной путь) ──
+        const userPrompt = `КОНТЕКСТ ВСЕГО ДОКУМЕНТА: ${passport?.summary || passport?.title || 'Не указан'}
+${localLine}ФОКУС ТВОЕЙ ПРОВЕРКИ: ${focusInstruction}
+
+Фрагмент (${segmentRef}):
+"""
+${textToAnalyze}
+"""
+
+Используй search_legislation_kg, чтобы найти релевантные статьи КР, КРИТИЧНО оцени их и верни вердикт.
+
+${schemaBlock}`;
+
+        const agentStart = performance.now();
+
+        // onSearchEvent → SSE-событие agent_search во фронт.
+        // res здесь не виден напрямую → caller (verifySegmentsSmart)
+        // должен пробросить sendStep через task.onSearchEvent если хочет
+        // показывать "🔎 Агент ищет..." в UI. По умолчанию — log only.
+        const onSearchEvent = task._onSearchEvent || ((ev) => {
+            console.log(`[Verifier ${segmentRef}] 🔎 turn ${ev.turn}: "${ev.query?.slice(0, 80)}"`);
+        });
+
+        try {
+            const out = await agenticVerifier.run({
+                baseSystemPrompt: systemPrompt,
+                userPrompt,
+                passport,
+                topology,
+                targetType,
+                targetArticle,
+                articleGroup,
+                textHead,
+                telemetry,
+                stageLabel,
+                maxToolTurns: 3,
+                topK: 5,
+                watchdogMs: 45000,
+                aborted,
+                onSearchEvent
+            });
+
+            if (telemetry) {
+                telemetry.recordAgentTime('agentLlm', performance.now() - agentStart);
+                telemetry.addTokens(
+                    out.usage?.promptTokens || telemetry.estimateTokens(systemPrompt + userPrompt),
+                    out.usage?.completionTokens || telemetry.estimateTokens(out.text || '')
+                );
             }
 
-            // Каскад уже отработал свой fallback (Tier 1 → 2 → 3). Если JSON всё
-            // равно битый — это битый ответ от ВСЕХ трёх моделей подряд, что
-            // крайне маловероятно. Возвращаем degraded-результат для этого пункта.
-            const parsed = safeJsonParseStrict(raw, null);
-            const effectiveProvider = provider;
-
-            if (!parsed || parsed.status === 'error') {
+            const provider = `agentic-tier${out.tier}-${out.model}`;
+            return finalizeVerifierResult(out.text, out.articles || [], provider, isCacheable, textToAnalyze, out.toolCalls);
+        } catch (err) {
+            if (telemetry) telemetry.recordAgentTime('agentLlm', performance.now() - agentStart);
+            if (err?.aborted) return null;
+            if (err?.allFailed) {
                 return {
-                    status: 'warning',
-                    confidence: 0,
-                    finding: 'Ответ модели не распарсился',
-                    rationale: parsed?.rationale || 'JSON parse error после прохождения каскада',
-                    suggestion: '',
-                    articles: applicableArticles,
-                    provider: effectiveProvider
+                    status: 'warning', confidence: 0,
+                    finding: 'Анализ временно недоступен',
+                    rationale: 'Все три модели (Gemini Lite, 2.5 Flash, DeepSeek-fallback) не ответили. Пункт требует ручной проверки.',
+                    suggestion: '', articles: [], provider: 'agentic-failed'
                 };
             }
-
-            const result = {
-                status:    ['ok', 'warning', 'critical'].includes(parsed.status) ? parsed.status : 'warning',
-                confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(100, parsed.confidence)) : 50,
-                finding:    String(parsed.finding    || '').slice(0, 320).trim() || 'Анализ не дал явного результата.',
-                rationale:  String(parsed.rationale  || '').slice(0, 800).trim(),
-                suggestion: String(parsed.suggestion || '').slice(0, 320).trim(),
-                articles:   applicableArticles,
-                provider:   effectiveProvider
-            };
-
-            if (isCacheable && result.status !== 'error') {
-                cacheSetClause(textToAnalyze, {
-                    status: result.status,
-                    confidence: result.confidence,
-                    finding: result.finding,
-                    rationale: result.rationale,
-                    suggestion: result.suggestion,
-                    articles: result.articles
-                });
-            }
-
-            return result;
-        } catch (err) {
             console.error('[Verifier fatal]', err.message);
             return {
-                status: 'error',
-                confidence: null,
+                status: 'error', confidence: null,
                 finding: 'Не удалось проанализировать пункт',
                 rationale: err.message || 'Неизвестная ошибка',
-                suggestion: '',
-                articles: [],
-                provider: 'none'
+                suggestion: '', articles: [], provider: 'none'
             };
         }
+    }
+
+    // ── Helper: парсинг ответа модели + кэширование ─────────────────────
+    function finalizeVerifierResult(raw, applicableArticles, provider, isCacheable, textToAnalyze, toolCalls = null) {
+        const parsed = safeJsonParseStrict(raw, null);
+        if (!parsed || parsed.status === 'error') {
+            return {
+                status: 'warning', confidence: 0,
+                finding: 'Ответ модели не распарсился',
+                rationale: parsed?.rationale || 'JSON parse error',
+                suggestion: '', articles: applicableArticles, provider, toolCalls: toolCalls || undefined
+            };
+        }
+        const result = {
+            status:    ['ok', 'warning', 'critical'].includes(parsed.status) ? parsed.status : 'warning',
+            confidence: typeof parsed.confidence === 'number' ? Math.max(0, Math.min(100, parsed.confidence)) : 50,
+            finding:    String(parsed.finding    || '').slice(0, 320).trim() || 'Анализ не дал явного результата.',
+            rationale:  String(parsed.rationale  || '').slice(0, 800).trim(),
+            suggestion: String(parsed.suggestion || '').slice(0, 320).trim(),
+            articles:   applicableArticles,
+            provider
+        };
+        if (toolCalls) result.toolCalls = toolCalls;
+        if (isCacheable && result.status !== 'error') {
+            cacheSetClause(textToAnalyze, {
+                status: result.status, confidence: result.confidence,
+                finding: result.finding, rationale: result.rationale,
+                suggestion: result.suggestion, articles: result.articles
+            });
+        }
+        return result;
     }
 
     // ── Aggregation ─────────────────────────────────────────────────
@@ -1126,7 +1147,26 @@ ${ragContext}
                     // HCR triple context: Macro (passport) + Mezzo (topology) +
                     // Micro (task.textToAnalyze). runVerifierAgent композирует.
                     passport,
-                    topology
+                    topology,
+                    // 2026-05-30 Agentic RAG: SSE-событие agent_search.
+                    // Когда модель внутри agenticVerifier вызывает
+                    // search_legislation_kg(query, reason), мы стримим это
+                    // во фронт — юрист видит "🔎 Агент ищет: ..." в IDE.
+                    _onSearchEvent: (ev) => {
+                        try {
+                            if (aborted.value) return;
+                            res.write(`data: ${JSON.stringify({
+                                agent_search: {
+                                    segmentRef: refLabel,
+                                    originalIdx,
+                                    query: String(ev.query || '').slice(0, 200),
+                                    reason: String(ev.reason || '').slice(0, 120),
+                                    turn: ev.turn,
+                                    model: ev.model
+                                }
+                            })}\n\n`);
+                        } catch (_) { /* swallow SSE errors */ }
+                    }
                 });
             }
 
