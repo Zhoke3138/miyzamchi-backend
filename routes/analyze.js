@@ -36,6 +36,11 @@ const { segmentDocumentRegex, wrapAsAnalyzeSegments } = require('../lib/segmentR
 const { createPhase3Pipeline } = require('../lib/phase3');
 const { normalizeNpaName } = require('../lib/npaAliases');
 const { shouldRunPhase3 } = require('../lib/smartSkipPhase3');
+// ── 2026-05-30: Hybrid Segmenter + Smooth Burst Throttle + Agent Dispatcher
+const { createHybridSegmenter } = require('../lib/hybridSegmenter');
+const { createSmoothBurstThrottle } = require('../lib/smoothBurstThrottle');
+const { createAgentDispatcher } = require('../lib/agentDispatcher');
+const { normalizeContext, injectGlobalContext, buildContextualSystemPrompt } = require('../lib/globalContext');
 
 class TelemetryCollector {
     constructor() {
@@ -197,6 +202,14 @@ class TelemetryCollector {
 // Не повышаем выше 18 — может задеть DeepSeek 429 в Tier 3 fallback.
 const SEGMENTS_CONCURRENCY        = 16;
 const HOUNDS_PER_SEG_CONCURRENCY  = 3;
+
+// ── 2026-05-30: Smooth Burst Throttle для агентов-верификаторов ──────
+// 20 RPS = 1 запрос каждые 50ms. Tier 1 (Gemini 3.1 Flash Lite) держит
+// 4000 RPM = 66 RPS, мы берём ~30% headroom для каскадных fallback'ов
+// на Tier 2/3 (если Tier 1 ляжет). maxConcurrent=100 — защита от
+// зависших Gemini-ответов (если упало 100 — больше не накапливаем).
+const VERIFIER_THROTTLE_RPS       = 20;
+const VERIFIER_MAX_CONCURRENT     = 100;
 
 // User_id для KVCache-изоляции
 const KVCACHE_TRIAGE_ID     = 'miyzamchi-triage-v1';
@@ -429,6 +442,28 @@ module.exports = function registerAnalyzeRoute(deps) {
         safeJsonParseStrict,
         sendStep,
         normalizeNpaName,
+        logger
+    });
+
+    // ── 2026-05-30: Hybrid Segmenter (Layer A regex + Layer B AI corrector) ─
+    // Замена прямого segmentDocumentRegex. Layer A покрывает 14/16 кейсов из
+    // test_corpus/ за 200ms. Layer B (через lightLLMCascade) точечно чинит
+    // патологии (GIANT_CHUNK / TOO_MANY_SMALL / DOMINANT / TOO_FEW) на
+    // оставшихся 2/16. Lossless-guard 5%, graceful fallback на A при любом
+    // failure. См. SEGMENTATION_STRATEGY.md.
+    const hybridSegmenter = createHybridSegmenter({
+        cascade: lightLLMCascade,
+        layerBEnabled: process.env.HYBRID_LAYER_B !== 'off',
+        logger
+    });
+
+    // ── 2026-05-30: SmoothBurstThrottle для агентов-верификаторов ──────
+    // Один процесс — один throttle, переиспользуется между запросами.
+    // Drift-corrected setTimeout, ровно 50ms между стартами, без burst'ов
+    // которые могут попасть под Google Gemini rate-limiter.
+    const verifierThrottle = createSmoothBurstThrottle({
+        rps: VERIFIER_THROTTLE_RPS,
+        maxConcurrent: VERIFIER_MAX_CONCURRENT,
         logger
     });
 
@@ -673,7 +708,11 @@ ${compactSegments}
     }
 
     // ── VERIFIER AGENT ──────────────────────────────────────────────
-    async function runVerifierAgent(task, docContextStr, segmentRef, metaContext, aborted, telemetry) {
+    // 2026-05-30: docContext теперь принимается как объект
+    // { summary, docType, branchHint, npaHints } (через normalizeContext).
+    // Принимается также legacy-string (backwards-compat) — normalizeContext()
+    // приведёт к объекту.
+    async function runVerifierAgent(task, docContext, segmentRef, metaContext, aborted, telemetry) {
         if (aborted.value) return null;
         const { textToAnalyze, targetType, targetArticle, topK, articleGroup, preFetchedArticles } = task;
 
@@ -695,7 +734,9 @@ ${compactSegments}
         if (aborted.value) return null;
 
         try {
-            const ctxPrefix = docContextStr ? `[Контекст: ${docContextStr.slice(0, 150)}] ` : '';
+            // Global Context Injection — паспорт документа сильным сигналом
+            // пробрасывается в embedding (Pinecone) И в system prompt агента.
+            const ctx = normalizeContext(docContext);
             const textHead = textToAnalyze.slice(0, 450);
 
             let applicableArticles = [];
@@ -720,16 +761,16 @@ ${compactSegments}
                 if (targetType === 'multi-article' && Array.isArray(articleGroup) && articleGroup.length > 0) {
                     const searches = await Promise.all(articleGroup.map(async (art) => {
                         const q = `Статья ${art.number} ${art.act} ` + textHead;
-                        const v = await getEmbedding(ctxPrefix + q);
+                        const v = await getEmbedding(injectGlobalContext(q, ctx));
                         return searchPinecone(v, 3);
                     }));
                     allCandidates = searches.flat();
                 } else if (targetType === 'article') {
                     const q = `Статья ${targetArticle.number} ${targetArticle.act} ` + textHead;
-                    const v = await getEmbedding(ctxPrefix + q);
+                    const v = await getEmbedding(injectGlobalContext(q, ctx));
                     allCandidates = await searchPinecone(v, topK);
                 } else {
-                    const v = await getEmbedding(ctxPrefix + textHead);
+                    const v = await getEmbedding(injectGlobalContext(textHead, ctx));
                     allCandidates = await searchPinecone(v, topK);
                 }
                 if (telemetry) {
@@ -764,13 +805,17 @@ ${compactSegments}
 
             const metaLine = metaContext ? `КОНТЕКСТ СДЕЛКИ: ${metaContext}\n` : '';
 
-            const systemPrompt = `Ты — юрист-аудитор Кыргызской Республики. Проверяешь ОДИН фрагмент юридического документа.
+            const baseSystemPrompt = `Ты — юрист-аудитор Кыргызской Республики. Проверяешь ОДИН фрагмент юридического документа.
 ${metaLine}Применяй ТОЛЬКО нормы из переданных RAG-материалов. Не выдумывай статьи.
 Если найденные статьи относятся к ДРУГОЙ отрасли → status="warning" и поясни почему.
 Не упоминай в ответе слова "RAG", "база данных", "Pinecone", "система".
 Отвечаешь СТРОГО валидным JSON без markdown без пояснений.`;
+            // Global Context Injection в system prompt: жёсткая привязка к
+            // типу/отрасли/ожидаемым НПА. Снижает RAG-галлюцинации (агент не
+            // будет тащить Закон о рекламе на жалобу в ООН).
+            const systemPrompt = buildContextualSystemPrompt(baseSystemPrompt, ctx);
 
-            const userPrompt = `КОНТЕКСТ ВСЕГО ДОКУМЕНТА: ${docContextStr || 'Не указан'}
+            const userPrompt = `КОНТЕКСТ ВСЕГО ДОКУМЕНТА: ${ctx?.summary || 'Не указан'}
 ФОКУС ТВОЕЙ ПРОВЕРКИ: ${focusInstruction}
 
 Фрагмент (${segmentRef}):
@@ -935,80 +980,145 @@ ${ragContext}
         };
     }
 
-    // ── MAP-фаза ────────────────────────────────────────────────────
-    async function verifySegmentsSmart(segmentsWithIdx, res, docContextStr, metaContext, aborted, telemetry, phase3ByAuditIdx = null) {
-        const processSegment = async ({ seg, originalIdx }, auditIdx) => {
-            if (aborted.value) return null;
-            const refLabel = `п.${seg.number} ${seg.heading}`.trim();
-            sendStep(res, { id: `seg_${originalIdx}`, status: 'loading', text: `Пункт ${seg.number}: маршрутизация` });
+    // ── 2026-05-30: Agent Dispatcher (Smooth Burst Throttle 20 RPS) ────
+    // runVerifierAgent выше — function declaration, hoisted в scope. Dispatcher
+    // композирует throttle + global-context-injection + runner. dispatch()
+    // плоско проталкивает все agent-tasks (segments * hounds) через throttle
+    // и через onResult callback стримит вердикты по мере готовности.
+    const agentDispatcher = createAgentDispatcher({
+        throttle: verifierThrottle,
+        runVerifierAgent,
+        logger
+    });
 
-            const tasks = [];
-
-            // Phase 3 даёт точный RAG-контекст по реальным НПА-упоминаниям. Если он есть —
-            // одна задача на сегмент с готовыми relevant_articles (быстрее и точнее).
-            const phase3Articles = phase3ByAuditIdx && phase3ByAuditIdx[auditIdx]
-                ? phase3ByAuditIdx[auditIdx].relevant_articles
-                : null;
-
-            if (Array.isArray(phase3Articles) && phase3Articles.length > 0) {
-                tasks.push({
-                    textToAnalyze: seg.text,
-                    targetType: 'phase3',
-                    preFetchedArticles: phase3Articles,
-                    topK: phase3Articles.length
-                });
-            } else {
-                // Legacy путь: keyword extraction → adaptive Pinecone retrieval.
-                // Сюда попадаем когда Phase 3 не нашёл citations (пункт без явных
-                // ссылок на статьи) или ушёл в degraded режим.
-                const mentions = extractArticleMentions(seg.text);
-                const isVeryLong = seg.text.length > 3000;
-                const ARTICLES_PER_AGENT = 5;
-
-                if (mentions.length > 0) {
-                    for (let g = 0; g < mentions.length; g += ARTICLES_PER_AGENT) {
-                        const group = mentions.slice(g, g + ARTICLES_PER_AGENT);
-                        tasks.push({ textToAnalyze: seg.text, targetType: 'multi-article', articleGroup: group, topK: 3 });
-                    }
-                } else if (isVeryLong) {
-                    const chunks = chunkLongSegment(seg.text, 1000);
-                    for (const chunk of chunks) {
-                        tasks.push({ textToAnalyze: chunk, targetType: 'general', targetArticle: null, topK: 5 });
-                    }
-                } else {
-                    tasks.push({ textToAnalyze: seg.text, targetType: 'general', targetArticle: null, topK: 5 });
+    // ── Helper: построение списка hound-задач на один сегмент ──────────
+    // Логика взята из старого processSegment в verifySegmentsSmart, чтобы
+    // dispatcher умел собрать flat-список tasks из всех сегментов.
+    function buildSegmentTasks(seg, auditIdx, phase3ByAuditIdx) {
+        const phase3Articles = phase3ByAuditIdx && phase3ByAuditIdx[auditIdx]
+            ? phase3ByAuditIdx[auditIdx].relevant_articles
+            : null;
+        const tasks = [];
+        if (Array.isArray(phase3Articles) && phase3Articles.length > 0) {
+            tasks.push({
+                textToAnalyze: seg.text,
+                targetType: 'phase3',
+                preFetchedArticles: phase3Articles,
+                topK: phase3Articles.length
+            });
+        } else {
+            const mentions = extractArticleMentions(seg.text);
+            const isVeryLong = seg.text.length > 3000;
+            const ARTICLES_PER_AGENT = 5;
+            if (mentions.length > 0) {
+                for (let g = 0; g < mentions.length; g += ARTICLES_PER_AGENT) {
+                    const group = mentions.slice(g, g + ARTICLES_PER_AGENT);
+                    tasks.push({ textToAnalyze: seg.text, targetType: 'multi-article', articleGroup: group, topK: 3 });
                 }
+            } else if (isVeryLong) {
+                const chunks = chunkLongSegment(seg.text, 1000);
+                for (const chunk of chunks) {
+                    tasks.push({ textToAnalyze: chunk, targetType: 'general', targetArticle: null, topK: 5 });
+                }
+            } else {
+                tasks.push({ textToAnalyze: seg.text, targetType: 'general', targetArticle: null, topK: 5 });
             }
+        }
+        return tasks;
+    }
 
-            sendStep(res, { id: `seg_${originalIdx}`, status: 'loading', text: `Пункт ${seg.number}: ${tasks.length} агент(ов) работают` });
+    // ── MAP-фаза ────────────────────────────────────────────────────
+    async function verifySegmentsSmart(segmentsWithIdx, res, docContext, metaContext, aborted, telemetry, phase3ByAuditIdx = null) {
+        if (!segmentsWithIdx || segmentsWithIdx.length === 0) return [];
 
-            const agentResults = await runWithConcurrency(
-                tasks,
-                HOUNDS_PER_SEG_CONCURRENCY,
-                (task) => runVerifierAgent(task, docContextStr, refLabel, metaContext, aborted, telemetry),
-                { aborted }
-            );
+        // ── 2026-05-30: Flat tasks через Smooth Burst Throttle (20 RPS) ────
+        // Был: runWithConcurrency(segments, 16) внешний × runWithConcurrency(hounds, 3) внутренний
+        //   → факт. throughput ~5 RPS, искусственно тормозили Tier 1 Gemini Lite.
+        // Стал: ВСЕ (segment × hound) пары плоско через verifierThrottle с
+        //   ровным 50ms интервалом, ровно 20 RPS. Каждый агент стартует
+        //   независимо от готовности соседей.
+        // Streaming: при готовности последнего hound для сегмента — мгновенно
+        //   агрегируем и отправляем tableRow (fastest-first порядок на фронте).
 
-            if (aborted.value) return null;
+        const segmentMeta = [];   // per-segment агрегатор
+        const allTasks = [];      // плоский массив для dispatcher
 
-            const verdict = aggregateAgentResults(agentResults, seg);
+        for (let segmentIdx = 0; segmentIdx < segmentsWithIdx.length; segmentIdx++) {
+            const { seg, originalIdx } = segmentsWithIdx[segmentIdx];
+            const refLabel = `п.${seg.number} ${seg.heading}`.trim();
 
-            const uiStatus = verdict.status === 'critical' ? 'error'
-                          : verdict.status === 'warning'  ? 'warning'
-                          : 'success';
             sendStep(res, {
                 id: `seg_${originalIdx}`,
-                status: uiStatus,
-                text: verdict.item_number,
-                reason: verdict.short_verdict
+                status: 'loading',
+                text: `Пункт ${seg.number}: маршрутизация`
             });
 
-            res.write(`data: ${JSON.stringify({ tableRow: verdict })}\n\n`);
-            return verdict;
-        };
+            const houndTasks = buildSegmentTasks(seg, segmentIdx, phase3ByAuditIdx);
 
-        const results = await runWithConcurrency(segmentsWithIdx, SEGMENTS_CONCURRENCY, processSegment, { aborted });
-        return results.filter(Boolean);
+            // Регистрируем мета-инфу сегмента ДО добавления tasks (чтобы onResult
+            // мог найти её по segmentIdx даже если первая task завершится мгновенно).
+            segmentMeta.push({
+                seg, originalIdx, refLabel,
+                houndsCount: houndTasks.length,
+                pending: houndTasks.length,
+                results: new Array(houndTasks.length),
+                emitted: false
+            });
+
+            // Добавляем мета-поля к каждой task — нужны agentDispatcher
+            // (он зовёт runVerifierAgent(task, docContext, task.segmentRef, task.metaContext, ...))
+            // и onResult callback'у (segmentIdx / houndIdx для аккумуляции).
+            for (let houndIdx = 0; houndIdx < houndTasks.length; houndIdx++) {
+                allTasks.push({
+                    ...houndTasks[houndIdx],
+                    segmentIdx,
+                    houndIdx,
+                    originalIdx,
+                    segmentRef: refLabel,
+                    metaContext
+                });
+            }
+
+            sendStep(res, {
+                id: `seg_${originalIdx}`,
+                status: 'loading',
+                text: `Пункт ${seg.number}: ${houndTasks.length} агент(ов) работают`
+            });
+        }
+
+        const finalVerdicts = new Array(segmentsWithIdx.length);
+
+        await agentDispatcher.dispatch(allTasks, {
+            docContext,                // объект {summary, docType, branchHint, npaHints}
+            aborted,
+            telemetry,
+            stageLabel: 'verify_segments',
+            onResult: ({ task, result, error }) => {
+                const meta = segmentMeta[task.segmentIdx];
+                if (!meta || meta.emitted) return;
+                meta.results[task.houndIdx] = result || null;
+                meta.pending--;
+                if (meta.pending !== 0) return;
+                if (aborted.value) return;
+
+                meta.emitted = true;
+                const verdict = aggregateAgentResults(meta.results, meta.seg);
+                finalVerdicts[task.segmentIdx] = verdict;
+
+                const uiStatus = verdict.status === 'critical' ? 'error'
+                              : verdict.status === 'warning'  ? 'warning'
+                              : 'success';
+                sendStep(res, {
+                    id: `seg_${meta.originalIdx}`,
+                    status: uiStatus,
+                    text: verdict.item_number,
+                    reason: verdict.short_verdict
+                });
+                res.write(`data: ${JSON.stringify({ tableRow: verdict })}\n\n`);
+            }
+        });
+
+        return finalVerdicts.filter(Boolean);
     }
 
     // ── FINAL JUDGE (DCR) ───────────────────────────────────────────
@@ -1188,12 +1298,35 @@ ${riskReports}
                 return r;
             });
 
-        // ── Phase 2: синхронный Regex-сегментатор ──
-        // segmentDocumentRegex отдаёт string[], wrapAsAnalyzeSegments оборачивает в
-        // {id, number, heading, text} для downstream-кода. Нумерация порядковая (i+1).
+        // ── 2026-05-30: Hybrid Segmenter (Layer A regex + Layer B AI corrector) ─
+        // Замена прямого segmentDocumentRegex. Layer A покрывает 14/16 кейсов
+        // корпуса за ~200ms; Layer B точечно чинит патологии через
+        // lightLLMCascade. Lossless-guard. См. SEGMENTATION_STRATEGY.md.
         if (telemetry) telemetry.startTimer('Segmentation_Time');
-        const rawChunks = segmentDocumentRegex(documentText, { telemetry });
-        const segments = wrapAsAnalyzeSegments(rawChunks);
+        let segments = [];
+        try {
+            const hybridResult = await hybridSegmenter.segment(documentText, {
+                stageLabel: 'analyze_doc_segments',
+                telemetry
+            });
+            segments = wrapAsAnalyzeSegments(hybridResult.chunks);
+            // Засекаем какие слои использовались — полезно в telemetry
+            if (telemetry?.incrementCounter) {
+                telemetry.incrementCounter('hybrid_segments_total', hybridResult.chunks.length);
+                if (hybridResult.layers?.includes('B')) {
+                    telemetry.incrementCounter('hybrid_layer_b_calls');
+                }
+                if (hybridResult.layers?.includes('fallback')) {
+                    telemetry.incrementCounter('hybrid_fallback_to_a');
+                }
+            }
+            logger.info?.(`[Hybrid] layers=${(hybridResult.layers || []).join('+')} chunks=${segments.length} quality=${hybridResult.quality?.action || 'n/a'}`);
+        } catch (segErr) {
+            // Защитный catch — hybridSegmenter graceful degrade, но если совсем
+            // упал — откатываемся на чистый Layer A (regex). Lossless гарантирован.
+            logger.warn?.(`[Hybrid] unexpected throw, falling back to Layer A only: ${segErr.message}`);
+            segments = wrapAsAnalyzeSegments(segmentDocumentRegex(documentText, { telemetry }));
+        }
         if (telemetry) telemetry.endTimer('Segmentation_Time');
 
         // Ранний выход если сегментация пуста — Router тоже отменяем дёшево.
@@ -1392,6 +1525,20 @@ ${riskReports}
                 const { docContext, segments, triage, meta_context } = state;
                 const docContextStr = formatDocContext(docContext);
 
+                // ── 2026-05-30: docContextForAgents — паспорт для injection в Ищеек ─
+                // Старый формат (docContextStr: string) остаётся для Final Judge
+                // (он принимает в userPrompt одной строкой). Новый формат — объект
+                // {summary, docType, branchHint, npaHints} — идёт в agentDispatcher
+                // → injectGlobalContext (Pinecone embedding) + buildContextualSystemPrompt
+                // (LLM system prompt). normalizeContext тащит valid поля, отбрасывает
+                // пустые.
+                const docContextForAgents = normalizeContext({
+                    summary:    docContextStr,
+                    docType:    docContext?.document_type,
+                    branchHint: docContext?.subject_area,
+                    npaHints:   Array.isArray(docContext?.expected_npa) ? docContext.expected_npa : undefined
+                });
+
                 // Разводим пункты по двум корзинам по triage
                 const skipSegmentsWithIdx = [];
                 const auditSegmentsWithIdx = [];
@@ -1481,7 +1628,7 @@ ${riskReports}
 
                     sendStatus(res, `🔬 Глубокий аудит ${auditSegmentsWithIdx.length} пунктов...`);
                     finalResults = await verifySegmentsSmart(
-                        auditSegmentsWithIdx, res, docContextStr, meta_context, aborted, telemetry,
+                        auditSegmentsWithIdx, res, docContextForAgents, meta_context, aborted, telemetry,
                         phase3ChunkAnalyses
                     );
                 } else {

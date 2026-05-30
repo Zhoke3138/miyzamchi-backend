@@ -3837,3 +3837,135 @@ body.dk .analyze-accordion-content {
   border-color: rgba(229, 72, 77, 0.4);
   background: rgba(229, 72, 77, 0.05);
 }
+
+/* ═══════════ ANALYZE DOCS MODE (2026-05-30) ═══════════
+   Drag&Drop вкладка "Анализ Документов" — заменяет CompareMode.
+   1 файл → /api/analyze-document. 2 файла → /api/compare. */
+.ad-root{ display:flex; flex-direction:column; gap:var(--s-3); padding:var(--s-1); animation:fadeIn .25s ease; }
+
+/* ── Двух-колоночная зона drop slots ───────────────────────────── */
+.ad-slots{
+  display:grid; grid-template-columns:1fr 1fr; gap:var(--s-3);
+  margin-top:var(--s-2);
+}
+.ad-slot{
+  position:relative; min-height:180px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+  padding:var(--s-3); gap:var(--s-1h);
+  background:var(--bg-app); border:2px dashed var(--border);
+  border-radius:var(--radius);
+  cursor:pointer;
+  transition:border-color .15s, background .15s, transform .15s, box-shadow .15s;
+}
+.ad-slot:hover{ border-color:var(--accent); background:var(--accent-dim); }
+.ad-slot--drag{
+  border-color:var(--accent); background:var(--accent-dim);
+  transform:scale(1.01); box-shadow:0 4px 18px var(--accent-glow);
+}
+.ad-slot--loading{ cursor:wait; border-style:solid; border-color:var(--accent); background:var(--accent-dim); }
+.ad-slot--ready{
+  cursor:default; border-style:solid; border-color:var(--accent);
+  background:linear-gradient(135deg, var(--accent-dim), var(--bg-panel));
+}
+.ad-slot--error{ cursor:pointer; border-style:solid; border-color:#e5484d; background:rgba(229,72,77,.06); }
+
+.ad-slot-empty,
+.ad-slot-state{
+  display:flex; flex-direction:column; align-items:center; gap:var(--s-1);
+  width:100%; max-width:240px;
+}
+.ad-slot-icon{ display:inline-flex; align-items:center; justify-content:center; }
+.ad-slot-label{ font-family:var(--font-sans); font-weight:600; font-size:var(--text-sm); color:var(--text); }
+.ad-slot-hint{ font-size:var(--text-xs); color:var(--muted); line-height:1.4; }
+.ad-slot-name{
+  font-family:var(--font-sans); font-weight:600; font-size:var(--text-sm); color:var(--text);
+  max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.ad-slot-meta{ font-size:var(--text-xs); color:var(--muted); font-family:var(--font-mono); }
+.ad-slot-spin{ display:inline-flex; animation:spin 1s linear infinite; color:var(--accent); }
+.ad-slot-remove{
+  position:absolute; top:8px; right:8px;
+  width:22px; height:22px; padding:0;
+  border:none; background:transparent; color:var(--muted);
+  border-radius:var(--radius-sm); cursor:pointer;
+  font-size:18px; line-height:1;
+  display:flex; align-items:center; justify-content:center;
+  transition:color .15s, background .15s;
+}
+.ad-slot-remove:hover{ background:rgba(229,72,77,.12); color:#e5484d; }
+
+/* ── Индикатор активного режима (audit/compare/none) ──────────── */
+.ad-mode-banner{
+  padding:var(--s-2) var(--s-3);
+  border-radius:var(--radius-sm);
+  font-size:var(--text-sm); font-family:var(--font-sans);
+  text-align:center;
+  border:1px solid var(--border);
+  background:var(--bg-app); color:var(--muted);
+  transition:background .15s, color .15s, border-color .15s;
+}
+.ad-mode-banner--audit{
+  background:var(--accent-dim); color:var(--accent-strong, var(--accent));
+  border-color:var(--accent);
+}
+.ad-mode-banner--compare{
+  background:rgba(245,166,35,.08); color:#f5a623;
+  border-color:rgba(245,166,35,.4);
+}
+
+/* ── Toolbar в running/done ────────────────────────────────────── */
+.ad-purity-badge{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:4px 10px; border-radius:999px;
+  background:rgba(16,185,129,.08); color:#10b981;
+  border:1px solid rgba(16,185,129,.3);
+  font-size:var(--text-sm); font-family:var(--font-sans);
+}
+
+/* ── Audit-таблица (Triage + Ищейки результаты) ───────────────── */
+.ad-table-wrap{ width:100%; overflow-x:auto; }
+.ad-table{
+  width:100%; border-collapse:separate; border-spacing:0;
+  font-family:var(--font-sans); font-size:var(--text-sm);
+  background:var(--bg-panel);
+  border:1px solid var(--border); border-radius:var(--radius-sm);
+  overflow:hidden;
+}
+.ad-table thead th{
+  text-align:left; padding:var(--s-2) var(--s-2h);
+  font-weight:600; color:var(--muted); font-size:var(--text-xs);
+  text-transform:uppercase; letter-spacing:.04em;
+  background:var(--bg-app); border-bottom:1px solid var(--border);
+}
+.ad-table tbody td{
+  padding:var(--s-2) var(--s-2h); vertical-align:top;
+  border-bottom:1px solid var(--border);
+  line-height:1.5;
+}
+.ad-table tbody tr:last-child td{ border-bottom:none; }
+.ad-cell-num{ font-family:var(--font-mono); font-size:12px; color:var(--muted); white-space:nowrap; }
+.ad-cell-verdict{ font-weight:600; }
+.ad-cell-rationale{ color:var(--muted); }
+.ad-row--ok{ background:transparent; }
+.ad-row--warning{ background:rgba(245,166,35,.04); }
+.ad-row--warning .ad-cell-verdict{ color:#f5a623; }
+.ad-row--critical{ background:rgba(229,72,77,.05); }
+.ad-row--critical .ad-cell-verdict{ color:#e5484d; }
+.ad-step-reason{ color:var(--muted); font-size:11px; margin-left:6px; }
+
+/* ── Sources block (использованные нормы НПА) ────────────────── */
+.ad-sources{
+  padding:var(--s-2h) var(--s-3);
+  background:var(--bg-panel); border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  font-family:var(--font-sans); font-size:var(--text-sm);
+}
+.ad-sources-head{ font-weight:600; color:var(--text); margin-bottom:var(--s-1h); }
+.ad-sources-list{ margin:0; padding-left:var(--s-3); color:var(--muted); }
+.ad-sources-list li{ margin:4px 0; }
+
+/* ── Mobile / narrow panel adapt ─────────────────────────────── */
+@media (max-width: 720px){
+  .ad-slots{ grid-template-columns:1fr; }
+}
+

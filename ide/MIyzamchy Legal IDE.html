@@ -625,117 +625,262 @@ async function streamCompareDocuments({oldDocumentText, newDocumentText, onStatu
 }
 
 /* ═════════════════════════════════════════════════════════════
-   CompareMode — UI семантического сравнения двух редакций документа.
-   Состояния: idle (ввод/загрузка) → running (стрим этапов + summary)
-   → done (side-by-side + Executive Summary). Полностью самодостаточный.
+   AnalyzeDocsMode — единая вкладка "Анализ Документов" (2026-05-30).
+   Заменяет старый CompareMode. Drag&Drop два слота:
+     • 1 файл  → /api/analyze-document (Triage + Ищейки + DCR Final Judge)
+     • 2 файла → /api/compare           (semantic compare двух редакций)
+   Без textarea. Lazy-load mammoth (.docx) / pdf.js (.pdf) — как в index.html.
+   SSE callbacks переиспользуют streamAnalyzeDocument / streamCompareDocuments.
    ═════════════════════════════════════════════════════════════ */
-const CompareMode = () => {
-  const [oldText, setOldText] = useState('');
-  const [newText, setNewText] = useState('');
-  const [running, setRunning] = useState(false);
-  const [steps, setSteps] = useState([]);
-  const [report, setReport] = useState(null);
-  const [summary, setSummary] = useState('');
-  const [error, setError] = useState('');
+
+// ── Helpers для извлечения текста из файлов (mammoth/pdf.js lazy-load) ──
+const _loadScriptOnce = (src) => new Promise((res, rej) => {
+  const ex = Array.from(document.scripts).find(s => s.src === src);
+  if (ex) return res();
+  const s = document.createElement('script');
+  s.src = src; s.onload = res; s.onerror = () => rej(new Error('Не удалось загрузить ' + src));
+  document.head.appendChild(s);
+});
+const _fmtBytes = (n) => n < 1024 ? n + ' B' : n < 1024*1024 ? Math.round(n/1024) + ' КБ' : (n/1024/1024).toFixed(1) + ' МБ';
+const _extractTextFromFile = async (file) => {
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.txt') || name.endsWith('.md') || name.endsWith('.rtf') || name.endsWith('.text')) {
+    return await file.text();
+  }
+  if (name.endsWith('.docx') || name.endsWith('.doc')) {
+    if (!window.mammoth) await _loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js');
+    const buffer = await file.arrayBuffer();
+    const res = await window.mammoth.extractRawText({ arrayBuffer: buffer });
+    return (res.value || '').trim();
+  }
+  if (name.endsWith('.pdf')) {
+    if (!window.pdfjsLib) {
+      await _loadScriptOnce('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+    const buffer = await file.arrayBuffer();
+    const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+    let text = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(it => it.str).join(' ') + '\n\n';
+      if (i >= 80) { text += `\n…[Документ обрезан после 80 страниц]\n`; break; }
+    }
+    return text.trim();
+  }
+  // Last resort — try as text
+  try { return await file.text(); } catch { return null; }
+};
+
+const AnalyzeDocsMode = () => {
+  // slots: [{ file, text, name, size, status, error }]  status: empty | loading | ready | error
+  const EMPTY_SLOT = { file:null, text:'', name:'', size:0, status:'empty', error:'' };
+  const [slots, setSlots]         = useState([{...EMPTY_SLOT}, {...EMPTY_SLOT}]);
+  const [running, setRunning]     = useState(false);
+  const [steps, setSteps]         = useState([]);
+  const [tableRows, setTableRows] = useState([]);
+  const [purityIndex, setPurityIndex] = useState(null);
+  const [summary, setSummary]     = useState('');
+  const [sources, setSources]     = useState([]);
+  const [report, setReport]       = useState(null);          // compare-only
   const [activePair, setActivePair] = useState(null);
+  const [error, setError]         = useState('');
+  const [dragOverIdx, setDragOverIdx] = useState(-1);
   const abortRef = useRef(null);
+  const fileInputRefs = [useRef(null), useRef(null)];
 
-  const canRun = !running && oldText.trim().length >= 50 && newText.trim().length >= 50;
+  const readyCount = slots.filter(s => s.status === 'ready').length;
+  const loadingCount = slots.filter(s => s.status === 'loading').length;
+  const mode = readyCount === 2 ? 'compare' : readyCount === 1 ? 'audit' : null;
+  const canRun = !running && loadingCount === 0 && readyCount >= 1;
 
-  const onFile = (which) => (e) => {
-    const file = e.target.files && e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const txt = String(reader.result || '');
-      if(which === 'old') setOldText(txt); else setNewText(txt);
-    };
-    reader.readAsText(file, 'utf-8');
-    e.target.value = ''; // сброс input — чтобы можно было выбрать тот же файл повторно
+  // ── File handling ─────────────────────────────────────────────
+  const updateSlot = (i, patch) => setSlots(prev => {
+    const copy = prev.slice();
+    copy[i] = { ...copy[i], ...patch };
+    return copy;
+  });
+
+  const handleFile = async (slotIdx, file) => {
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) {
+      updateSlot(slotIdx, { status:'error', name:file.name, size:file.size, error:'Файл > 25 МБ' });
+      return;
+    }
+    updateSlot(slotIdx, { file, name:file.name, size:file.size, status:'loading', error:'', text:'' });
+    try {
+      const text = await _extractTextFromFile(file);
+      if (text == null) {
+        updateSlot(slotIdx, { status:'error', error:'Формат не поддерживается (нужны .txt, .docx, .pdf, .md)' });
+        return;
+      }
+      if (!text.trim() || text.trim().length < 50) {
+        updateSlot(slotIdx, { status:'error', error:'Текст пустой или < 50 символов' });
+        return;
+      }
+      updateSlot(slotIdx, { text, status:'ready' });
+    } catch (e) {
+      updateSlot(slotIdx, { status:'error', error:(e.message || 'Ошибка чтения').slice(0, 80) });
+    }
   };
 
-  const upsertStep = (s) => {
-    setSteps(prev => {
-      const i = prev.findIndex(x => x.id === s.id);
-      if(i >= 0){ const copy = prev.slice(); copy[i] = s; return copy; }
-      return [...prev, s];
-    });
+  const removeSlot = (i) => updateSlot(i, {...EMPTY_SLOT});
+
+  // ── Drag & drop ───────────────────────────────────────────────
+  const onDragOver = (i) => (e) => { e.preventDefault(); setDragOverIdx(i); };
+  const onDragLeave = () => setDragOverIdx(-1);
+  const onDrop = (i) => (e) => {
+    e.preventDefault();
+    setDragOverIdx(-1);
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleFile(i, f);
   };
 
+  // ── Stream-step upsert ────────────────────────────────────────
+  const upsertStep = (s) => setSteps(prev => {
+    const i = prev.findIndex(x => x.id === s.id);
+    if (i >= 0) { const c = prev.slice(); c[i] = { ...c[i], ...s }; return c; }
+    return [...prev, s];
+  });
+
+  // ── Run (audit или compare в зависимости от mode) ─────────────
   const onRun = async () => {
-    setRunning(true); setSteps([]); setReport(null); setSummary(''); setError(''); setActivePair(null);
+    setRunning(true); setError('');
+    setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null);
     const ac = new AbortController();
     abortRef.current = ac;
-    try{
-      await streamCompareDocuments({
-        oldDocumentText: oldText,
-        newDocumentText: newText,
-        onStep: (s) => upsertStep(s),
-        onStatus: () => {},
-        onReport: (r) => setReport(r),
-        onText: (t) => setSummary(prev => prev + t),
-        signal: ac.signal
-      });
-    }catch(err){
-      if(err.name !== 'AbortError') setError(err.message || String(err));
-    }finally{
+    try {
+      if (mode === 'audit') {
+        await streamAnalyzeDocument({
+          documentText: slots[0].text,
+          userQuery: 'Проведи полный юридический аудит документа',
+          sessionId: null,
+          signal: ac.signal,
+          onStatus:       () => {},
+          onStep:         (s) => { if (s && s.id && s.status) upsertStep(s); },
+          onConfidence:   () => {},
+          onTableRow:     (r) => setTableRows(p => [...p, r]),
+          onPurityIndex:  (idx) => setPurityIndex(idx),
+          onText:         (chunk) => setSummary(p => p + chunk),
+          onSources:      (s) => setSources(Array.isArray(s) ? s : []),
+          onMetadata:     () => {},
+          onTelemetry:    () => {}
+        });
+      } else if (mode === 'compare') {
+        await streamCompareDocuments({
+          oldDocumentText: slots[0].text,
+          newDocumentText: slots[1].text,
+          signal: ac.signal,
+          onStep:    (s) => upsertStep(s),
+          onStatus:  () => {},
+          onReport:  (r) => setReport(r),
+          onText:    (chunk) => setSummary(p => p + chunk)
+        });
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') setError(err.message || String(err));
+    } finally {
       setRunning(false);
+      abortRef.current = null;
     }
   };
 
   const startNew = () => {
-    if(abortRef.current){ try{abortRef.current.abort()}catch(e){} }
-    setRunning(false); setSteps([]); setReport(null); setSummary(''); setError(''); setActivePair(null);
-    setOldText(''); setNewText('');
+    if (abortRef.current) { try { abortRef.current.abort() } catch(e){} abortRef.current = null; }
+    setRunning(false);
+    setSlots([{...EMPTY_SLOT}, {...EMPTY_SLOT}]);
+    setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null); setError('');
   };
 
-  // ── IDLE: загрузка двух документов ────────────────────────────
-  if(!report && !running){
+  // ── IDLE: drag&drop слоты ─────────────────────────────────────
+  if (!running && tableRows.length === 0 && !report && !summary && !error) {
     return (
-      <div className="cmp-root">
+      <div className="ad-root">
         <div className="cmp-intro">
-          <h3 className="cmp-title">Сравнение редакций документа</h3>
-          <p className="cmp-sub">Загрузите или вставьте две версии — система найдёт смысловые изменения, риски, и Старший партнёр сформирует Executive Summary.</p>
+          <h3 className="cmp-title">Анализ документов</h3>
+          <p className="cmp-sub">Перетащите файл сюда или выберите вручную. Один документ → глубокий аудит. Два → сравнение редакций.</p>
         </div>
-        <div className="cmp-inputs">
-          {[
-            {k:'old', label:'Старая редакция (оригинал)', text:oldText, setter:setOldText},
-            {k:'new', label:'Новая редакция',             text:newText, setter:setNewText}
-          ].map(col => (
-            <div key={col.k} className="cmp-input-col">
-              <div className="cmp-input-head">
-                <span className="cmp-input-label">{col.label}</span>
-                <span className="cmp-input-meta">{col.text.trim().length} симв.</span>
+        <div className="ad-slots">
+          {slots.map((slot, i) => {
+            const isOver  = dragOverIdx === i;
+            const empty   = slot.status === 'empty';
+            const loading = slot.status === 'loading';
+            const ready   = slot.status === 'ready';
+            const errored = slot.status === 'error';
+            const label   = i === 0 ? 'Документ для аудита' : 'Вторая редакция (для сравнения)';
+            const cls = [
+              'ad-slot',
+              ready   ? 'ad-slot--ready'   : '',
+              loading ? 'ad-slot--loading' : '',
+              errored ? 'ad-slot--error'   : '',
+              isOver  ? 'ad-slot--drag'    : ''
+            ].filter(Boolean).join(' ');
+            return (
+              <div key={i} className={cls}
+                   onDragOver={onDragOver(i)}
+                   onDragLeave={onDragLeave}
+                   onDrop={onDrop(i)}
+                   onClick={() => { if (empty) fileInputRefs[i].current && fileInputRefs[i].current.click(); }}>
+                <input ref={fileInputRefs[i]}
+                       type="file"
+                       accept=".pdf,.docx,.doc,.txt,.md,.rtf"
+                       style={{display:'none'}}
+                       onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value=''; if (f) handleFile(i, f); }}/>
+                {empty && (
+                  <div className="ad-slot-empty">
+                    <div className="ad-slot-icon"><Ico k="clip" sz={28} col="var(--muted)"/></div>
+                    <div className="ad-slot-label">{label}</div>
+                    <div className="ad-slot-hint">Перетащите или кликните · .pdf .docx .txt</div>
+                  </div>
+                )}
+                {loading && (
+                  <div className="ad-slot-state">
+                    <div className="ad-slot-spin"><Ico k="loader" sz={22}/></div>
+                    <div className="ad-slot-name">{slot.name}</div>
+                    <div className="ad-slot-hint">Извлекаем текст…</div>
+                  </div>
+                )}
+                {ready && (
+                  <div className="ad-slot-state ad-slot-state--ready">
+                    <div className="ad-slot-icon"><Ico k="file" sz={26} col="var(--accent)"/></div>
+                    <div className="ad-slot-name" title={slot.name}>{slot.name}</div>
+                    <div className="ad-slot-meta">{_fmtBytes(slot.size)} · {Math.round(slot.text.length/100)/10}k симв.</div>
+                    <button type="button" className="ad-slot-remove" onClick={(e) => { e.stopPropagation(); removeSlot(i); }} title="Удалить">×</button>
+                  </div>
+                )}
+                {errored && (
+                  <div className="ad-slot-state ad-slot-state--error">
+                    <div className="ad-slot-icon"><Ico k="x" sz={22} col="#e5484d"/></div>
+                    <div className="ad-slot-name" title={slot.name}>{slot.name || 'Ошибка'}</div>
+                    <div className="ad-slot-hint">{slot.error}</div>
+                    <button type="button" className="ad-slot-remove" onClick={(e) => { e.stopPropagation(); removeSlot(i); }} title="Удалить">×</button>
+                  </div>
+                )}
               </div>
-              <textarea
-                className="cmp-textarea"
-                value={col.text}
-                onChange={e => col.setter(e.target.value)}
-                placeholder="Вставьте текст документа или загрузите .txt-файл ниже"
-                spellCheck={false}
-              />
-              <div className="cmp-input-foot">
-                <label className="cmp-file-btn">
-                  <input type="file" accept=".txt,.md,.text" style={{display:'none'}} onChange={onFile(col.k)} />
-                  Загрузить .txt
-                </label>
-                {col.text && <button className="cmp-clear-btn" onClick={() => col.setter('')}>Очистить</button>}
-              </div>
-            </div>
-          ))}
+            );
+          })}
+        </div>
+        <div className={'ad-mode-banner ad-mode-banner--' + (mode || 'none')}>
+          {mode === 'audit'   && <span>🔬 Режим: <b>Одиночный аудит</b> · Triage + Ищейки + DCR Final Judge</span>}
+          {mode === 'compare' && <span>⚖️ Режим: <b>Сравнение редакций</b> · semantic diff + Executive Summary</span>}
+          {!mode              && <span>Загрузите хотя бы один документ, чтобы начать</span>}
         </div>
         <div className="cmp-actions">
           <button className="cmp-run-btn" disabled={!canRun} onClick={onRun}>
-            Сравнить редакции
+            {mode === 'compare' ? '⚖️ Сравнить редакции' : '🔬 Запустить аудит'}
           </button>
-          <span className="cmp-hint">Каждая редакция — не менее 50 символов.</span>
+          {loadingCount > 0 && <span className="cmp-hint">Дождитесь извлечения текста…</span>}
+          {readyCount === 0 && loadingCount === 0 && <span className="cmp-hint">Поддержка: PDF, DOCX, TXT, MD. Макс. 25 МБ.</span>}
         </div>
       </div>
     );
   }
 
-  // ── RUNNING / DONE: степпер + Executive Summary + side-by-side ─
+  // ── RUNNING / DONE: степпер + Executive Summary + audit table / compare pairs ─
   const pairs = (report && report.pairs) || [];
+  const isCompareView = pairs.length > 0 || (mode === 'compare');
+  const isAuditView   = !isCompareView && (tableRows.length > 0 || mode === 'audit');
 
   const pairClass = (p) => {
     if(p.riskDetected) return 'cmp-pair cmp-pair--risk';
@@ -744,13 +889,24 @@ const CompareMode = () => {
     if(p.category === 'удаление')   return 'cmp-pair cmp-pair--removed';
     return 'cmp-pair cmp-pair--stable';
   };
+  const rowClass = (r) => {
+    const st = (r.status || 'ok').toLowerCase();
+    if (st === 'critical' || st === 'error') return 'ad-row ad-row--critical';
+    if (st === 'warning') return 'ad-row ad-row--warning';
+    return 'ad-row ad-row--ok';
+  };
 
   return (
     <div className="cmp-root">
       <div className="cmp-toolbar">
-        <button className="cmp-new-btn" onClick={startNew}>← Новое сравнение</button>
+        <button className="cmp-new-btn" onClick={startNew}>← Новый анализ</button>
         {running && abortRef.current && (
           <button className="cmp-stop-btn" onClick={() => abortRef.current.abort()}>Остановить</button>
+        )}
+        {purityIndex !== null && (
+          <div className="ad-purity-badge" title="Индекс правовой чистоты документа">
+            🛡️ Чистота: <b>{purityIndex}%</b>
+          </div>
         )}
         {report && (
           <div className="cmp-stats">
@@ -768,9 +924,35 @@ const CompareMode = () => {
           {steps.map(s => (
             <div key={s.id} className={`cmp-step cmp-step--${s.status}`}>
               <span className="cmp-step-dot"/>
-              <span className="cmp-step-text">{s.text}</span>
+              <span className="cmp-step-text">{s.text}{s.reason ? <span className="ad-step-reason"> · {s.reason}</span> : null}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {error && <div className="cmp-error">⚠️ {error}</div>}
+
+      {/* AUDIT VIEW: таблица пунктов с цветовой кодировкой */}
+      {isAuditView && tableRows.length > 0 && (
+        <div className="ad-table-wrap">
+          <table className="ad-table">
+            <thead>
+              <tr>
+                <th style={{width:'24%'}}>Пункт</th>
+                <th style={{width:'30%'}}>Вердикт</th>
+                <th>Обоснование / норма КР</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map((r, i) => (
+                <tr key={i} className={rowClass(r)}>
+                  <td className="ad-cell-num">{r.item_number || `п.${i+1}`}</td>
+                  <td className="ad-cell-verdict">{r.short_verdict || '—'}</td>
+                  <td className="ad-cell-rationale">{r.legal_rationale || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -778,13 +960,22 @@ const CompareMode = () => {
         <div className="cmp-summary">
           <div className="cmp-summary-head">📋 Executive Summary</div>
           <div className="cmp-summary-body ai-md"
-               dangerouslySetInnerHTML={{__html: renderMarkdown(summary || (running ? '_Старший партнёр анализирует изменения..._' : ''))}}/>
+               dangerouslySetInnerHTML={{__html: renderMarkdown(summary || (running ? (isCompareView ? '_Старший партнёр анализирует изменения..._' : '_Финальный судья формирует заключение..._') : ''))}}/>
         </div>
       )}
 
-      {error && <div className="cmp-error">⚠️ {error}</div>}
+      {/* AUDIT VIEW: использованные источники НПА */}
+      {isAuditView && sources.length > 0 && (
+        <div className="ad-sources">
+          <div className="ad-sources-head">🔗 Использованные нормы ({sources.length}):</div>
+          <ul className="ad-sources-list">
+            {sources.slice(0, 10).map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
+        </div>
+      )}
 
-      {pairs.length > 0 && (
+      {/* COMPARE VIEW: side-by-side pairs */}
+      {isCompareView && pairs.length > 0 && (
         <div className="cmp-grid">
           <div className="cmp-grid-head cmp-grid-head--old">Старая редакция</div>
           <div className="cmp-grid-head cmp-grid-head--new">Новая редакция</div>
@@ -823,7 +1014,7 @@ const CompareMode = () => {
         </div>
       )}
 
-      {!running && !pairs.length && !error && (
+      {!running && !pairs.length && !tableRows.length && !error && (
         <div className="cmp-empty">Ожидаю результат...</div>
       )}
     </div>
@@ -7925,9 +8116,9 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           {/* Переключатель режима Чат / Агент — пилюля с двумя сегментами */}
           <div role="tablist" aria-label="Режим работы ИИ" style={{display:'inline-flex',padding:2,borderRadius:'var(--radius-pill)',background:'var(--bg-app)',border:'1px solid var(--border-color)',fontFamily:'var(--font-sans)'}}>
             {[
-              {k:'chat',    label:'Чат',       icon:'sparkles', title:'Чат — консультация без правки документа'},
-              {k:'agent',   label:'Агент',     icon:'edit',     title:'Агент — редактирует открытый документ'},
-              {k:'compare', label:'Сравнение', icon:'scale',    title:'Сравнение — семантическое сравнение двух редакций документа'}
+              {k:'chat',          label:'Чат',                icon:'sparkles',  title:'Чат — консультация без правки документа'},
+              {k:'agent',         label:'Агент',              icon:'edit',      title:'Агент — редактирует открытый документ'},
+              {k:'analyze-docs',  label:'Анализ Документов',  icon:'file',      title:'Анализ — загрузите файл для аудита или два для сравнения редакций'}
             ].map(opt => {
               const active = chatMode === opt.k;
               return (
@@ -7970,8 +8161,8 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         </div>
       </div>
       <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions text" aria-label="История диалога с ИИ" style={{flex:1,overflowY:'auto',padding:'var(--s-3h)'}}>
-        {chatMode === 'compare' && <CompareMode/>}
-        {chatMode !== 'compare' && exchanges.length === 0 && !thinking && agentSteps.length === 0 && (
+        {chatMode === 'analyze-docs' && <AnalyzeDocsMode/>}
+        {chatMode !== 'analyze-docs' && exchanges.length === 0 && !thinking && agentSteps.length === 0 && (
           <div style={{display:'flex',flexDirection:'column',padding:'var(--s-1) 0',gap:'var(--s-4)',animation:'fadeIn .35s ease'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
               <div style={{display:'flex',flexDirection:'column',gap:'var(--s-half)'}}>
@@ -8005,7 +8196,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
 
           </div>
         )}
-        {chatMode !== 'compare' && exchanges.map((ex,ei)=>(
+        {chatMode !== 'analyze-docs' && exchanges.map((ex,ei)=>(
           <div key={ei} style={{marginBottom:'var(--s-1h)',animation:'fadeIn .25s ease'}}>
             {/* User message — pill справа, индиго градиент */}
             <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'var(--s-2h)'}}>
@@ -8027,7 +8218,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             {ei<exchanges.length-1 && <div style={{height:'var(--s-3)',borderBottom:'1px dashed var(--border-color)',marginBottom:'var(--s-3)',opacity:.5}}/>}
           </div>
         ))}
-        {chatMode !== 'compare' && agentSteps.length > 0 && (
+        {chatMode !== 'analyze-docs' && agentSteps.length > 0 && (
           <div style={{marginBottom:'var(--s-2h)', padding:'var(--s-2h) var(--s-3h)', background:'var(--bg-editor)', border:'1px solid var(--border-color)', borderRadius:'var(--radius-sm)', fontFamily:'var(--font-mono)', fontSize:'var(--text-xs)', color:'var(--text)', lineHeight:'var(--lh-normal)'}}>
             <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'var(--s-2)'}}>
               <div style={{fontWeight:600, color:'var(--text)', display:'flex', alignItems:'center', gap:'var(--s-1h)'}}>
@@ -8083,7 +8274,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           </button>
         </div>
       )}
-      <div style={{padding:'var(--s-2) var(--s-2h)',borderTop:'1px solid var(--border)',flexShrink:0,background:'var(--bg-bar)'}}>
+      <div style={{padding:'var(--s-2) var(--s-2h)',borderTop:'1px solid var(--border)',flexShrink:0,background:'var(--bg-bar)',display: chatMode === 'analyze-docs' ? 'none' : 'block'}}>
         {exchanges.length === 0 && attachments.length === 0 && (
           <>
           <div style={{display:'flex',gap:'var(--s-1h)',marginBottom:'var(--s-2)',flexWrap:'wrap'}}>{(agent

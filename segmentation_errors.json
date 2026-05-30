@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-05-30T04:18:36.136Z",
+  "mode": "mock",
+  "summary": {
+    "total": 16,
+    "pass": 14,
+    "escalated": 2,
+    "layerBCalls": 2,
+    "lossy": 0
+  },
+  "thresholds": {
+    "giantChunkChars": 2500,
+    "tooManySmallCount": 50,
+    "tooManySmallAvg": 200,
+    "dominantRatio": 0.5,
+    "tooFewCount": 5,
+    "tooFewMinBytes": 2000,
+    "lossyTolerance": 0
+  },
+  "errors": []
+}
