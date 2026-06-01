@@ -563,6 +563,35 @@ function sendStep(res, step) {
 //   context — статьи среднего score — используются как справка
 //   all     — объединение для логирования и источников
 // Если res передан — шлёт SSE-статусы после каждого реального этапа pipeline
+function expandCyrillicAbbreviation(text, abbrPattern, replacement) {
+    const regex = new RegExp(`(^|[^a-zа-яё0-9])(${abbrPattern})([^a-zа-яё0-9]|$)`, 'gi');
+    return text.replace(regex, (match, p1, p2, p3) => {
+        return p1 + replacement + p3;
+    });
+}
+
+function expandQueryAbbreviations(query) {
+    let expandedQuery = query;
+    const replacements = [
+        { pattern: 'гк\\s*кр|гк', replacement: 'Гражданский кодекс Кыргызской Республики' },
+        { pattern: 'ук\\s*кр|ук', replacement: 'Уголовный кодекс Кыргызской Республики' },
+        { pattern: 'тк\\s*кр|тк', replacement: 'Трудовой кодекс Кыргызской Республики' },
+        { pattern: 'упк\\s*кр|упк', replacement: 'Уголовно-процессуальный кодекс Кыргызской Республики' },
+        { pattern: 'гпк\\s*кр|гпк', replacement: 'Гражданский процессуальный кодекс Кыргызской Республики' },
+        { pattern: 'коап\\s*кр|коап|коао\\s*кр|коао', replacement: 'Кодекс об административной ответственности Кыргызской Республики' },
+        { pattern: 'нк\\s*кр|нк', replacement: 'Налоговый кодекс Кыргызской Республики' },
+        { pattern: 'ск\\s*кр|ск', replacement: 'Семейный кодекс Кыргызской Республики' },
+        { pattern: 'зк\\s*кр|зк', replacement: 'Земельный кодекс Кыргызской Республики' },
+        { pattern: 'жк\\s*кр|жк', replacement: 'Жилищный кодекс Кыргызской Республики' },
+        { pattern: 'бк\\s*кр|бк', replacement: 'Бюджетный кодекс Кыргызской Республики' }
+    ];
+
+    for (const r of replacements) {
+        expandedQuery = expandCyrillicAbbreviation(expandedQuery, r.pattern, r.replacement);
+    }
+    return expandedQuery;
+}
+
 async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     // --- Настройки (mode задаёт дефолты, opts может переопределить) ---
     const defaults = {
@@ -579,9 +608,14 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     
     const streamStatuses = res && mode === 'thinking';
     
-    // --- Этап 1: Эмбеддинг запроса ---
+    // --- Этап 1: Эмбеддинг запроса (с расширением аббревиатур для RAG) ---
+    const expandedQuery = expandQueryAbbreviations(query);
+    if (expandedQuery !== query) {
+        console.log(`[Retrieval] Расширили запрос аббревиатур: "${query}" -> "${expandedQuery}"`);
+    }
+    
     if (streamStatuses) sendStatus(res, 'Преобразую ваш вопрос в вектор...', '🧬');
-    const embedding = await getEmbedding(query);
+    const embedding = await getEmbedding(expandedQuery);
     
     // --- Этап 2: Семантический поиск ---
     if (streamStatuses) sendStatus(res, `Ищу в базе ${maxK} ближайших статей НПА...`, '🔎');

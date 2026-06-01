@@ -1351,40 +1351,60 @@
             this.isAiSpeaking = levelAi > 3;
             
             let targetVolume = 0;
+            let speedMultiplier = 1.0;
+            let freqMultiplier = 1.0;
+            let idlePulse = 0;
+            
             if (this.isAiSpeaking) {
                 targetVolume = levelAi / 128;
                 this.container.classList.add('speaking');
                 this.container.classList.remove('listening');
+                speedMultiplier = 0.65; // Rhythmic, smooth
+                freqMultiplier = 0.55;  // Long, fluid waves
             } else if (this.isUserSpeaking) {
                 targetVolume = levelMic / 128;
                 this.container.classList.add('listening');
                 this.container.classList.remove('speaking');
+                speedMultiplier = 1.5;  // Active, quick
+                freqMultiplier = 1.6;   // Multi-ripple detailed waves
             } else {
                 this.container.classList.remove('listening');
                 this.container.classList.remove('speaking');
+                // Gentle slow organic breathing when idle (alive and breathing!)
+                idlePulse = (Math.sin(Date.now() / 600) * 0.5 + 0.5) * 8 + 5; // undulate between 5px and 13px
             }
             
             // Smooth volume easing
             this.smoothVolume += (targetVolume - this.smoothVolume) * 0.15;
             
+            // Modulation factor
+            let baseAmpMultiplier = this.smoothVolume * 1.8;
+            if (!this.isAiSpeaking && !this.isUserSpeaking) {
+                baseAmpMultiplier = idlePulse / 35; // gentle idle motion
+            }
+            
+            // Siri/Gemini Live glowing overlay mix
+            this.ctx.globalCompositeOperation = 'screen';
+            
             // Define 4 Gemini-style multi-color waves (Red, Blue, Green, Yellow)
             const waves = [
-                { freq: 0.02, amp: 32, speed: 0.03, color: 'rgba(51, 102, 255, 0.45)', phase: 0 },    // Royal Blue
-                { freq: 0.04, amp: 22, speed: -0.035, color: 'rgba(241, 196, 15, 0.45)', phase: 1.5 }, // Golden Yellow
-                { freq: 0.015, amp: 42, speed: 0.02, color: 'rgba(46, 204, 113, 0.35)', phase: 3.0 },  // Emerald Green
-                { freq: 0.05, amp: 16, speed: 0.045, color: 'rgba(255, 74, 74, 0.4)', phase: 4.5 }     // Vibrant Red
+                { freq: 0.02 * freqMultiplier, amp: 38, speed: 0.025 * speedMultiplier, color: 'rgba(51, 102, 255, 0.45)', phase: 0 },    // Royal Blue
+                { freq: 0.038 * freqMultiplier, amp: 26, speed: -0.03 * speedMultiplier, color: 'rgba(241, 196, 15, 0.45)', phase: 1.5 }, // Golden Yellow
+                { freq: 0.016 * freqMultiplier, amp: 46, speed: 0.018 * speedMultiplier, color: 'rgba(46, 204, 113, 0.35)', phase: 3.0 },  // Emerald Green
+                { freq: 0.045 * freqMultiplier, amp: 20, speed: 0.04 * speedMultiplier, color: 'rgba(255, 74, 74, 0.4)', phase: 4.5 }     // Vibrant Red
             ];
-            
-            // Modulation factor
-            const baseAmpMultiplier = 0.1 + this.smoothVolume * 1.6;
             
             waves.forEach((w, index) => {
                 w.phase += w.speed;
                 
                 this.ctx.beginPath();
-                this.ctx.strokeStyle = w.color;
-                this.ctx.lineWidth = index === 0 ? 3.5 : 2;
+                this.ctx.strokeStyle = w.color.replace(/[\d\.]+\)$/, '1.0)'); // Solid vibrant color for stroke
+                this.ctx.lineWidth = index === 0 ? 5 : 3.5;
                 this.ctx.lineCap = 'round';
+                
+                // Add volumetric shadow glow to the stroke!
+                this.ctx.shadowBlur = index === 0 ? 25 : 12;
+                this.ctx.shadowColor = w.color;
                 
                 for (let x = 0; x < width; x++) {
                     // Siri/Gemini envelope logic to pinch wave at boundaries
@@ -1398,7 +1418,28 @@
                     }
                 }
                 this.ctx.stroke();
+                
+                // ════════════════════════════════════════════════════════════
+                // VOLUMETRIC GRADIENT FILL UNDER THE WAVE
+                // ════════════════════════════════════════════════════════════
+                this.ctx.shadowBlur = 0; // disable shadow for fill to protect GPU performance
+                this.ctx.lineTo(width, height / 2);
+                this.ctx.lineTo(0, height / 2);
+                this.ctx.closePath();
+                
+                // Create a soft glowing vertical gradient centered at the mid-line
+                const fillGrad = this.ctx.createLinearGradient(0, height / 2 - 30, 0, height / 2 + 30);
+                const alpha = this.isAiSpeaking || this.isUserSpeaking ? '0.16' : '0.08';
+                fillGrad.addColorStop(0, w.color.replace(/[\d\.]+\)$/, '0)'));
+                fillGrad.addColorStop(0.5, w.color.replace(/[\d\.]+\)$/, `${alpha})`));
+                fillGrad.addColorStop(1, w.color.replace(/[\d\.]+\)$/, '0)'));
+                
+                this.ctx.fillStyle = fillGrad;
+                this.ctx.fill();
             });
+            
+            // Restore standard blend mode for any overlays
+            this.ctx.globalCompositeOperation = 'source-over';
         }
     }
 
