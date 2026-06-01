@@ -521,8 +521,40 @@
             </div>
             <div class="voice-modal-body">
                 <div class="voice-visualizer-container" id="voice-visualizer-container">
-                    <div class="voice-blob voice-blob-1" id="voice-blob-1"></div>
-                    <div class="voice-blob voice-blob-2" id="voice-blob-2"></div>
+                    <!-- Glowing Volumetric SVG Wave Blobs -->
+                    <svg class="voice-blobs-svg" id="voice-blobs-svg" viewBox="0 0 500 220" preserveAspectRatio="none">
+                        <defs>
+                            <linearGradient id="blobGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#ec4899" />
+                                <stop offset="50%" stop-color="#8b5cf6" />
+                                <stop offset="100%" stop-color="#3366ff" />
+                            </linearGradient>
+                            <linearGradient id="blobGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#eab308" />
+                                <stop offset="50%" stop-color="#f97316" />
+                                <stop offset="100%" stop-color="#ff4a4a" />
+                            </linearGradient>
+                            <filter id="glow1" x="-50%" y="-50%" width="200%" height="200%">
+                                <feGaussianBlur stdDeviation="6" result="blur" />
+                                <feMerge>
+                                    <feMergeNode in="blur" />
+                                    <feMergeNode in="SourceGraphic" />
+                                </feMerge>
+                            </filter>
+                            <filter id="glow2" x="-50%" y="-50%" width="200%" height="200%">
+                                <feGaussianBlur stdDeviation="6" result="blur" />
+                                <feMerge>
+                                    <feMergeNode in="blur" />
+                                    <feMergeNode in="SourceGraphic" />
+                                </feMerge>
+                            </filter>
+                        </defs>
+                        <!-- Left Wave Blob -->
+                        <path id="voice-svg-blob-1" fill="url(#blobGrad1)" filter="url(#glow1)" opacity="0.95" style="mix-blend-mode: screen;" />
+                        <!-- Right Wave Blob -->
+                        <path id="voice-svg-blob-2" fill="url(#blobGrad2)" filter="url(#glow2)" opacity="0.95" style="mix-blend-mode: screen;" />
+                    </svg>
+                    
                     <div class="voice-avatar core-capsule-avatar">
                         <div class="voice-core-capsule"></div>
                     </div>
@@ -754,52 +786,19 @@
       pointer-events: none;
     }
 
-    /* ═════ Glowing Liquid Blobs (Sharp & Rich Yandex "Моя волна" Style) ═════ */
-    .voice-blob {
+    /* ═════ Glowing SVG Wave Blobs (Yandex "Моя волна" & Siri Morphing) ═════ */
+    .voice-blobs-svg {
       position: absolute;
-      width: 160px;
-      height: 160px;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       z-index: 1;
       pointer-events: none;
-      mix-blend-mode: screen;
-      will-change: transform, border-radius;
-      transition: transform 0.05s linear;
-      opacity: 0.95;
-      filter: blur(5px); /* Very mild blur for beautiful smooth edges, not soap! */
     }
 
-    .voice-blob-1 {
-      background: linear-gradient(135deg, #ec4899 0%, #8b5cf6 50%, #3366ff 100%);
-      left: 12%;
-      top: calc(50% - 80px);
-      animation: morph-blob-1 8s ease-in-out infinite;
-      box-shadow: 0 0 45px rgba(236, 72, 153, 0.7), inset 0 0 20px rgba(255, 255, 255, 0.3);
-    }
-
-    .voice-blob-2 {
-      background: linear-gradient(135deg, #eab308 0%, #f97316 50%, #ff4a4a 100%);
-      right: 12%;
-      top: calc(50% - 80px);
-      animation: morph-blob-2 8s ease-in-out infinite;
-      box-shadow: 0 0 45px rgba(234, 179, 8, 0.7), inset 0 0 20px rgba(255, 255, 255, 0.3);
-    }
-
-    @keyframes morph-blob-1 {
-      0%, 100% { border-radius: 42% 58% 70% 30% / 45% 45% 55% 55%; }
-      33% { border-radius: 70% 30% 52% 48% / 60% 40% 60% 40%; }
-      66% { border-radius: 50% 50% 30% 70% / 40% 60% 40% 60%; }
-    }
-
-    @keyframes morph-blob-2 {
-      0%, 100% { border-radius: 50% 50% 30% 70% / 40% 60% 40% 60%; }
-      33% { border-radius: 42% 58% 70% 30% / 45% 45% 55% 55%; }
-      66% { border-radius: 70% 30% 52% 48% / 60% 40% 60% 40%; }
-    }
-
-    body.light-mode .voice-blob {
-      mix-blend-mode: multiply;
-      opacity: 0.8;
-      filter: blur(7px);
+    body.light-mode .voice-blobs-svg path {
+      mix-blend-mode: multiply !important;
+      opacity: 0.75 !important;
     }
 
     .voice-status {
@@ -1035,8 +1034,8 @@
             this.container = document.getElementById('voice-visualizer-container');
             this.canvas = document.getElementById('voice-canvas');
             this.ctx = this.canvas.getContext('2d');
-            this.blob1 = document.getElementById('voice-blob-1');
-            this.blob2 = document.getElementById('voice-blob-2');
+            this.blob1 = document.getElementById('voice-svg-blob-1');
+            this.blob2 = document.getElementById('voice-svg-blob-2');
             
             this.isActive = false;
             
@@ -1372,6 +1371,51 @@
             this.nextPlayTime = 0;
         }
 
+        getWavyBlobPath(cx, cy, baseRadius, time, volume, isUser, isAi, index) {
+            const points = [];
+            const numPoints = 80; // 80 points is perfect for silky smooth borders
+            
+            // Modulation parameters based on state
+            let numWaves = 4;
+            let waveAmp = 6;
+            let speed = 1.2;
+            
+            if (isAi) {
+                // Large flowing majestic waves
+                numWaves = 4 + (index === 0 ? 1 : -1); // different waves for left/right
+                waveAmp = 10 + volume * 35; 
+                speed = 2.2;
+            } else if (isUser) {
+                // Energetic, high-frequency wavy ripples
+                numWaves = 6 + (index === 0 ? 2 : 0);
+                waveAmp = 5 + volume * 25;
+                speed = 4.5;
+            } else {
+                // Quiet slow organic breathing
+                numWaves = 3;
+                waveAmp = 4 + Math.sin(time * 2 + index) * 3;
+                speed = 1.0;
+            }
+            
+            for (let i = 0; i < numPoints; i++) {
+                const theta = (i / numPoints) * 2 * Math.PI;
+                
+                // Polar coordinate modulation formula for complex wavy contours
+                const primaryWave = Math.sin(theta * numWaves + time * speed) * waveAmp;
+                const secondaryWave = Math.sin(theta * (numWaves * 2) - time * speed * 1.4) * (waveAmp * 0.35);
+                const tertiaryWave = Math.cos(theta * 2 + time * 0.4) * (waveAmp * 0.4); // Oval breathe
+                
+                const r = baseRadius + primaryWave + secondaryWave + tertiaryWave;
+                
+                const x = cx + Math.cos(theta) * r;
+                const y = cy + Math.sin(theta) * r;
+                
+                points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+            }
+            
+            return `M ${points.join(' L ')} Z`;
+        }
+
         drawVisualizer() {
             if (!this.isActive) return;
             requestAnimationFrame(() => this.drawVisualizer());
@@ -1412,52 +1456,60 @@
             // Smooth volume easing
             this.smoothVolume += (targetVolume - this.smoothVolume) * 0.15;
             
-            // 2. Animate liquid blobs using CSS transform (100% GPU accelerated!)
+            // 2. Animate liquid blobs (100% GPU accelerated!)
             const time = Date.now() / 1000;
             
-            // Base slow orbital rotation
+            // Base slow orbital rotation offsets
             const orbitRadius = 15;
-            const x1 = Math.sin(time * 1.6) * orbitRadius;
-            const y1 = Math.cos(time * 1.3) * orbitRadius;
-            const x2 = Math.sin(time * -1.4 + 1.5) * orbitRadius;
-            const y2 = Math.cos(time * -1.8 + 2.0) * orbitRadius;
+            const x1 = Math.sin(time * 1.5) * orbitRadius;
+            const y1 = Math.cos(time * 1.2) * orbitRadius;
+            const x2 = Math.sin(time * -1.3 + 1.2) * orbitRadius;
+            const y2 = Math.cos(time * -1.6 + 1.8) * orbitRadius;
             
-            let scale1 = 1.0;
-            let scale2 = 1.0;
             let tx1 = x1;
             let ty1 = y1;
             let tx2 = x2;
             let ty2 = y2;
             
+            let baseRadius1 = 70;
+            let baseRadius2 = 70;
+            
             if (this.isAiSpeaking) {
-                // Large breathing pulsing in rhythm with AI voice
-                const pulse = 1.0 + this.smoothVolume * 0.8 + Math.sin(time * 9) * 0.07;
-                scale1 = pulse;
-                scale2 = pulse * 0.9;
+                // Large breathing base radius
+                baseRadius1 = 70 + this.smoothVolume * 30;
+                baseRadius2 = 70 + this.smoothVolume * 25;
                 // Move closer to center to merge their glow elegantly
                 tx1 = x1 * 0.3 + 45;
                 tx2 = x2 * 0.3 - 45;
             } else if (this.isUserSpeaking) {
-                // High-frequency speech vibrations for User mic
-                const pulse1 = 1.0 + this.smoothVolume * 0.75 + Math.sin(time * 18) * 0.05;
-                const pulse2 = 1.0 + this.smoothVolume * 0.65 + Math.cos(time * 15) * 0.05;
-                scale1 = pulse1;
-                scale2 = pulse2;
-                // Actively float outwards and vibrate
-                tx1 = x1 - 15;
-                tx2 = x2 + 15;
+                // High-frequency speech base radius pulsing
+                baseRadius1 = 70 + this.smoothVolume * 20;
+                baseRadius2 = 70 + this.smoothVolume * 20;
+                // Actively float outwards
+                tx1 = x1 - 10;
+                tx2 = x2 + 10;
             } else {
                 // Slow organic breathing scale when idle
-                const breathe = 1.0 + Math.sin(time * 2.2) * 0.08;
-                scale1 = breathe;
-                scale2 = breathe * 0.95;
+                const breathe = Math.sin(time * 2.0) * 4;
+                baseRadius1 = 70 + breathe;
+                baseRadius2 = 68 + breathe;
             }
             
+            // Center coordinates in viewBox (500 x 220)
+            const cx1 = 165 + tx1;
+            const cy1 = 110 + ty1;
+            
+            const cx2 = 335 + tx2;
+            const cy2 = 110 + ty2;
+            
             if (this.blob1) {
-                this.blob1.style.transform = `translate3d(${tx1}px, ${ty1}px, 0) scale(${scale1})`;
+                const path1 = this.getWavyBlobPath(cx1, cy1, baseRadius1, time, this.smoothVolume, this.isUserSpeaking, this.isAiSpeaking, 0);
+                this.blob1.setAttribute('d', path1);
             }
+            
             if (this.blob2) {
-                this.blob2.style.transform = `translate3d(${tx2}px, ${ty2}px, 0) scale(${scale2})`;
+                const path2 = this.getWavyBlobPath(cx2, cy2, baseRadius2, time, this.smoothVolume, this.isUserSpeaking, this.isAiSpeaking, 1);
+                this.blob2.setAttribute('d', path2);
             }
         }
     }
