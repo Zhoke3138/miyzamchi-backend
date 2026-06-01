@@ -1062,7 +1062,9 @@
                 // Initialize WebSocket connection
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 let host = window.location.host;
-                if (!host || window.location.protocol === 'file:') {
+                if (host.includes('netlify.app')) {
+                    host = 'miyzamchi-backend.onrender.com';
+                } else if (!host || window.location.protocol === 'file:') {
                     host = 'localhost:3000';
                 }
                 const wsUrl = `${protocol}//${host}/api/voice`;
