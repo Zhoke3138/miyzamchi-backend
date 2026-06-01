@@ -63,3 +63,6 @@ coverage/
 copy_script.js
 test-opendata.js
 *.test.local.js
+
+# Full Debug Traces (содержат полный текст документов пользователя)
+traces/

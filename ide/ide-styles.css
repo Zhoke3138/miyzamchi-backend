@@ -3949,6 +3949,24 @@ body.dk .analyze-accordion-content {
   font-size:var(--text-sm); font-family:var(--font-sans);
 }
 
+/* 2026-06-01: кнопка скачивания Full Debug Trace (.md файл) */
+.ad-trace-btn{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:4px 12px; border-radius:6px;
+  background: var(--bg-panel); color: var(--text);
+  border: 1px solid var(--border);
+  font-size: var(--text-sm); font-family: var(--font-sans);
+  text-decoration: none; cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+  white-space: nowrap;
+}
+.ad-trace-btn:hover{
+  background: var(--hover);
+  border-color: var(--accent, #10b981);
+  color: var(--accent, #10b981);
+}
+.ad-trace-btn:active{ transform: translateY(1px); }
+
 /* ── Audit-таблица (Triage + Ищейки результаты) ───────────────── */
 /* 2026-05-31 UX-rework: компактные строки, 2 колонки вместо 3,
    справа стек "вердикт сверху / обоснование снизу". Никаких лишних

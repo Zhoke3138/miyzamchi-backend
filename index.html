@@ -521,10 +521,12 @@
             </div>
             <div class="voice-modal-body">
                 <div class="voice-visualizer-container" id="voice-visualizer-container">
+                    <div class="voice-blob voice-blob-1" id="voice-blob-1"></div>
+                    <div class="voice-blob voice-blob-2" id="voice-blob-2"></div>
                     <div class="voice-avatar core-capsule-avatar">
                         <div class="voice-core-capsule"></div>
                     </div>
-                    <canvas id="voice-canvas" class="voice-canvas"></canvas>
+                    <canvas id="voice-canvas" class="voice-canvas" style="display: none;"></canvas>
                 </div>
                 
                 <div class="voice-status" id="voice-status">ПОДКЛЮЧЕНИЕ...</div>
@@ -750,6 +752,38 @@
       height: 100%;
       z-index: 1;
       pointer-events: none;
+    }
+
+    /* ═════ Glowing Liquid Blobs (Yandex "Моя волна" & Siri Style) ═════ */
+    .voice-blob {
+      position: absolute;
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      filter: blur(42px);
+      z-index: 1;
+      pointer-events: none;
+      mix-blend-mode: screen;
+      will-change: transform;
+      transition: transform 0.05s linear;
+      opacity: 0.9;
+    }
+
+    .voice-blob-1 {
+      background: radial-gradient(circle, rgba(236, 72, 153, 0.95) 0%, rgba(236, 72, 153, 0.1) 50%, rgba(236, 72, 153, 0) 70%);
+      left: 15%;
+      top: calc(50% - 70px);
+    }
+
+    .voice-blob-2 {
+      background: radial-gradient(circle, rgba(234, 179, 8, 0.95) 0%, rgba(234, 179, 8, 0.1) 50%, rgba(234, 179, 8, 0) 70%);
+      right: 15%;
+      top: calc(50% - 70px);
+    }
+
+    body.light-mode .voice-blob {
+      mix-blend-mode: multiply;
+      opacity: 0.65;
     }
 
     .voice-status {
@@ -985,6 +1019,8 @@
             this.container = document.getElementById('voice-visualizer-container');
             this.canvas = document.getElementById('voice-canvas');
             this.ctx = this.canvas.getContext('2d');
+            this.blob1 = document.getElementById('voice-blob-1');
+            this.blob2 = document.getElementById('voice-blob-2');
             
             this.isActive = false;
             
@@ -1324,13 +1360,6 @@
             if (!this.isActive) return;
             requestAnimationFrame(() => this.drawVisualizer());
             
-            // Adjust canvas dimension dynamically for mobile responsive viewports
-            this.resizeCanvas();
-            
-            const width = this.canvas.width;
-            const height = this.canvas.height;
-            this.ctx.clearRect(0, 0, width, height);
-            
             // 1. Calculate sound levels from Analysers
             let levelMic = 0;
             let levelAi = 0;
@@ -1351,95 +1380,69 @@
             this.isAiSpeaking = levelAi > 3;
             
             let targetVolume = 0;
-            let speedMultiplier = 1.0;
-            let freqMultiplier = 1.0;
-            let idlePulse = 0;
-            
             if (this.isAiSpeaking) {
                 targetVolume = levelAi / 128;
                 this.container.classList.add('speaking');
                 this.container.classList.remove('listening');
-                speedMultiplier = 0.65; // Rhythmic, smooth
-                freqMultiplier = 0.55;  // Long, fluid waves
             } else if (this.isUserSpeaking) {
                 targetVolume = levelMic / 128;
                 this.container.classList.add('listening');
                 this.container.classList.remove('speaking');
-                speedMultiplier = 1.5;  // Active, quick
-                freqMultiplier = 1.6;   // Multi-ripple detailed waves
             } else {
                 this.container.classList.remove('listening');
                 this.container.classList.remove('speaking');
-                // Gentle slow organic breathing when idle (alive and breathing!)
-                idlePulse = (Math.sin(Date.now() / 600) * 0.5 + 0.5) * 8 + 5; // undulate between 5px and 13px
             }
             
             // Smooth volume easing
             this.smoothVolume += (targetVolume - this.smoothVolume) * 0.15;
             
-            // Modulation factor
-            let baseAmpMultiplier = this.smoothVolume * 1.8;
-            if (!this.isAiSpeaking && !this.isUserSpeaking) {
-                baseAmpMultiplier = idlePulse / 35; // gentle idle motion
+            // 2. Animate liquid blobs using CSS transform (100% GPU accelerated!)
+            const time = Date.now() / 1000;
+            
+            // Base slow orbital rotation
+            const orbitRadius = 15;
+            const x1 = Math.sin(time * 1.6) * orbitRadius;
+            const y1 = Math.cos(time * 1.3) * orbitRadius;
+            const x2 = Math.sin(time * -1.4 + 1.5) * orbitRadius;
+            const y2 = Math.cos(time * -1.8 + 2.0) * orbitRadius;
+            
+            let scale1 = 1.0;
+            let scale2 = 1.0;
+            let tx1 = x1;
+            let ty1 = y1;
+            let tx2 = x2;
+            let ty2 = y2;
+            
+            if (this.isAiSpeaking) {
+                // Large breathing pulsing in rhythm with AI voice
+                const pulse = 1.0 + this.smoothVolume * 0.8 + Math.sin(time * 9) * 0.07;
+                scale1 = pulse;
+                scale2 = pulse * 0.9;
+                // Move closer to center to merge their glow elegantly
+                tx1 = x1 * 0.3 + 45;
+                tx2 = x2 * 0.3 - 45;
+            } else if (this.isUserSpeaking) {
+                // High-frequency speech vibrations for User mic
+                const pulse1 = 1.0 + this.smoothVolume * 0.75 + Math.sin(time * 18) * 0.05;
+                const pulse2 = 1.0 + this.smoothVolume * 0.65 + Math.cos(time * 15) * 0.05;
+                scale1 = pulse1;
+                scale2 = pulse2;
+                // Actively float outwards and vibrate
+                tx1 = x1 - 15;
+                tx2 = x2 + 15;
+            } else {
+                // Slow organic breathing scale when idle
+                const breathe = 1.0 + Math.sin(time * 2.2) * 0.08;
+                scale1 = breathe;
+                scale2 = breathe * 0.95;
             }
             
-            // Siri/Gemini Live glowing overlay mix
-            this.ctx.globalCompositeOperation = 'screen';
-            
-            // Define 4 Gemini-style multi-color waves (Red, Blue, Green, Yellow)
-            const waves = [
-                { freq: 0.02 * freqMultiplier, amp: 38, speed: 0.025 * speedMultiplier, color: 'rgba(51, 102, 255, 0.45)', phase: 0 },    // Royal Blue
-                { freq: 0.038 * freqMultiplier, amp: 26, speed: -0.03 * speedMultiplier, color: 'rgba(241, 196, 15, 0.45)', phase: 1.5 }, // Golden Yellow
-                { freq: 0.016 * freqMultiplier, amp: 46, speed: 0.018 * speedMultiplier, color: 'rgba(46, 204, 113, 0.35)', phase: 3.0 },  // Emerald Green
-                { freq: 0.045 * freqMultiplier, amp: 20, speed: 0.04 * speedMultiplier, color: 'rgba(255, 74, 74, 0.4)', phase: 4.5 }     // Vibrant Red
-            ];
-            
-            waves.forEach((w, index) => {
-                w.phase += w.speed;
-                
-                this.ctx.beginPath();
-                this.ctx.strokeStyle = w.color.replace(/[\d\.]+\)$/, '1.0)'); // Solid vibrant color for stroke
-                this.ctx.lineWidth = index === 0 ? 5 : 3.5;
-                this.ctx.lineCap = 'round';
-                
-                // Add volumetric shadow glow to the stroke!
-                this.ctx.shadowBlur = index === 0 ? 25 : 12;
-                this.ctx.shadowColor = w.color;
-                
-                for (let x = 0; x < width; x++) {
-                    // Siri/Gemini envelope logic to pinch wave at boundaries
-                    const envelope = Math.sin((x / width) * Math.PI);
-                    const y = (height / 2) + Math.sin(x * w.freq + w.phase) * (w.amp * baseAmpMultiplier) * envelope;
-                    
-                    if (x === 0) {
-                        this.ctx.moveTo(x, y);
-                    } else {
-                        this.ctx.lineTo(x, y);
-                    }
-                }
-                this.ctx.stroke();
-                
-                // ════════════════════════════════════════════════════════════
-                // VOLUMETRIC GRADIENT FILL UNDER THE WAVE
-                // ════════════════════════════════════════════════════════════
-                this.ctx.shadowBlur = 0; // disable shadow for fill to protect GPU performance
-                this.ctx.lineTo(width, height / 2);
-                this.ctx.lineTo(0, height / 2);
-                this.ctx.closePath();
-                
-                // Create a soft glowing vertical gradient centered at the mid-line
-                const fillGrad = this.ctx.createLinearGradient(0, height / 2 - 30, 0, height / 2 + 30);
-                const alpha = this.isAiSpeaking || this.isUserSpeaking ? '0.16' : '0.08';
-                fillGrad.addColorStop(0, w.color.replace(/[\d\.]+\)$/, '0)'));
-                fillGrad.addColorStop(0.5, w.color.replace(/[\d\.]+\)$/, `${alpha})`));
-                fillGrad.addColorStop(1, w.color.replace(/[\d\.]+\)$/, '0)'));
-                
-                this.ctx.fillStyle = fillGrad;
-                this.ctx.fill();
-            });
-            
-            // Restore standard blend mode for any overlays
-            this.ctx.globalCompositeOperation = 'source-over';
+            if (this.blob1) {
+                this.blob1.style.transform = `translate3d(${tx1}px, ${ty1}px, 0) scale(${scale1})`;
+            }
+            if (this.blob2) {
+                this.blob2.style.transform = `translate3d(${tx2}px, ${ty2}px, 0) scale(${scale2})`;
+            }
         }
     }
 
