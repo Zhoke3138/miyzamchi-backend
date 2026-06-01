@@ -1055,6 +1055,9 @@
             try {
                 // Initialize Web Audio Context
                 this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    await this.audioContext.resume();
+                }
                 
                 // Initialize WebSocket connection
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1067,7 +1070,10 @@
                 this.ws = new WebSocket(wsUrl);
                 this.ws.binaryType = 'arraybuffer';
                 
-                this.ws.onopen = () => {
+                this.ws.onopen = async () => {
+                    if (this.audioContext && this.audioContext.state === 'suspended') {
+                        await this.audioContext.resume();
+                    }
                     this.updateStatus('Мыйзамчы Live', 'Подключено. Запрос доступа к микрофону...');
                     this.transcriptEl.textContent = 'Запрос доступа к микрофону...';
                     this.startMicrophone();
@@ -1093,8 +1099,11 @@
                     }
                 };
                 
-                this.ws.onclose = () => {
-                    console.log('[VoiceClient] WebSocket соединение закрыто');
+                this.ws.onclose = (event) => {
+                    console.warn(`[VoiceClient] WebSocket соединение закрыто. Код: ${event.code}, Причина: ${event.reason || 'не указана'}`);
+                    if (event.code !== 1000) {
+                        alert(`Голосовой режим прерван.\nКод закрытия: ${event.code}\nПричина: ${event.reason || 'Внутренняя ошибка сервера или превышен лимит ключей'}`);
+                    }
                     this.stop();
                 };
                 
@@ -1123,6 +1132,9 @@
 
         async startMicrophone() {
             try {
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    await this.audioContext.resume();
+                }
                 this.micStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         echoCancellation: true,

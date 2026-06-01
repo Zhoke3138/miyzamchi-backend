@@ -4003,6 +4003,8 @@ wss.on('connection', (ws, req) => {
             if (hasFailed) return;
             hasFailed = true;
 
+            const errMessage = err ? err.message : 'Session error';
+
             if (!isSetupComplete && !isFallbackAttempt) {
                 console.log(`[VoiceWS] Ошибка Primary модели, переключаемся на Fallback (models/gemini-2.5-flash-live-preview)...`);
                 try {
@@ -4010,12 +4012,13 @@ wss.on('connection', (ws, req) => {
                 } catch (e) {}
                 startGeminiSession('models/gemini-2.5-flash-live-preview', true);
             } else {
-                console.log(`[VoiceWS] Gemini соединение закрыто/ошибка: ${err ? err.message : 'no err'}`);
+                console.log(`[VoiceWS] Gemini соединение закрыто/ошибка: ${errMessage}`);
                 try {
                     geminiWs.close();
                 } catch (e) {}
                 if (ws.readyState === ws.OPEN) {
-                    ws.close();
+                    // Send error code 4000 with description to the client browser
+                    ws.close(4000, errMessage.slice(0, 100));
                 }
             }
         };
