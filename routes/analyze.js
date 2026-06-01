@@ -59,7 +59,7 @@ const { createAgenticVerifier, TOOL_PROTOCOL_BLOCK } = require('../lib/agenticVe
 // все Pinecone-выдачи (полный текст 800 chars), финальный вердикт. И Final
 // Judge: system, user (включая оригинал документа), полный ответ. Юрист
 // скачивает через кнопку "📥 Скачать debug-отчёт" в IDE.
-const { createTraceLogger, readTraceFile, TRACE_FILENAME_RE } = require('../lib/traceLogger');
+const { createTraceLogger, readTraceFile, listTraces, TRACE_FILENAME_RE } = require('../lib/traceLogger');
 
 class TelemetryCollector {
     constructor() {
@@ -2052,7 +2052,24 @@ ${riskReports}
     });
 
     // ═══════════════════════════════════════════════════════════════════
-    //  ROUTE 3: /api/trace/:filename — скачивание debug-trace .md файла
+    //  ROUTE 3: /api/traces — листинг всех debug-trace .md файлов
+    // ═══════════════════════════════════════════════════════════════════
+    // Возвращает JSON-массив { fileName, modifiedAt, modifiedAtIso, sizeKB,
+    // sizeBytes, url }, отсортированный по mtime DESC (новые сверху).
+    // Используется модалкой "🗃️ Debug-архив" во фронте.
+    app.get('/api/traces', async (_req, res) => {
+        try {
+            const items = await listTraces();
+            res.setHeader('Cache-Control', 'no-store');
+            res.json({ count: items.length, items });
+        } catch (err) {
+            console.error('[/api/traces]', err);
+            res.status(500).json({ error: 'list failed', message: err.message });
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  ROUTE 4: /api/trace/:filename — скачивание debug-trace .md файла
     // ═══════════════════════════════════════════════════════════════════
     // Файл создаётся в /api/analyze-document; имя пробрасывается фронту
     // через SSE { trace_ready: { fileName, url } }. Юрист жмёт кнопку

@@ -689,7 +689,7 @@
     .voice-visualizer-container {
       position: relative;
       width: 100%;
-      height: 160px;
+      height: 220px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -754,36 +754,52 @@
       pointer-events: none;
     }
 
-    /* ═════ Glowing Liquid Blobs (Yandex "Моя волна" & Siri Style) ═════ */
+    /* ═════ Glowing Liquid Blobs (Sharp & Rich Yandex "Моя волна" Style) ═════ */
     .voice-blob {
       position: absolute;
-      width: 140px;
-      height: 140px;
-      border-radius: 50%;
-      filter: blur(42px);
+      width: 160px;
+      height: 160px;
       z-index: 1;
       pointer-events: none;
       mix-blend-mode: screen;
-      will-change: transform;
+      will-change: transform, border-radius;
       transition: transform 0.05s linear;
-      opacity: 0.9;
+      opacity: 0.95;
+      filter: blur(5px); /* Very mild blur for beautiful smooth edges, not soap! */
     }
 
     .voice-blob-1 {
-      background: radial-gradient(circle, rgba(236, 72, 153, 0.95) 0%, rgba(236, 72, 153, 0.1) 50%, rgba(236, 72, 153, 0) 70%);
-      left: 15%;
-      top: calc(50% - 70px);
+      background: linear-gradient(135deg, #ec4899 0%, #8b5cf6 50%, #3366ff 100%);
+      left: 12%;
+      top: calc(50% - 80px);
+      animation: morph-blob-1 8s ease-in-out infinite;
+      box-shadow: 0 0 45px rgba(236, 72, 153, 0.7), inset 0 0 20px rgba(255, 255, 255, 0.3);
     }
 
     .voice-blob-2 {
-      background: radial-gradient(circle, rgba(234, 179, 8, 0.95) 0%, rgba(234, 179, 8, 0.1) 50%, rgba(234, 179, 8, 0) 70%);
-      right: 15%;
-      top: calc(50% - 70px);
+      background: linear-gradient(135deg, #eab308 0%, #f97316 50%, #ff4a4a 100%);
+      right: 12%;
+      top: calc(50% - 80px);
+      animation: morph-blob-2 8s ease-in-out infinite;
+      box-shadow: 0 0 45px rgba(234, 179, 8, 0.7), inset 0 0 20px rgba(255, 255, 255, 0.3);
+    }
+
+    @keyframes morph-blob-1 {
+      0%, 100% { border-radius: 42% 58% 70% 30% / 45% 45% 55% 55%; }
+      33% { border-radius: 70% 30% 52% 48% / 60% 40% 60% 40%; }
+      66% { border-radius: 50% 50% 30% 70% / 40% 60% 40% 60%; }
+    }
+
+    @keyframes morph-blob-2 {
+      0%, 100% { border-radius: 50% 50% 30% 70% / 40% 60% 40% 60%; }
+      33% { border-radius: 42% 58% 70% 30% / 45% 45% 55% 55%; }
+      66% { border-radius: 70% 30% 52% 48% / 60% 40% 60% 40%; }
     }
 
     body.light-mode .voice-blob {
       mix-blend-mode: multiply;
-      opacity: 0.65;
+      opacity: 0.8;
+      filter: blur(7px);
     }
 
     .voice-status {

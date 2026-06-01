@@ -476,7 +476,7 @@ async function streamUploadDocument({documentText, onStep, onStatus, signal}){
    PR3: принимает опциональный sessionId — если он есть, бэкенд
    пропускает context+segment+triage (фоновый прогрев уже сделал их).
    ═════════════════════════════════════════════════════════════ */
-async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStatus, onText, onSources, onMetadata, onConfidence, onStep, onTableRow, onPurityIndex, onTelemetry, onAgentSearch, onTraceReady, signal}){
+async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStatus, onText, onSources, onMetadata, onConfidence, onStep, onTableRow, onPurityIndex, onTelemetry, onAgentSearch, signal}){
   const url = BACKEND_URL + '/api/analyze-document';
   console.log('[IDE Analyze] Sending to:', url, '| doc:', documentText?.length, 'ch | query:', (userQuery||'').slice(0,40), '| sessionId:', sessionId ? sessionId.slice(0,8) : 'none');
   let res;
@@ -523,8 +523,9 @@ async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStat
       // 2026-05-30 Agentic RAG: модель сама вызывает search_legislation_kg.
       // Показываем юристу в UI: "🔎 Агент ищет: <query>".
       if(parsed && parsed.agent_search){onAgentSearch && onAgentSearch(parsed.agent_search);}
-      // 2026-06-01 Full Debug Trace: { trace_ready: { id, fileName, url } }
-      if(parsed && parsed.trace_ready){onTraceReady && onTraceReady(parsed.trace_ready);}
+      // 2026-06-01: SSE { trace_ready } больше не используется фронтом.
+      // Архив отчётов доступен через постоянную кнопку 🗃️ → GET /api/traces.
+      // Бэкенд продолжает слать событие для backward-compat (no-op на фронте).
     }
   }
 }
@@ -678,6 +679,145 @@ const _extractTextFromFile = async (file) => {
   try { return await file.text(); } catch { return null; }
 };
 
+/* ═══════════ TraceArchiveModal (Debug-архив) — 2026-06-01 ═══════════
+   Открывается постоянной кнопкой 🗃️ Debug-архив. При open=true делает
+   fetch('/api/traces') и рендерит таблицу всех trace-файлов с бэка:
+   Дата | Файл | Размер | 📥 Скачать.
+
+   Зачем постоянная: SSE-кнопка ненадёжна — пропадает при перезагрузке
+   IDE, рассинхронизации SSE, новом анализе. Архив — single source of
+   truth, читается прямо с диска. */
+const TraceArchiveModal = ({open, onClose}) => {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const [filter, setFilter] = React.useState('');
+  const refreshSeq = React.useRef(0);
+
+  const load = React.useCallback(async () => {
+    setLoading(true); setError('');
+    const seq = ++refreshSeq.current;
+    try {
+      const url = ((typeof BACKEND_URL !== 'undefined' && BACKEND_URL) || '') + '/api/traces';
+      const r = await fetch(url, { credentials: 'omit' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      if (seq !== refreshSeq.current) return;
+      setItems(Array.isArray(data.items) ? data.items : []);
+    } catch (e) {
+      if (seq !== refreshSeq.current) return;
+      setError(e.message || String(e));
+      setItems([]);
+    } finally {
+      if (seq === refreshSeq.current) setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (open) load();
+  }, [open, load]);
+
+  // Закрытие по ESC
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose && onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const fmtDate = (iso) => {
+    try {
+      const d = new Date(iso);
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mi = String(d.getMinutes()).padStart(2, '0');
+      return `${dd}.${mm}.${yyyy} ${hh}:${mi}`;
+    } catch { return iso; }
+  };
+
+  const filtered = filter
+    ? items.filter(it => (it.fileName || '').toLowerCase().includes(filter.toLowerCase()))
+    : items;
+
+  return (
+    <div className="trace-modal-backdrop" onClick={onClose}>
+      <div className="trace-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="trace-modal-head">
+          <div className="trace-modal-title">🗃️ Debug-архив <span className="trace-modal-count">{items.length}</span></div>
+          <div className="trace-modal-actions">
+            <button className="trace-modal-refresh" onClick={load} disabled={loading} title="Обновить список">
+              {loading ? '⏳' : '🔄'} Обновить
+            </button>
+            <button className="trace-modal-close" onClick={onClose} title="Закрыть (Esc)">✕</button>
+          </div>
+        </div>
+
+        <div className="trace-modal-toolbar">
+          <input
+            className="trace-modal-filter"
+            type="text"
+            placeholder="🔍 фильтр по имени файла..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <span className="trace-modal-hint">TTL: 7 дней · сортировка: новые сверху</span>
+        </div>
+
+        <div className="trace-modal-body">
+          {error && <div className="trace-modal-error">⚠️ Ошибка загрузки: {error}</div>}
+          {!error && loading && items.length === 0 && (
+            <div className="trace-modal-empty">Загружаю список...</div>
+          )}
+          {!error && !loading && items.length === 0 && (
+            <div className="trace-modal-empty">
+              Архив пуст. Запустите анализ документа — trace-файл появится здесь автоматически.
+            </div>
+          )}
+          {filtered.length > 0 && (
+            <table className="trace-modal-table">
+              <thead>
+                <tr>
+                  <th style={{width:'140px'}}>Дата</th>
+                  <th>Имя файла</th>
+                  <th style={{width:'80px', textAlign:'right'}}>Размер</th>
+                  <th style={{width:'120px'}}>Действие</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((it) => {
+                  const dlUrl = ((typeof BACKEND_URL !== 'undefined' && BACKEND_URL) || '') + it.url;
+                  return (
+                    <tr key={it.fileName}>
+                      <td className="trace-cell-date">{fmtDate(it.modifiedAtIso)}</td>
+                      <td className="trace-cell-name" title={it.fileName}>{it.fileName}</td>
+                      <td className="trace-cell-size">{it.sizeKB} KB</td>
+                      <td className="trace-cell-dl">
+                        <a className="trace-dl-link"
+                           href={dlUrl}
+                           download={it.fileName}
+                           target="_blank" rel="noopener">
+                          📥 Скачать
+                        </a>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+          {filter && filtered.length === 0 && items.length > 0 && (
+            <div className="trace-modal-empty">Нет файлов, подходящих под фильтр «{filter}»</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AnalyzeDocsMode = () => {
   // slots: [{ file, text, name, size, status, error }]  status: empty | loading | ready | error
   const EMPTY_SLOT = { file:null, text:'', name:'', size:0, status:'empty', error:'' };
@@ -696,9 +836,10 @@ const AnalyzeDocsMode = () => {
   // tele.elapsedMs тикает каждые 100ms пока running=true.
   const EMPTY_TELE = { calls:0, input:0, output:0, cost:0, lastModel:null, lastLabel:null, startedAt:null, elapsedMs:0 };
   const [tele, setTele] = useState({...EMPTY_TELE});
-  // 2026-06-01: Full Debug Trace — URL для скачивания .md отчёта.
-  // Приходит из SSE { trace_ready: { id, fileName, url } } в конце пайплайна.
-  const [traceInfo, setTraceInfo] = useState(null);
+  // 2026-06-01: Debug-архив — модалка со списком всех trace-файлов с бэка.
+  // Открывается постоянной кнопкой "🗃️ Debug-архив" в toolbar (в любом
+  // состоянии: IDLE / running / done).
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const abortRef = useRef(null);
   const fileInputRefs = [useRef(null), useRef(null)];
 
@@ -811,7 +952,6 @@ const AnalyzeDocsMode = () => {
   const onRun = async () => {
     setRunning(true); setError('');
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null);
-    setTraceInfo(null);
     // Reset телеметрию с новым startedAt
     const freshTele = { ...EMPTY_TELE, startedAt: Date.now() };
     setTele(freshTele);
@@ -834,8 +974,7 @@ const AnalyzeDocsMode = () => {
           onSources:      (s) => setSources(Array.isArray(s) ? s : []),
           onMetadata:     () => {},
           onTelemetry:    onTelemetryEvent,
-          onAgentSearch:  onAgentSearch,
-          onTraceReady:   (info) => setTraceInfo(info)
+          onAgentSearch:  onAgentSearch
         });
       } else if (mode === 'compare') {
         await streamCompareDocuments({
@@ -869,7 +1008,6 @@ const AnalyzeDocsMode = () => {
     setSlots([{...EMPTY_SLOT}, {...EMPTY_SLOT}]);
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null); setError('');
     setTele({...EMPTY_TELE});
-    setTraceInfo(null);
     try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-reset')); } catch(_) {}
   };
 
@@ -877,9 +1015,15 @@ const AnalyzeDocsMode = () => {
   if (!running && tableRows.length === 0 && !report && !summary && !error) {
     return (
       <div className="ad-root">
+        <TraceArchiveModal open={archiveOpen} onClose={() => setArchiveOpen(false)} />
         <div className="cmp-intro">
           <h3 className="cmp-title">Анализ документов</h3>
           <p className="cmp-sub">Перетащите файл сюда или выберите вручную. Один документ → глубокий аудит. Два → сравнение редакций.</p>
+          <button className="ad-trace-btn ad-trace-btn--idle"
+                  onClick={() => setArchiveOpen(true)}
+                  title="Постоянный архив debug-отчётов всех прошлых анализов">
+            🗃️ Debug-архив
+          </button>
         </div>
         <div className="ad-slots">
           {slots.map((slot, i) => {
@@ -1000,19 +1144,14 @@ const AnalyzeDocsMode = () => {
             🛡️ Чистота: <b>{purityIndex}%</b>
           </div>
         )}
-        {/* 2026-06-01: Full Debug Trace — кнопка появляется когда бэкенд
-            прислал { trace_ready: { url, fileName } }. По клику браузер
-            качает .md файл со ВСЕМИ prompts, tool_calls, RAG-выдачами и
-            ответом Финального Судьи. Используется для отладки галлюцинаций. */}
-        {traceInfo && traceInfo.url && (
-          <a className="ad-trace-btn"
-             href={(BACKEND_URL || '') + traceInfo.url}
-             download={traceInfo.fileName || 'trace.md'}
-             title={'Полный debug-отчёт (' + (traceInfo.fileName || 'trace.md') + ') — все prompts, tool calls, RAG-выдачи, ответ Финального Судьи'}
-             target="_blank" rel="noopener">
-            📥 Debug-отчёт
-          </a>
-        )}
+        {/* 2026-06-01: Постоянная кнопка "Debug-архив". Открывает модалку
+            с полным списком всех trace-файлов (новые сверху). Эфемерная
+            кнопка-после-SSE убрана — она зависела от { trace_ready } и
+            пропадала при перезагрузке/рассинхроне. */}
+        <button className="ad-trace-btn" onClick={() => setArchiveOpen(true)}
+                title="Постоянный архив всех debug-отчётов (.md). Все prompts, tool calls, RAG-выдачи, ответ Финального Судьи.">
+          🗃️ Debug-архив
+        </button>
         {report && (
           <div className="cmp-stats">
             <span>Пар: <b>{report.total}</b></span>
