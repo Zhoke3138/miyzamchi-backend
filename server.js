@@ -3818,7 +3818,7 @@ function getGeminiSetupMessage(modelName) {
                 speechConfig: {
                     voiceConfig: {
                         prebuiltVoiceConfig: {
-                            voiceName: 'Aoede'
+                            voiceName: 'Charon'
                         }
                     }
                 }
