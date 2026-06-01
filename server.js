@@ -3809,210 +3809,246 @@ server.on('upgrade', (request, socket, head) => {
     }
 });
 
+function getGeminiSetupMessage(modelName) {
+    return {
+        setup: {
+            model: modelName,
+            generationConfig: {
+                responseModalities: ['AUDIO'],
+                speechConfig: {
+                    voiceConfig: {
+                        prebuiltVoiceConfig: {
+                            voiceName: 'Aoede'
+                        }
+                    }
+                }
+            },
+            systemInstruction: {
+                parts: [
+                    {
+                        text: "Ты — Мыйзамчи, профессиональный юридический ИИ-ассистент по законодательству Кыргызской Республики. Отвечай кратко, ёмко, вежливо и строго по законам КР. Если информации нет в базе НПА, вежливо скажи об этом и посоветуй обратиться к юристу."
+                    }
+                ]
+            },
+            tools: [
+                {
+                    functionDeclarations: [
+                        {
+                            name: 'search_kyrgyz_laws',
+                            description: 'Поиск законов, кодексов и НПА Кыргызской Республики по ключевым словам или юридической ситуации для получения точных статей.',
+                            parameters: {
+                                type: 'OBJECT',
+                                properties: {
+                                    query: {
+                                        type: 'STRING',
+                                        description: 'Поисковый запрос (например: штраф за скорость, трудовой договор КР, права потребителя).'
+                                    }
+                                },
+                                required: ['query']
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    };
+}
+
 wss.on('connection', (ws, req) => {
     console.log('[VoiceWS] Новое голосовое подключение клиента');
 
-    const activeKey = getActiveKey();
-    const geminiUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${activeKey}`;
-
-    console.log('[VoiceWS] Подключение к Gemini Live API...');
-    const geminiWs = new (require('ws'))(geminiUrl);
-
+    let currentGeminiWs = null;
     let isSetupComplete = false;
 
-    geminiWs.on('open', () => {
-        console.log('[VoiceWS] Соединение с Gemini Live установлено. Отправка Setup...');
-        
-        // Отправка setup сообщения
-        const setupMessage = {
-            setup: {
-                model: 'models/gemini-2.0-flash',
-                generationConfig: {
-                    responseModalities: ['AUDIO'],
-                    speechConfig: {
-                        voiceConfig: {
-                            prebuiltVoiceConfig: {
-                                voiceName: 'Aoede'
-                            }
-                        }
-                    }
-                },
-                systemInstruction: {
-                    parts: [
-                        {
-                            text: "Ты — Мыйзамчи, профессиональный юридический ИИ-ассистент по законодательству Кыргызской Республики. Отвечай кратко, ёмко, вежливо и строго по законам КР. Если информации нет в базе НПА, вежливо скажи об этом и посоветуй обратиться к юристу."
-                        }
-                    ]
-                },
-                tools: [
-                    {
-                        functionDeclarations: [
-                            {
-                                name: 'search_kyrgyz_laws',
-                                description: 'Поиск законов, кодексов и НПА Кыргызской Республики по ключевым словам или юридической ситуации для получения точных статей.',
-                                parameters: {
-                                    type: 'OBJECT',
-                                    properties: {
-                                        query: {
-                                            type: 'STRING',
-                                            description: 'Поисковый запрос (например: штраф за скорость, трудовой договор КР, права потребителя).'
-                                        }
-                                    },
-                                    required: ['query']
+    function startGeminiSession(modelName, isFallbackAttempt = false) {
+        console.log(`[VoiceWS] Попытка подключения к модели: ${modelName}...`);
+
+        const activeKey = getActiveKey();
+        const geminiUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${activeKey}`;
+
+        const geminiWs = new (require('ws'))(geminiUrl);
+        currentGeminiWs = geminiWs;
+
+        let hasFailed = false;
+
+        geminiWs.on('open', () => {
+            if (hasFailed) return;
+            console.log(`[VoiceWS] Соединение с Gemini Live установлено (${modelName}). Отправка Setup...`);
+            const setupMessage = getGeminiSetupMessage(modelName);
+            geminiWs.send(JSON.stringify(setupMessage));
+        });
+
+        geminiWs.on('message', async (data) => {
+            if (hasFailed) return;
+            try {
+                const message = JSON.parse(data.toString());
+
+                // 1. Подтверждение настройки
+                if (message.setupComplete) {
+                    console.log(`[VoiceWS] [ОК] Успешный коннект к Gemini Live API. Активная модель: ${modelName}`);
+                    isSetupComplete = true;
+                    ws.send(JSON.stringify({ type: 'status', text: 'Мыйзамчы готов к общению' }));
+                    return;
+                }
+
+                // 2. Обработка контента от Gemini (Аудио / Текст)
+                if (message.serverContent) {
+                    const modelTurn = message.serverContent.modelTurn;
+                    if (modelTurn && modelTurn.parts) {
+                        for (const part of modelTurn.parts) {
+                            // Gemini Live возвращает аудио внутри inlineData
+                            const audioData = part.inlineData || part;
+                            const mime = audioData.mimeType || part.mime_type || '';
+                            const rawData = audioData.data || part.data;
+
+                            if (mime.startsWith('audio/pcm') && rawData) {
+                                const audioBuffer = Buffer.from(rawData, 'base64');
+                                if (ws.readyState === ws.OPEN) {
+                                    ws.send(audioBuffer); // Бинарный фрейм аудио
                                 }
                             }
-                        ]
+                            // Если пришел текст (транскрипт ответа)
+                            if (part.text) {
+                                if (ws.readyState === ws.OPEN) {
+                                    ws.send(JSON.stringify({ type: 'transcript', text: part.text }));
+                                }
+                            }
+                        }
                     }
-                ]
+
+                    // Перебивание ИИ (barge-in)
+                    if (message.serverContent.interrupted) {
+                        console.log('[VoiceWS] Gemini прерван голосом пользователя!');
+                        if (ws.readyState === ws.OPEN) {
+                            ws.send(JSON.stringify({ type: 'interrupted' }));
+                        }
+                    }
+                }
+
+                // 3. Обработка Tool Calling (RAG)
+                if (message.toolCall) {
+                    const calls = message.toolCall.functionCalls;
+                    if (calls && calls.length > 0) {
+                        for (const call of calls) {
+                            if (call.name === 'search_kyrgyz_laws') {
+                                const query = call.args.query;
+                                const callId = call.id;
+
+                                console.log(`[VoiceWS] Tool Call [search_kyrgyz_laws] query: "${query}"`);
+                                if (ws.readyState === ws.OPEN) {
+                                    ws.send(JSON.stringify({ type: 'status', text: 'Поиск по базе законов КР...' }));
+                                }
+
+                                try {
+                                    // 1. Получаем эмбеддинг
+                                    const queryVector = await getEmbedding(query);
+                                    // 2. Ищем в Pinecone (строго topK: 3 для голосовой скорости)
+                                    const matches = await searchPinecone(queryVector, 3);
+                                    
+                                    console.log(`[VoiceWS] Найдено статей в Pinecone: ${matches.length}`);
+
+                                    // 3. Форматируем результаты для Gemini
+                                    const articles = matches.map(m => ({
+                                        npa_title: m.metadata.npa_title || 'НПА КР',
+                                        article_title: m.metadata.article_title || 'Статья',
+                                        full_text: m.metadata.full_text || m.metadata.text_preview || ''
+                                    }));
+
+                                    // 4. Отправляем ответ обратно в Gemini
+                                    const responseMessage = {
+                                        toolResponse: {
+                                            functionResponses: [
+                                                {
+                                                    name: 'search_kyrgyz_laws',
+                                                    id: callId,
+                                                    response: {
+                                                        output: {
+                                                            articles: articles
+                                                        }
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    };
+                                    geminiWs.send(JSON.stringify(responseMessage));
+                                    console.log('[VoiceWS] Отправили toolResponse в Gemini');
+
+                                } catch (err) {
+                                    console.error('[VoiceWS] Ошибка выполнения Tool Call RAG:', err.message);
+                                    // Возвращаем пустую или статусную ошибку в Gemini, чтобы не вешать диалог
+                                    const responseMessage = {
+                                        toolResponse: {
+                                            functionResponses: [
+                                                {
+                                                    name: 'search_kyrgyz_laws',
+                                                    id: callId,
+                                                    response: { output: { error: 'Поиск временно недоступен', articles: [] } }
+                                                }
+                                            ]
+                                        }
+                                    };
+                                    geminiWs.send(JSON.stringify(responseMessage));
+                                }
+                            }
+                        }
+                    }
+                }
+
+            } catch (err) {
+                console.error('[VoiceWS] Ошибка обработки сообщения от Gemini:', err.message);
+            }
+        });
+
+        const handleFailure = (err) => {
+            if (hasFailed) return;
+            hasFailed = true;
+
+            if (!isSetupComplete && !isFallbackAttempt) {
+                console.log(`[VoiceWS] Ошибка Primary модели, переключаемся на Fallback (models/gemini-2.5-flash-live-preview)...`);
+                try {
+                    geminiWs.close();
+                } catch (e) {}
+                startGeminiSession('models/gemini-2.5-flash-live-preview', true);
+            } else {
+                console.log(`[VoiceWS] Gemini соединение закрыто/ошибка: ${err ? err.message : 'no err'}`);
+                try {
+                    geminiWs.close();
+                } catch (e) {}
+                if (ws.readyState === ws.OPEN) {
+                    ws.close();
+                }
             }
         };
 
-        geminiWs.send(JSON.stringify(setupMessage));
-    });
+        geminiWs.on('close', (code, reason) => {
+            handleFailure(new Error(`closed: ${code} - ${reason}`));
+        });
 
-    geminiWs.on('message', async (data) => {
-        try {
-            const message = JSON.parse(data.toString());
+        geminiWs.on('error', (err) => {
+            handleFailure(err);
+        });
+    }
 
-            // 1. Подтверждение настройки
-            if (message.setupComplete) {
-                console.log('[VoiceWS] Setup успешно завершен Gemini!');
-                isSetupComplete = true;
-                ws.send(JSON.stringify({ type: 'status', text: 'Мыйзамчы готов к общению' }));
-                return;
-            }
-
-            // 2. Обработка контента от Gemini (Аудио / Текст)
-            if (message.serverContent) {
-                const modelTurn = message.serverContent.modelTurn;
-                if (modelTurn && modelTurn.parts) {
-                    for (const part of modelTurn.parts) {
-                        // Если пришло аудио, отправляем его клиенту бинарно
-                        if (part.mimeType && part.mimeType.startsWith('audio/pcm') && part.data) {
-                            const audioBuffer = Buffer.from(part.data, 'base64');
-                            if (ws.readyState === ws.OPEN) {
-                                ws.send(audioBuffer); // Бинарный фрейм аудио
-                            }
-                        }
-                        // Если пришел текст (транскрипт)
-                        if (part.text) {
-                            if (ws.readyState === ws.OPEN) {
-                                ws.send(JSON.stringify({ type: 'transcript', text: part.text }));
-                            }
-                        }
-                    }
-                }
-
-                // Перебивание ИИ (barge-in): Gemini сообщает, что генерация прервана
-                if (message.serverContent.interrupted) {
-                    console.log('[VoiceWS] Gemini прерван голосом пользователя!');
-                    if (ws.readyState === ws.OPEN) {
-                        ws.send(JSON.stringify({ type: 'interrupted' }));
-                    }
-                }
-            }
-
-            // 3. Обработка Tool Calling (RAG)
-            if (message.toolCall) {
-                const calls = message.toolCall.functionCalls;
-                if (calls && calls.length > 0) {
-                    for (const call of calls) {
-                        if (call.name === 'search_kyrgyz_laws') {
-                            const query = call.args.query;
-                            const callId = call.id;
-
-                            console.log(`[VoiceWS] Tool Call [search_kyrgyz_laws] query: "${query}"`);
-                            if (ws.readyState === ws.OPEN) {
-                                ws.send(JSON.stringify({ type: 'status', text: 'Поиск по базе законов КР...' }));
-                            }
-
-                            try {
-                                // 1. Получаем эмбеддинг
-                                const queryVector = await getEmbedding(query);
-                                // 2. Ищем в Pinecone (строго topK: 3 для голосовой скорости)
-                                const matches = await searchPinecone(queryVector, 3);
-                                
-                                console.log(`[VoiceWS] Найдено статей в Pinecone: ${matches.length}`);
-
-                                // 3. Форматируем результаты для Gemini
-                                const articles = matches.map(m => ({
-                                    npa_title: m.metadata.npa_title || 'НПА КР',
-                                    article_title: m.metadata.article_title || 'Статья',
-                                    full_text: m.metadata.full_text || m.metadata.text_preview || ''
-                                }));
-
-                                // 4. Отправляем ответ обратно в Gemini
-                                const responseMessage = {
-                                    toolResponse: {
-                                        functionResponses: [
-                                            {
-                                                name: 'search_kyrgyz_laws',
-                                                id: callId,
-                                                response: {
-                                                    output: {
-                                                        articles: articles
-                                                    }
-                                                }
-                                            }
-                                        ]
-                                    }
-                                };
-                                geminiWs.send(JSON.stringify(responseMessage));
-                                console.log('[VoiceWS] Отправили toolResponse в Gemini');
-
-                            } catch (err) {
-                                console.error('[VoiceWS] Ошибка выполнения Tool Call RAG:', err.message);
-                                // Возвращаем пустую или статусную ошибку в Gemini, чтобы не вешать диалог
-                                const responseMessage = {
-                                    toolResponse: {
-                                        functionResponses: [
-                                            {
-                                                name: 'search_kyrgyz_laws',
-                                                id: callId,
-                                                response: { output: { error: 'Поиск временно недоступен', articles: [] } }
-                                            }
-                                        ]
-                                    }
-                                };
-                                geminiWs.send(JSON.stringify(responseMessage));
-                            }
-                        }
-                    }
-                }
-            }
-
-        } catch (err) {
-            console.error('[VoiceWS] Ошибка обработки сообщения от Gemini:', err.message);
-        }
-    });
-
-    geminiWs.on('close', (code, reason) => {
-        console.log(`[VoiceWS] Gemini соединение закрыто: ${code} - ${reason}`);
-        ws.close();
-    });
-
-    geminiWs.on('error', (err) => {
-        console.error('[VoiceWS] Ошибка в Gemini Live WS:', err.message);
-        ws.close();
-    });
+    // Start with the Primary model
+    startGeminiSession('models/gemini-3.1-flash-live-preview', false);
 
     // Обработка входящих сообщений от клиента
     ws.on('message', (message, isBinary) => {
         // Если клиент прислал бинарное аудио (16kHz PCM)
         if (isBinary) {
-            if (geminiWs.readyState === geminiWs.OPEN && isSetupComplete) {
+            if (currentGeminiWs && currentGeminiWs.readyState === currentGeminiWs.OPEN && isSetupComplete) {
                 const base64Audio = message.toString('base64');
                 const realtimeInputMsg = {
                     realtimeInput: {
                         mediaChunks: [
                             {
-                                mimeType: 'audio/pcm',
+                                mimeType: 'audio/pcm;rate=16000',
                                 data: base64Audio
                             }
                         ]
                     }
                 };
-                geminiWs.send(JSON.stringify(realtimeInputMsg));
+                currentGeminiWs.send(JSON.stringify(realtimeInputMsg));
             }
         } else {
             // Если пришел текст (например, команда на прерывание или текстовый ввод)
@@ -4027,12 +4063,16 @@ wss.on('connection', (ws, req) => {
 
     ws.on('close', () => {
         console.log('[VoiceWS] Голосовое подключение клиента закрыто');
-        geminiWs.close();
+        if (currentGeminiWs) {
+            currentGeminiWs.close();
+        }
     });
 
     ws.on('error', (err) => {
         console.error('[VoiceWS] Ошибка в клиентском WS:', err.message);
-        geminiWs.close();
+        if (currentGeminiWs) {
+            currentGeminiWs.close();
+        }
     });
 });
 

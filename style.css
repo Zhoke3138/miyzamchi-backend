@@ -1857,11 +1857,12 @@ button.mic-btn,
 
 .bot-message {
   position: relative;
-  padding-left: 60px;
+  padding-top: 58px;   /* avatar 50px + 8px gap below it */
+  padding-left: 0;
 }
 
 .bot-message .message-content {
-  max-width: 92%;
+  max-width: 100%;
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid var(--border-soft);
   border-radius: 16px;
@@ -2785,7 +2786,8 @@ body.light-mode .source-item-body {
     line-height: 1.58;
   }
   .bot-message {
-    padding-left: 52px;
+    padding-top: 52px;  /* avatar 44px + 8px gap */
+    padding-left: 0;
   }
   .bot-message::before {
     width: 44px;
