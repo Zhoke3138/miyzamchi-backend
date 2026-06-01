@@ -20,3 +20,14 @@ Require stack:
     payload: { timeout: 50, offset: 0, allowed_updates: [] }
   }
 }
+❌ Ошибка запуска бота (попытка 1): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 2): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 3): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 4): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 5): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 6): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 7): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 8): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 9): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 10): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 11): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running

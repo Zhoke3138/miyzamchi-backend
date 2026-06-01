@@ -1058,7 +1058,10 @@
                 
                 // Initialize WebSocket connection
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const host = window.location.host;
+                let host = window.location.host;
+                if (!host || window.location.protocol === 'file:') {
+                    host = 'localhost:3000';
+                }
                 const wsUrl = `${protocol}//${host}/api/voice`;
                 
                 this.ws = new WebSocket(wsUrl);
