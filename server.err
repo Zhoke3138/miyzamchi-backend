@@ -4,3 +4,24 @@ Require stack:
 [SECURITY] ADMIN_SECRET не задан в env → /api/stats отключён
 [SECURITY] CLIENT_TOKEN не задан → API endpoints публичные. Поставьте в Render для защиты от скрейпинга.
 [SECURITY] DEEPSEEK_API_KEY не задан → Judge-вызовы упадут на Gemini SENIOR. Поставьте ключ в Render для активации DeepSeek-Judge.
+Ошибка запуска Telegram бота: TelegramError: 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+    at Telegram.callApi (C:\Users\Professional\Desktop\ИИ\node_modules\telegraf\lib\core\network\client.js:315:19)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async [Symbol.asyncIterator] (C:\Users\Professional\Desktop\ИИ\node_modules\telegraf\lib\core\network\polling.js:30:33)
+    at async Polling.loop (C:\Users\Professional\Desktop\ИИ\node_modules\telegraf\lib\core\network\polling.js:73:30)
+    at async Telegraf.launch (C:\Users\Professional\Desktop\ИИ\node_modules\telegraf\lib\telegraf.js:194:13) {
+  response: {
+    ok: false,
+    error_code: 409,
+    description: 'Conflict: terminated by other getUpdates request; make sure that only one bot instance is running'
+  },
+  on: {
+    method: 'getUpdates',
+    payload: { timeout: 50, offset: 0, allowed_updates: [] }
+  }
+}
+❌ Ошибка запуска бота (попытка 1): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 2): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 3): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 4): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
+❌ Ошибка запуска бота (попытка 5): 409: Conflict: terminated by other getUpdates request; make sure that only one bot instance is running
