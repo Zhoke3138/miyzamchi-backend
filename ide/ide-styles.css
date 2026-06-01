@@ -3670,6 +3670,33 @@ button:focus-visible,.btn:focus-visible{
 .cmp-summary-body > :first-child{ margin-top:0; }
 .cmp-summary-body > :last-child{ margin-bottom:0; }
 
+/* 2026-05-31 UX-rework: Executive Summary — главный блок выдачи.
+   Крупнее, ярче рамка, больше воздуха внутри. Юрист видит вывод
+   Финального Судьи без скролла. */
+.cmp-summary.ad-summary-prominent{
+  padding: var(--s-3) var(--s-4);
+  background: var(--bg-panel);
+  border: 1px solid var(--accent-soft, var(--border));
+  border-left: 3px solid var(--accent, #10b981);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.ad-summary-prominent .cmp-summary-head{
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+.ad-summary-prominent .cmp-summary-body{
+  font-size: 14.5px;
+  line-height: 1.65;
+}
+.ad-summary-prominent .cmp-summary-body h1,
+.ad-summary-prominent .cmp-summary-body h2,
+.ad-summary-prominent .cmp-summary-body h3{
+  font-size: 15px; margin-top: 14px; margin-bottom: 6px; color: var(--text); font-weight: 700;
+}
+.ad-summary-prominent .cmp-summary-body p{ margin: 6px 0; }
+.ad-summary-prominent .cmp-summary-body ul,
+.ad-summary-prominent .cmp-summary-body ol{ margin: 6px 0; padding-left: 22px; }
+
 .cmp-error{
   padding:10px 14px; background:#fce8e8;
   border:1px solid #e5484d; border-radius:var(--radius-sm);
@@ -3923,6 +3950,9 @@ body.dk .analyze-accordion-content {
 }
 
 /* ── Audit-таблица (Triage + Ищейки результаты) ───────────────── */
+/* 2026-05-31 UX-rework: компактные строки, 2 колонки вместо 3,
+   справа стек "вердикт сверху / обоснование снизу". Никаких лишних
+   пустот: vertical-align top + reset table-layout. */
 .ad-table-wrap{ width:100%; overflow-x:auto; }
 .ad-table{
   width:100%; border-collapse:separate; border-spacing:0;
@@ -3930,6 +3960,7 @@ body.dk .analyze-accordion-content {
   background:var(--bg-panel);
   border:1px solid var(--border); border-radius:var(--radius-sm);
   overflow:hidden;
+  table-layout: fixed;     /* фикс: ширины колонок строго по th, не растягиваются под контент */
 }
 .ad-table thead th{
   text-align:left; padding:var(--s-2) var(--s-2h);
@@ -3941,15 +3972,33 @@ body.dk .analyze-accordion-content {
   padding:var(--s-2) var(--s-2h); vertical-align:top;
   border-bottom:1px solid var(--border);
   line-height:1.5;
+  height: auto;             /* фикс: явно убираем любую унаследованную min-height */
 }
+.ad-table tbody tr{ height: auto; }
 .ad-table tbody tr:last-child td{ border-bottom:none; }
-.ad-cell-num{ font-family:var(--font-mono); font-size:12px; color:var(--muted); white-space:nowrap; }
-.ad-cell-verdict{ font-weight:600; }
-.ad-cell-rationale{ color:var(--muted); }
+
+/* Компактный вариант (для accordion-разбора) — меньше padding */
+.ad-table--compact tbody td{ padding: 8px 10px; line-height: 1.45; }
+.ad-table--compact thead th{ padding: 8px 10px; }
+
+.ad-cell-num{ font-family:var(--font-mono); font-size:12px; color:var(--muted); white-space:nowrap; word-break: break-word; }
+
+/* Новый стек в правой колонке: вердикт сверху, обоснование снизу */
+.ad-cell-content{ display: flex; flex-direction: column; gap: 4px; }
+.ad-verdict{ font-weight:600; color: var(--text); font-size: var(--text-sm); line-height: 1.4; }
+.ad-rationale{ color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+
+/* Цветовая кодировка строк */
 .ad-row--ok{ background:transparent; }
 .ad-row--warning{ background:rgba(245,166,35,.04); }
-.ad-row--warning .ad-cell-verdict{ color:#f5a623; }
+.ad-row--warning .ad-verdict{ color:#c87f15; }
 .ad-row--critical{ background:rgba(229,72,77,.05); }
+.ad-row--critical .ad-verdict{ color:#e5484d; }
+
+/* Legacy-классы (для compare-view и старых рендеров) — оставлены для совместимости */
+.ad-cell-verdict{ font-weight:600; }
+.ad-cell-rationale{ color:var(--muted); }
+.ad-row--warning .ad-cell-verdict{ color:#f5a623; }
 .ad-row--critical .ad-cell-verdict{ color:#e5484d; }
 .ad-step-reason{ color:var(--muted); font-size:11px; margin-left:6px; }
 
@@ -3961,8 +4010,99 @@ body.dk .analyze-accordion-content {
   font-family:var(--font-sans); font-size:var(--text-sm);
 }
 .ad-sources-head{ font-weight:600; color:var(--text); margin-bottom:var(--s-1h); }
-.ad-sources-list{ margin:0; padding-left:var(--s-3); color:var(--muted); }
-.ad-sources-list li{ margin:4px 0; }
+.ad-sources-list{ margin:0; padding:8px 0 8px 22px; color:var(--muted); font-size: 12.5px; }
+.ad-sources-list li{ margin:3px 0; }
+
+/* ── 2026-05-31: Accordion <details>/<summary> для свёрнутых блоков ── */
+.ad-details{
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  overflow: hidden;
+  transition: border-color .15s;
+}
+.ad-details[open]{ border-color: var(--accent-soft, var(--border)); }
+.ad-details > summary.ad-details-summary{
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--bg-app);
+  user-select: none;
+  list-style: none;
+  transition: background .12s;
+}
+.ad-details > summary.ad-details-summary::-webkit-details-marker{ display: none; }
+.ad-details > summary.ad-details-summary::marker{ content: ''; }
+.ad-details > summary.ad-details-summary:hover{ background: var(--hover); }
+.ad-details-icon{ font-size: 14px; }
+.ad-details-title{ font-weight: 600; }
+.ad-details-count{
+  font-size: 11px; font-family: var(--font-mono);
+  color: var(--muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-left: 2px;
+}
+.ad-details-hint{
+  font-size: 11px; color: var(--muted);
+  margin-left: auto;
+  font-style: italic;
+}
+.ad-details-chevron{
+  font-size: 12px; color: var(--muted);
+  transition: transform .18s ease;
+  margin-left: 4px;
+}
+.ad-details[open] > summary .ad-details-chevron{ transform: rotate(180deg); }
+.ad-details[open] > summary{ border-bottom: 1px solid var(--border); }
+
+/* Если accordion свёрнут — hint виден; если открыт — скрываем */
+.ad-details[open] > summary .ad-details-hint{ display: none; }
+
+/* Minor вариант — для секции "Использованные нормы" */
+.ad-details--minor > summary.ad-details-summary{ font-size: 12.5px; padding: 8px 12px; }
+.ad-details--minor .ad-sources-list{ padding: 8px 16px 10px 32px; }
+
+/* Внутреннее тело accordion: seg-чипы сверху, таблица снизу */
+.ad-details-body{
+  display: flex; flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-2);
+}
+/* Чипы прогресса внутри accordion — отличаются от верхней панели:
+   меньше шрифт, плотнее, фон под цвет accordion-body */
+.ad-seg-steps{
+  padding: 8px 10px;
+  background: var(--bg-app);
+  font-size: 11.5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  max-height: 200px; overflow-y: auto;   /* много сегментов → скроллим внутри */
+}
+.ad-seg-steps .cmp-step{ font-size: 11.5px; }
+.ad-seg-steps .cmp-step-text{ font-size: 11.5px; }
+
+/* Live-индикатор в summary accordion'а пока идёт стрим */
+.ad-details-live{
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10.5px; color: #10b981; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em;
+  margin-left: 4px;
+}
+.ad-details-live-dot{
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #10b981;
+  animation: adLivePulse 1.1s infinite ease-in-out;
+}
+@keyframes adLivePulse{
+  0%,100%{ opacity: 0.4; transform: scale(0.85); }
+  50%   { opacity: 1;   transform: scale(1.15); }
+}
 
 /* ── Telemetry badges (Live: время / токены / стоимость / calls) ─ */
 /* 2026-05-30: возвращаем счётчики после рефакторинга под drag&drop.

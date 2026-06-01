@@ -476,7 +476,7 @@ async function streamUploadDocument({documentText, onStep, onStatus, signal}){
    PR3: принимает опциональный sessionId — если он есть, бэкенд
    пропускает context+segment+triage (фоновый прогрев уже сделал их).
    ═════════════════════════════════════════════════════════════ */
-async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStatus, onText, onSources, onMetadata, onConfidence, onStep, onTableRow, onPurityIndex, onTelemetry, onAgentSearch, signal}){
+async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStatus, onText, onSources, onMetadata, onConfidence, onStep, onTableRow, onPurityIndex, onTelemetry, onAgentSearch, onTraceReady, signal}){
   const url = BACKEND_URL + '/api/analyze-document';
   console.log('[IDE Analyze] Sending to:', url, '| doc:', documentText?.length, 'ch | query:', (userQuery||'').slice(0,40), '| sessionId:', sessionId ? sessionId.slice(0,8) : 'none');
   let res;
@@ -523,6 +523,8 @@ async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStat
       // 2026-05-30 Agentic RAG: модель сама вызывает search_legislation_kg.
       // Показываем юристу в UI: "🔎 Агент ищет: <query>".
       if(parsed && parsed.agent_search){onAgentSearch && onAgentSearch(parsed.agent_search);}
+      // 2026-06-01 Full Debug Trace: { trace_ready: { id, fileName, url } }
+      if(parsed && parsed.trace_ready){onTraceReady && onTraceReady(parsed.trace_ready);}
     }
   }
 }
@@ -694,6 +696,9 @@ const AnalyzeDocsMode = () => {
   // tele.elapsedMs тикает каждые 100ms пока running=true.
   const EMPTY_TELE = { calls:0, input:0, output:0, cost:0, lastModel:null, lastLabel:null, startedAt:null, elapsedMs:0 };
   const [tele, setTele] = useState({...EMPTY_TELE});
+  // 2026-06-01: Full Debug Trace — URL для скачивания .md отчёта.
+  // Приходит из SSE { trace_ready: { id, fileName, url } } в конце пайплайна.
+  const [traceInfo, setTraceInfo] = useState(null);
   const abortRef = useRef(null);
   const fileInputRefs = [useRef(null), useRef(null)];
 
@@ -806,6 +811,7 @@ const AnalyzeDocsMode = () => {
   const onRun = async () => {
     setRunning(true); setError('');
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null);
+    setTraceInfo(null);
     // Reset телеметрию с новым startedAt
     const freshTele = { ...EMPTY_TELE, startedAt: Date.now() };
     setTele(freshTele);
@@ -828,7 +834,8 @@ const AnalyzeDocsMode = () => {
           onSources:      (s) => setSources(Array.isArray(s) ? s : []),
           onMetadata:     () => {},
           onTelemetry:    onTelemetryEvent,
-          onAgentSearch:  onAgentSearch
+          onAgentSearch:  onAgentSearch,
+          onTraceReady:   (info) => setTraceInfo(info)
         });
       } else if (mode === 'compare') {
         await streamCompareDocuments({
@@ -862,6 +869,7 @@ const AnalyzeDocsMode = () => {
     setSlots([{...EMPTY_SLOT}, {...EMPTY_SLOT}]);
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null); setError('');
     setTele({...EMPTY_TELE});
+    setTraceInfo(null);
     try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-reset')); } catch(_) {}
   };
 
@@ -968,6 +976,18 @@ const AnalyzeDocsMode = () => {
     return 'ad-row ad-row--ok';
   };
 
+  // ── 2026-05-31 UX-fix: разделяем steps на 2 потока ─────────────────
+  // Бэкенд шлёт два класса SSE-событий:
+  //   • Head-steps (id ∈ {router, passport, triage, phase3, judge, hybrid,
+  //     segment, шаги pipeline) — высокоуровневые, ВСЕГДА видны юристу.
+  //   • Seg-steps (id начинается с "seg_") — по одному на каждый сегмент
+  //     документа. На длинных документах их 30-40+ штук, и они
+  //     выглядят как "вываливающийся список п.1, п.2..." — это и есть
+  //     scroll fatigue. Прячем в <details> вместе с таблицей вердиктов.
+  const isSegStep = (s) => s && typeof s.id === 'string' && s.id.startsWith('seg_');
+  const headSteps = steps.filter(s => !isSegStep(s));
+  const segSteps  = steps.filter(isSegStep);
+
   return (
     <div className="cmp-root">
       <div className="cmp-toolbar">
@@ -979,6 +999,19 @@ const AnalyzeDocsMode = () => {
           <div className="ad-purity-badge" title="Индекс правовой чистоты документа">
             🛡️ Чистота: <b>{purityIndex}%</b>
           </div>
+        )}
+        {/* 2026-06-01: Full Debug Trace — кнопка появляется когда бэкенд
+            прислал { trace_ready: { url, fileName } }. По клику браузер
+            качает .md файл со ВСЕМИ prompts, tool_calls, RAG-выдачами и
+            ответом Финального Судьи. Используется для отладки галлюцинаций. */}
+        {traceInfo && traceInfo.url && (
+          <a className="ad-trace-btn"
+             href={(BACKEND_URL || '') + traceInfo.url}
+             download={traceInfo.fileName || 'trace.md'}
+             title={'Полный debug-отчёт (' + (traceInfo.fileName || 'trace.md') + ') — все prompts, tool calls, RAG-выдачи, ответ Финального Судьи'}
+             target="_blank" rel="noopener">
+            📥 Debug-отчёт
+          </a>
         )}
         {report && (
           <div className="cmp-stats">
@@ -994,9 +1027,11 @@ const AnalyzeDocsMode = () => {
             дублировать счётчики. Sync через window-events miyzamchi:tele-*. */}
       </div>
 
-      {steps.length > 0 && (
+      {/* 2026-05-31: показываем ТОЛЬКО head-steps в верхней панели.
+          Seg-steps (по одному на каждый чанк) переехали внутрь <details>. */}
+      {headSteps.length > 0 && (
         <div className="cmp-steps">
-          {steps.map(s => (
+          {headSteps.map(s => (
             <div key={s.id} className={`cmp-step cmp-step--${s.status}`}>
               <span className="cmp-step-dot"/>
               <span className="cmp-step-text">{s.text}{s.reason ? <span className="ad-step-reason"> · {s.reason}</span> : null}</span>
@@ -1007,46 +1042,94 @@ const AnalyzeDocsMode = () => {
 
       {error && <div className="cmp-error">⚠️ {error}</div>}
 
-      {/* AUDIT VIEW: таблица пунктов с цветовой кодировкой */}
-      {isAuditView && tableRows.length > 0 && (
-        <div className="ad-table-wrap">
-          <table className="ad-table">
-            <thead>
-              <tr>
-                <th style={{width:'24%'}}>Пункт</th>
-                <th style={{width:'30%'}}>Вердикт</th>
-                <th>Обоснование / норма КР</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tableRows.map((r, i) => (
-                <tr key={i} className={rowClass(r)}>
-                  <td className="ad-cell-num">{r.item_number || `п.${i+1}`}</td>
-                  <td className="ad-cell-verdict">{r.short_verdict || '—'}</td>
-                  <td className="ad-cell-rationale">{r.legal_rationale || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* 2026-05-31 UX-rework: иерархия выдачи —
+          1) Executive Summary КРУПНО и сразу — самое важное.
+          2) Детальный разбор по пунктам — СВЁРНУТ в <details>.
+          3) Использованные нормы — отдельным мелким блоком.
+          Это убирает scroll fatigue: юрист видит вывод Финального Судьи
+          без скролла, при желании раскрывает детали. */}
 
       {(summary || running) && (
-        <div className="cmp-summary">
+        <div className="cmp-summary ad-summary-prominent">
           <div className="cmp-summary-head">📋 Executive Summary</div>
           <div className="cmp-summary-body ai-md"
                dangerouslySetInnerHTML={{__html: renderMarkdown(summary || (running ? (isCompareView ? '_Старший партнёр анализирует изменения..._' : '_Финальный судья формирует заключение..._') : ''))}}/>
         </div>
       )}
 
+      {/* AUDIT VIEW: детальный разбор — ВСЁ внутри <details>, СВЁРНУТ.
+          Что внутри:
+            • seg-чипы (live-прогресс по сегментам пока идёт стрим)
+            • таблица вердиктов
+          Снаружи остаётся только Executive Summary — самое важное. */}
+      {isAuditView && (tableRows.length > 0 || segSteps.length > 0) && (
+        <details className="ad-details">
+          <summary className="ad-details-summary">
+            <span className="ad-details-icon">📋</span>
+            <span className="ad-details-title">Детальный разбор по пунктам</span>
+            <span className="ad-details-count">{tableRows.length || segSteps.length}</span>
+            {running && (
+              <span className="ad-details-live" title="Идёт обработка">
+                <span className="ad-details-live-dot"/>
+                live
+              </span>
+            )}
+            <span className="ad-details-hint">Нажмите, чтобы развернуть</span>
+            <span className="ad-details-chevron">▾</span>
+          </summary>
+          <div className="ad-details-body">
+            {segSteps.length > 0 && (
+              <div className="cmp-steps ad-seg-steps">
+                {segSteps.map(s => (
+                  <div key={s.id} className={`cmp-step cmp-step--${s.status}`}>
+                    <span className="cmp-step-dot"/>
+                    <span className="cmp-step-text">{s.text}{s.reason ? <span className="ad-step-reason"> · {s.reason}</span> : null}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {tableRows.length > 0 && (
+              <div className="ad-table-wrap">
+                <table className="ad-table ad-table--compact">
+                  <thead>
+                    <tr>
+                      <th style={{width:'18%'}}>Пункт</th>
+                      <th>Вердикт и обоснование</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableRows.map((r, i) => (
+                      <tr key={i} className={rowClass(r)}>
+                        <td className="ad-cell-num">{r.item_number || `п.${i+1}`}</td>
+                        <td className="ad-cell-content">
+                          <div className="ad-verdict">{r.short_verdict || '—'}</div>
+                          {r.legal_rationale && r.legal_rationale !== r.short_verdict && (
+                            <div className="ad-rationale">{r.legal_rationale}</div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
+
       {/* AUDIT VIEW: использованные источники НПА */}
       {isAuditView && sources.length > 0 && (
-        <div className="ad-sources">
-          <div className="ad-sources-head">🔗 Использованные нормы ({sources.length}):</div>
+        <details className="ad-details ad-details--minor">
+          <summary className="ad-details-summary">
+            <span className="ad-details-icon">🔗</span>
+            <span className="ad-details-title">Использованные нормы КР</span>
+            <span className="ad-details-count">{sources.length}</span>
+            <span className="ad-details-chevron">▾</span>
+          </summary>
           <ul className="ad-sources-list">
             {sources.slice(0, 10).map((s, i) => <li key={i}>{s}</li>)}
           </ul>
-        </div>
+        </details>
       )}
 
       {/* COMPARE VIEW: side-by-side pairs */}

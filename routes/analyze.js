@@ -53,6 +53,13 @@ const { buildHCREmbeddingQuery, buildHCRSystemPrompt, buildHCRUserPromptLine } =
 // MAX_TOOL_TURNS=3, watchdog=45s. SSE-событие agent_search показывает
 // юристу что именно ищет агент.
 const { createAgenticVerifier, TOOL_PROTOCOL_BLOCK } = require('../lib/agenticVerifier');
+// ── 2026-06-01: Full Debug Trace — каждый чих пайплайна в .md файл ──
+// Создаётся один trace на /api/analyze-document. Содержит: input doc head,
+// passport, triage, для КАЖДОГО сегмента — system+user prompt, все tool_call'ы,
+// все Pinecone-выдачи (полный текст 800 chars), финальный вердикт. И Final
+// Judge: system, user (включая оригинал документа), полный ответ. Юрист
+// скачивает через кнопку "📥 Скачать debug-отчёт" в IDE.
+const { createTraceLogger, readTraceFile, TRACE_FILENAME_RE } = require('../lib/traceLogger');
 
 class TelemetryCollector {
     constructor() {
@@ -762,6 +769,22 @@ ${compactSegments}
             || (docContextOrPassport && typeof docContextOrPassport === 'object' && docContextOrPassport.title
                 ? docContextOrPassport : null);
         const topology = task.topology || null;
+        // 2026-06-01: full debug trace (или noop если выключен)
+        const trace = task._trace || null;
+        const verifierStartedAt = performance.now();
+        if (trace && !trace.isNoop) {
+            try {
+                await trace.logVerifierStart({
+                    segmentRef,
+                    originalIdx: task.originalIdx,
+                    targetType,
+                    targetArticle,
+                    articleGroup,
+                    topology,
+                    textHead: textToAnalyze
+                });
+            } catch (_) {}
+        }
 
         // Кэшируем только когда НЕ преднабор: pre-fetched может варьироваться.
         const isCacheable = !preFetchedArticles && (targetType === 'general' || targetType === 'article');
@@ -913,7 +936,8 @@ ${schemaBlock}`;
                 topK: 5,
                 watchdogMs: 45000,
                 aborted,
-                onSearchEvent
+                onSearchEvent,
+                trace             // 2026-06-01: пишем prompts/tool_calls/RAG в trace
             });
 
             if (telemetry) {
@@ -925,7 +949,18 @@ ${schemaBlock}`;
             }
 
             const provider = `agentic-tier${out.tier}-${out.model}`;
-            return finalizeVerifierResult(out.text, out.articles || [], provider, isCacheable, textToAnalyze, out.toolCalls);
+            const verdict = finalizeVerifierResult(out.text, out.articles || [], provider, isCacheable, textToAnalyze, out.toolCalls);
+            if (trace && !trace.isNoop) {
+                try {
+                    await trace.logVerifierVerdict({
+                        verdict,
+                        durationMs: performance.now() - verifierStartedAt,
+                        toolCalls: (out.toolCalls || []).length,
+                        articlesCount: (out.articles || []).length
+                    });
+                } catch (_) {}
+            }
+            return verdict;
         } catch (err) {
             if (telemetry) telemetry.recordAgentTime('agentLlm', performance.now() - agentStart);
             if (err?.aborted) return null;
@@ -1083,7 +1118,8 @@ ${schemaBlock}`;
     }
 
     // ── MAP-фаза ────────────────────────────────────────────────────
-    async function verifySegmentsSmart(segmentsWithIdx, res, passport, metaContext, aborted, telemetry, phase3ByAuditIdx = null, chunkContexts = null, allSegments = null) {
+    // 2026-06-01: добавлен trace — full debug trace logger (noop если выключен)
+    async function verifySegmentsSmart(segmentsWithIdx, res, passport, metaContext, aborted, telemetry, phase3ByAuditIdx = null, chunkContexts = null, allSegments = null, trace = null) {
         if (!segmentsWithIdx || segmentsWithIdx.length === 0) return [];
 
         // ── 2026-05-30: Flat tasks через Smooth Burst Throttle (20 RPS) ────
@@ -1148,6 +1184,9 @@ ${schemaBlock}`;
                     // Micro (task.textToAnalyze). runVerifierAgent композирует.
                     passport,
                     topology,
+                    // 2026-06-01: full debug trace — пишем по каждому сегменту
+                    // system+user prompt, tool_calls, RAG-выдачу, вердикт.
+                    _trace: trace,
                     // 2026-05-30 Agentic RAG: SSE-событие agent_search.
                     // Когда модель внутри agenticVerifier вызывает
                     // search_legislation_kg(query, reason), мы стримим это
@@ -1223,7 +1262,7 @@ ${schemaBlock}`;
     // понимал о чём речь (в его документе нет нумерации). Теперь Судья
     // видит оригинал И отчёт, ссылается на смысловые блоки оригинала,
     // не на технические чанки. reasoning_effort повышен до high/medium.
-    async function runFinalJudge(finalResults, res, docContextStr, aborted, telemetry, documentText = '') {
+    async function runFinalJudge(finalResults, res, docContextStr, aborted, telemetry, documentText = '', trace = null) {
         if (telemetry) telemetry.startTimer('Final_Judge_Time');
         if (finalResults.length === 0) { if (telemetry) telemetry.endTimer('Final_Judge_Time'); return; }
         if (aborted.value) { if (telemetry) telemetry.endTimer('Final_Judge_Time'); return; }
@@ -1370,13 +1409,41 @@ ${riskReports}
 
         console.log(`[Judge] DCR=${pathLabel} | model=${judgeModel} | reasoning=${judgeReasoning} | ${total} пунктов → ${risks.length} рисков`);
 
+        // 2026-06-01: trace — start info + system/user prompts ДО вызова модели.
+        if (trace && !trace.isNoop) {
+            try {
+                await trace.logJudgeStart({
+                    path: pathLabel, model: judgeModel, reasoning: judgeReasoning,
+                    total, critical: critical.length, warning: warning.length, ok: ok.length,
+                    purityIndex
+                });
+                await trace.logJudgeSystemPrompt(systemPrompt);
+                await trace.logJudgeUserPrompt(userPrompt);
+            } catch (_) {}
+        }
+
+        const judgeStartedAt = performance.now();
         try {
             if (telemetry) telemetry.addTokens(telemetry.estimateTokens(systemPrompt + userPrompt), 0);
+            // outputText капчим ВСЕГДА если trace включён — даже если telemetry off.
+            const captureForTrace = trace && !trace.isNoop;
+            const captureForTele = !!telemetry;
             let outputText = '';
             const originalWrite = res.write;
-            if (telemetry) {
+            if (captureForTrace || captureForTele) {
                 res.write = function(chunk, encoding, callback) {
-                    outputText += chunk;
+                    // Парсим только SSE-data text-куски: { "text": "..." }
+                    try {
+                        const str = String(chunk);
+                        const m = str.match(/^data: (.+)\n\n$/);
+                        if (m) {
+                            const obj = JSON.parse(m[1]);
+                            if (obj && typeof obj.text === 'string') outputText += obj.text;
+                            else outputText += str;
+                        } else {
+                            outputText += str;
+                        }
+                    } catch (_) { outputText += String(chunk); }
                     return originalWrite.call(res, chunk, encoding, callback);
                 };
             }
@@ -1387,14 +1454,20 @@ ${riskReports}
                 user_id: judgeUserId,
                 label: `judge-${pathLabel}`
             });
-            if (telemetry) {
-                res.write = originalWrite;
+            if (captureForTrace || captureForTele) res.write = originalWrite;
+            if (captureForTele) {
                 telemetry.addTokens(0, telemetry.estimateTokens(outputText));
                 telemetry.endTimer('Final_Judge_Time');
+            }
+            if (captureForTrace) {
+                try { await trace.logJudgeResponse(outputText, performance.now() - judgeStartedAt); } catch (_) {}
             }
         } catch (err) {
             console.error('[Final Judge Error] обе модели легли:', err.message);
             res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Ошибка генерации финального резюме.' })}\n\n`);
+            if (trace && !trace.isNoop) {
+                try { await trace.logJudgeResponse(`[ERROR] ${err.message}`, performance.now() - judgeStartedAt); } catch (_) {}
+            }
         }
 
         res.write(`data: ${JSON.stringify({
@@ -1739,6 +1812,26 @@ ${riskReports}
                 res.setHeader('X-Accel-Buffering', 'no');
                 if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
+                // ── 2026-06-01: Full Debug Trace ──
+                // Один файл на сеанс анализа. Включён по умолчанию (TRACE_ENABLED).
+                // Содержит: input → passport → triage → каждый сегмент (system/
+                // user prompt, tool_calls, Pinecone-выдачи, вердикт) → Final Judge.
+                // Фронт получает SSE { trace_ready } и рендерит кнопку скачивания.
+                const trace = createTraceLogger({
+                    docHashPrefix,
+                    requestId: `trace_${new Date().toISOString().replace(/[:.]/g, '-')}_${docHashPrefix}`,
+                    logger
+                });
+                if (!trace.isNoop) {
+                    trace.logHeader({
+                        pipeline: '/api/analyze-document',
+                        docLength: documentText.length,
+                        docHashPrefix,
+                        sessionId: sessionId || null,
+                        docHead: documentText
+                    }).catch(() => {});
+                }
+
                 // PR3: пытаемся взять состояние из теневого кэша
                 const { state, fromCache } = await preparePipelineState(documentText, sessionId, res, aborted, telemetry);
 
@@ -1761,6 +1854,13 @@ ${riskReports}
                 // failed) — пробрасываем null, агенты работают без macro-блока
                 // (graceful degradation). Если есть — он будет в task.passport.
                 const passport = statePassport || null;
+
+                // 2026-06-01: trace — паспорт + triage + список сегментов.
+                if (!trace.isNoop) {
+                    trace.logPassport(passport).catch(() => {});
+                    trace.logTriage(triage).catch(() => {});
+                    trace.logSegments(segments).catch(() => {});
+                }
 
                 // Разводим пункты по двум корзинам по triage
                 const skipSegmentsWithIdx = [];
@@ -1849,10 +1949,19 @@ ${riskReports}
                         return;
                     }
 
+                    if (!trace.isNoop) {
+                        trace.logPipelineState({
+                            auditCount: auditSegmentsWithIdx.length,
+                            skipCount: skipSegmentsWithIdx.length,
+                            metaContext: meta_context,
+                            fromCache
+                        }).catch(() => {});
+                    }
+
                     sendStatus(res, `🔬 Глубокий аудит ${auditSegmentsWithIdx.length} пунктов...`);
                     finalResults = await verifySegmentsSmart(
                         auditSegmentsWithIdx, res, passport, meta_context, aborted, telemetry,
-                        phase3ChunkAnalyses, stateChunkContexts, segments
+                        phase3ChunkAnalyses, stateChunkContexts, segments, trace
                     );
                 } else {
                     console.log('[analyze-document] All segments triaged as skip — no deep audit needed');
@@ -1901,7 +2010,7 @@ ${riskReports}
 
                 sendStep(res, { id: 'judge', status: 'loading', text: 'Финальный Судья формирует заключение' });
                 sendStatus(res, '⚖️ Финальный Судья формирует заключение...');
-                await runFinalJudge(allResultsForJudge, res, docContextStr, aborted, telemetry, documentText);
+                await runFinalJudge(allResultsForJudge, res, docContextStr, aborted, telemetry, documentText, trace);
                 sendStep(res, { id: 'judge', status: 'success', text: 'Заключение готово' });
 
                 const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
@@ -1909,6 +2018,23 @@ ${riskReports}
                 console.log(`[analyze-document] DONE in ${elapsed}s | shadow=${fromCache ? 'HIT' : 'MISS'} | total=${segments.length} | skip=${skipSegmentsWithIdx.length} | audit=${auditSegmentsWithIdx.length} | risks=${realRisks} | aborted=${aborted.value}`);
 
                 try { console.log('\n\n' + telemetry.generateReport() + '\n\n'); } catch (telemetryErr) { console.error('[Telemetry] Failed to print report:', telemetryErr); }
+
+                // 2026-06-01: закрываем trace + шлём фронту ссылку на скачивание
+                if (!trace.isNoop) {
+                    try {
+                        await trace.logFooter({});
+                        await trace.flush();
+                        res.write(`data: ${JSON.stringify({
+                            trace_ready: {
+                                id: trace.id,
+                                fileName: trace.fileName,
+                                url: trace.downloadUrl
+                            }
+                        })}\n\n`);
+                    } catch (traceErr) {
+                        console.warn('[trace] flush/emit failed:', traceErr.message);
+                    }
+                }
 
                 res.write('data: [DONE]\n\n');
                 res.end();
@@ -1923,5 +2049,42 @@ ${riskReports}
                 }
             }
         });
+    });
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  ROUTE 3: /api/trace/:filename — скачивание debug-trace .md файла
+    // ═══════════════════════════════════════════════════════════════════
+    // Файл создаётся в /api/analyze-document; имя пробрасывается фронту
+    // через SSE { trace_ready: { fileName, url } }. Юрист жмёт кнопку
+    // "📥 Скачать debug-отчёт" в IDE — браузер уходит на этот URL.
+    //
+    // Безопасность: filename строго валидируется regex'ом /^trace_[A-Za-z0-9_-]+\.md$/.
+    // Path traversal заблокирован проверкой resolved-пути в lib/traceLogger.js.
+    //
+    // ВНИМАНИЕ: trace содержит полный текст документа пользователя. В
+    // продакшене (если будет публичный URL) — закрыть basic-auth токеном
+    // или отключить через env TRACE_ENABLED=false.
+    app.get('/api/trace/:filename', async (req, res) => {
+        const { filename } = req.params || {};
+        if (!filename || !TRACE_FILENAME_RE.test(filename)) {
+            res.status(400).type('text/plain').send('Invalid trace filename');
+            return;
+        }
+        try {
+            const content = await readTraceFile(filename);
+            res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Cache-Control', 'no-store');
+            res.send(content);
+        } catch (err) {
+            if (err.code === 'ENOENT') {
+                res.status(404).type('text/plain').send('Trace not found (may have expired — TTL 7 days)');
+            } else if (err.code === 'INVALID_FILENAME' || err.code === 'PATH_TRAVERSAL') {
+                res.status(400).type('text/plain').send('Invalid filename');
+            } else {
+                console.error('[/api/trace]', err);
+                res.status(500).type('text/plain').send('Trace read error');
+            }
+        }
     });
 };

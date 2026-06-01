@@ -440,6 +440,7 @@ function getThinkingStatusView(rawStatus, fallbackStep) {
 }
 
 function applyMode(mode) {
+  mode = 'fast';
   currentMode = mode;
   const cfg = MODE_CONFIG[mode];
 
@@ -786,6 +787,8 @@ async function sendMessage() {
         const decoder = new TextDecoder("utf-8");
         let botResponseText = "";
         let buffer = "";
+        let accumulatedSources = null;
+        let accumulatedMetadata = null;
         let textHasStarted = false;
         let timelineStep = 0;
         let lastProtocolStatus = '';
@@ -897,11 +900,10 @@ async function sendMessage() {
                         }
 
                         if (parsed.sources && parsed.sources.length) {
-                             renderSources(msgDiv, parsed.sources, parsed.metadata || []);
+                             accumulatedSources = parsed.sources;
                         }
                         if (parsed.metadata && Array.isArray(parsed.metadata) && parsed.metadata.length) {
-                             // Сохраняем metadata на DOM элементе чтобы renderSources мог дотянуться
-                             // если sources пришли РАНЬШЕ metadata (теоретически — раздельные events).
+                             accumulatedMetadata = parsed.metadata;
                              msgDiv.dataset.lastMetadata = JSON.stringify(parsed.metadata);
                         }
 
@@ -921,6 +923,30 @@ async function sendMessage() {
         skeletonDiv.remove();
         statusDiv.style.display = 'none';
         msgDiv.classList.remove('bot-message--streaming');
+
+        let finalSources = [];
+        let finalMetadata = [];
+        if (accumulatedSources && accumulatedSources.length) {
+            const metaList = accumulatedMetadata || [];
+            accumulatedSources.forEach((src, i) => {
+                const meta = metaList[i] || {};
+                if (isSourceUsed(botResponseText, src, meta)) {
+                    finalSources.push(src);
+                    finalMetadata.push(meta);
+                }
+            });
+        }
+
+        if (finalSources.length > 0) {
+            renderSources(msgDiv, finalSources, finalMetadata);
+            botMessage.sources = finalSources;
+            botMessage.metadata = finalMetadata;
+        } else {
+            const existingContainer = msgDiv.querySelector('.sources-container');
+            if (existingContainer) {
+                existingContainer.remove();
+            }
+        }
         if (statusPhaseTimer) {
             clearTimeout(statusPhaseTimer);
             statusPhaseTimer = null;
@@ -997,6 +1023,54 @@ async function sendMessage() {
         currentAbortController = null;
         updateSendBtn();
     }
+}
+
+function isSourceUsed(responseText, srcText, meta) {
+    const textLower = String(responseText || '').toLowerCase();
+    
+    const npaTitle = String(meta?.npa_title || '').trim();
+    if (npaTitle) {
+        const cleanNpa = npaTitle.replace(/Закон КР «|»|КОДЕКС КЫРГЫЗСКОЙ РЕСПУБЛИКИ|КЫРГЫЗСКОЙ РЕСПУБЛИКИ/gi, '').trim().toLowerCase();
+        if (cleanNpa.length > 3 && textLower.includes(cleanNpa)) {
+            return true;
+        }
+        
+        const words = cleanNpa.split(/\s+/).filter(w => w.length > 4);
+        for (const word of words) {
+            if (word !== 'закон' && word !== 'кодекс' && textLower.includes(word)) {
+                return true;
+            }
+        }
+    }
+    
+    const articleTitle = String(meta?.article_title || '').trim();
+    if (articleTitle) {
+        const artNumMatch = articleTitle.match(/статья\s+(\d+)/i) || articleTitle.match(/ст\.\s+(\d+)/i);
+        if (artNumMatch) {
+            const num = artNumMatch[1];
+            const artRegex = new RegExp('(стать|ст\\.|ст\\s+)' + num + '\\b', 'i');
+            if (artRegex.test(textLower)) {
+                return true;
+            }
+        }
+    }
+    
+    const fullText = String(meta?.full_text || '').trim();
+    if (fullText && fullText.length > 30) {
+        const cleanText = fullText.toLowerCase().replace(/[^а-яёa-z0-9\s]/gi, '');
+        const cleanResp = textLower.replace(/[^а-яёa-z0-9\s]/gi, '');
+        
+        const words = cleanText.split(/\s+/).filter(w => w.length > 2);
+        const chunkSize = 4;
+        for (let i = 0; i <= words.length - chunkSize; i += 2) {
+            const chunk = words.slice(i, i + chunkSize).join(' ');
+            if (chunk.length > 15 && cleanResp.includes(chunk)) {
+                return true;
+            }
+        }
+    }
+    
+    return false;
 }
 
 // ============================================
@@ -1186,6 +1260,10 @@ function appendMessage(sender, text, animate = true, meta = null) {
                 addCopyButton(msgDiv, cleanText);
                 if ((meta && meta.mode === 'thinking') || currentMode === 'thinking') addDocBuildButton(msgDiv, cleanText);
                 enableMobileActionsToggle(msgDiv);
+                
+                if (meta && meta.sources && meta.sources.length) {
+                    renderSources(msgDiv, meta.sources, meta.metadata || []);
+                }
             });
         } else {
             contentDiv.innerHTML = parsedHtml;
@@ -1193,6 +1271,10 @@ function appendMessage(sender, text, animate = true, meta = null) {
             addCopyButton(msgDiv, cleanText);
             if ((meta && meta.mode === 'thinking') || currentMode === 'thinking') addDocBuildButton(msgDiv, cleanText);
             enableMobileActionsToggle(msgDiv);
+            
+            if (meta && meta.sources && meta.sources.length) {
+                renderSources(msgDiv, meta.sources, meta.metadata || []);
+            }
         }
         const metaText = formatMessageMeta(meta);
         if (metaText) {

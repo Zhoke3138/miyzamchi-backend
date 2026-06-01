@@ -322,4 +322,4 @@ async function getAIAnswer(message, history = [], onProgress = null) {
     }
 }
 
-module.exports = { getAIAnswer, extractTextFromMedia, extractTextFromDocument };
+module.exports = { getAIAnswer, extractTextFromMedia, extractTextFromDocument, getEmbedding, searchPinecone };
