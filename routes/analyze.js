@@ -875,6 +875,32 @@ ${ragContext}
 
 ${schemaBlock}`;
 
+            // 2026-06-02: симметризация трейса с Веткой 2.
+            // Раньше Ветка 1 (preFetched) писала только logVerifierStart —
+            // ни промптов, ни статей, ни ответа, ни вердикта. Чанки с
+            // targetType:'phase3' становились "чёрной дырой" в trace.md.
+            if (trace && !trace.isNoop) {
+                try { await trace.logVerifierSystemPrompt(systemPrompt); } catch (_) {}
+                try { await trace.logVerifierUserPrompt(prefetchUserPrompt); } catch (_) {}
+                try {
+                    await trace.logVerifierTurn({
+                        turn: 0,
+                        tier: 'prefetched',
+                        model: 'phase3-pinecone',
+                        kind: 'tool_response',
+                        payload: {
+                            articles: applicableArticles.map(a => ({
+                                npa_title: a.npa_title,
+                                article_title: a.article_title,
+                                full_text: a.full_text
+                            })),
+                            error: null,
+                            note: `prefetched by Phase 3 Adaptive RAG (${applicableArticles.length} articles, no agentic search)`
+                        }
+                    });
+                } catch (_) {}
+            }
+
             const agentStart = performance.now();
             let raw = '', provider = 'cascade-pending';
             try {
@@ -883,18 +909,58 @@ ${schemaBlock}`;
                 raw = cascadeResult.raw;
             } catch (cascadeErr) {
                 if (telemetry) telemetry.recordAgentTime('agentLlm', performance.now() - agentStart);
-                return {
+                if (trace && !trace.isNoop) {
+                    try {
+                        await trace.logVerifierTurn({
+                            turn: 1, tier: 'prefetched', model: provider,
+                            kind: 'tier_error',
+                            payload: { errorKind: 'cascade-failed', message: cascadeErr.message }
+                        });
+                    } catch (_) {}
+                }
+                const failedVerdict = {
                     status: 'warning', confidence: 0,
                     finding: 'Анализ временно недоступен',
                     rationale: 'Все три модели каскада не ответили. Пункт требует ручной проверки юристом.',
                     suggestion: '', articles: applicableArticles, provider: 'cascade-failed'
                 };
+                if (trace && !trace.isNoop) {
+                    try {
+                        await trace.logVerifierVerdict({
+                            verdict: failedVerdict,
+                            durationMs: performance.now() - verifierStartedAt,
+                            toolCalls: 0,
+                            articlesCount: applicableArticles.length
+                        });
+                    } catch (_) {}
+                }
+                return failedVerdict;
             }
             if (telemetry) {
                 telemetry.recordAgentTime('agentLlm', performance.now() - agentStart);
                 telemetry.addTokens(telemetry.estimateTokens(systemPrompt + prefetchUserPrompt), telemetry.estimateTokens(raw));
             }
-            return finalizeVerifierResult(raw, applicableArticles, provider, isCacheable, textToAnalyze);
+            if (trace && !trace.isNoop) {
+                try {
+                    await trace.logVerifierTurn({
+                        turn: 1, tier: 'prefetched', model: provider,
+                        kind: 'final_text',
+                        payload: { text: raw }
+                    });
+                } catch (_) {}
+            }
+            const verdict = finalizeVerifierResult(raw, applicableArticles, provider, isCacheable, textToAnalyze);
+            if (trace && !trace.isNoop) {
+                try {
+                    await trace.logVerifierVerdict({
+                        verdict,
+                        durationMs: performance.now() - verifierStartedAt,
+                        toolCalls: 0,
+                        articlesCount: applicableArticles.length
+                    });
+                } catch (_) {}
+            }
+            return verdict;
         }
 
         // ── Ветка 2: Agentic RAG (основной путь) ──
