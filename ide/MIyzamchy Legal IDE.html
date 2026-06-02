@@ -1134,6 +1134,7 @@ const AnalyzeDocsMode = () => {
 
   return (
     <div className="cmp-root">
+      <TraceArchiveModal open={archiveOpen} onClose={() => setArchiveOpen(false)} />
       <div className="cmp-toolbar">
         <button className="cmp-new-btn" onClick={startNew}>← Новый анализ</button>
         {running && abortRef.current && (
