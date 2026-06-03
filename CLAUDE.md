@@ -85,6 +85,8 @@
 - Touch `server.js`, `.env`, `scripts/seed.js` без явного "да"
 
 ## Документация архитектуры
+- `ARCHITECTURE.md` — **Miyzamchi 2.0 (Stateful Multi-Agent RAG)**: микросервис парсинга (Node@Render ↔ Python/Docling@Cloud Run), гибридный чанкинг, волновой троттлер, ZDR, динамический reasoning_effort. Новые модули: `parser-service/`, `services/{parserService,llmClients,legalAgents}.js`, `lib/waveThrottle.js`, `routes/analyzeV2.js`
+- `DEPLOY_CLOUD_RUN.md` — пошаговый деплой парсера на Cloud Run (для не-программиста): SA, JSON-ключ, права, env на Render
 - `REFACTOR_ROADMAP.md` — детальный чек-лист всех 5 фаз с описанием design decisions
 - `DEPLOY_AND_TEST_CHECKLIST.md` — гайд по деплою, prod-тестированию, имитации падения каскада, расшифровке telemetry-зон
 - `HANDOFF_BRIEFING.md` — компактный брифинг для копипаста в новый чат

@@ -3809,6 +3809,12 @@ require('./routes/analyze')({
     logger
 });
 
+// ── Miyzamchi 2.0 (Stateful Multi-Agent RAG) — параллельный путь /api/v2 ──
+// Изолирован от прод-роута выше. Self-contained: клиенты Gemini/Pinecone/DeepSeek
+// берутся из .env внутри services/llmClients.js. Парсинг PDF — через Cloud Run.
+// Эндпоинт: POST /api/v2/analyze-document. См. ARCHITECTURE.md / DEPLOY_CLOUD_RUN.md.
+app.use('/api/v2', require('./routes/analyzeV2').createAnalyzeV2Router());
+
 // ============================================================
 // ЗАПУСК
 // ============================================================

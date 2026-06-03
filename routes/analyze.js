@@ -879,9 +879,12 @@ ${schemaBlock}`;
             // Раньше Ветка 1 (preFetched) писала только logVerifierStart —
             // ни промптов, ни статей, ни ответа, ни вердикта. Чанки с
             // targetType:'phase3' становились "чёрной дырой" в trace.md.
+            // 2026-06-02: убрали logVerifierSystemPrompt/UserPrompt из Verifier-веток —
+            // они раздували trace.md (~80% объёма) повторами статичного блока правил
+            // и passport/topology. Оставлены только данные, меняющиеся per-chunk:
+            // start (meta), tool_response (prefetched articles), final_text (ответ LLM),
+            // verdict (распарсенный JSON).
             if (trace && !trace.isNoop) {
-                try { await trace.logVerifierSystemPrompt(systemPrompt); } catch (_) {}
-                try { await trace.logVerifierUserPrompt(prefetchUserPrompt); } catch (_) {}
                 try {
                     await trace.logVerifierTurn({
                         turn: 0,
@@ -1515,7 +1518,10 @@ ${riskReports}
 
         console.log(`[Judge] DCR=${pathLabel} | model=${judgeModel} | reasoning=${judgeReasoning} | ${total} пунктов → ${risks.length} рисков`);
 
-        // 2026-06-01: trace — start info + system/user prompts ДО вызова модели.
+        // 2026-06-02: убрали logJudgeSystemPrompt — он всегда один и тот же
+        // (статичный блок "Синтезатор Финальных Заключений" с 6 запретами).
+        // Оставлены: logJudgeStart (метаданные маршрутизации) + logJudgeUserPrompt
+        // (отчёт агентов — единственный variable input) + logJudgeResponse (выход).
         if (trace && !trace.isNoop) {
             try {
                 await trace.logJudgeStart({
@@ -1523,7 +1529,6 @@ ${riskReports}
                     total, critical: critical.length, warning: warning.length, ok: ok.length,
                     purityIndex
                 });
-                await trace.logJudgeSystemPrompt(systemPrompt);
                 await trace.logJudgeUserPrompt(userPrompt);
             } catch (_) {}
         }
