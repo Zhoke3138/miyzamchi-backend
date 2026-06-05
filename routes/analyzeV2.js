@@ -227,16 +227,28 @@ function createAnalyzeV2Router(deps = {}) {
     const step = (s) => sse({ step: s });
     const done = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
 
-    if (!req.file) {
-      step({ id: 'error', status: 'error', text: 'Файл не получен' });
+    // Два режима входа:
+    //   1) JSON { documentText } — фронт IDE уже извлёк текст в браузере (основной путь A/B);
+    //   2) multipart file        — сырой PDF/DOCX → Cloud Run/Docling (на будущее, ZDR).
+    const bodyText = req.body && req.body.documentText;
+    if (!req.file && !(bodyText && String(bodyText).trim())) {
+      step({ id: 'error', status: 'error', text: 'Документ не получен (ни файл, ни текст)' });
       return done();
     }
 
     try {
-      // ── ФАЗА 1: парсинг + чанкинг + словарь ──────────────────────────
-      step({ id: 'parse', status: 'loading', text: 'Парсинг документа' });
-      const { markdown, source, structure_confidence } =
-        await extractMarkdown(req.file.path, req.file.originalname); // удалит /tmp сам (ZDR)
+      // ── ФАЗА 1: получение Markdown + чанкинг + словарь ────────────────
+      step({ id: 'parse', status: 'loading', text: 'Готовлю документ' });
+      let markdown; let source; let structure_confidence;
+      if (req.file) {
+        ({ markdown, source, structure_confidence } =
+          await extractMarkdown(req.file.path, req.file.originalname)); // удалит /tmp сам (ZDR)
+      } else {
+        // Текст уже извлечён клиентом (pdfjs/mammoth) — Docling не нужен.
+        markdown = String(bodyText);
+        source = 'client_text';
+        structure_confidence = /^\s{0,3}#{2,}\s/m.test(markdown) ? 'high' : 'low';
+      }
       step({ id: 'parse', status: 'success', text: `Источник: ${source}, структура: ${structure_confidence}` });
 
       step({ id: 'segment', status: 'loading', text: 'Разбиваю документ на фрагменты' });

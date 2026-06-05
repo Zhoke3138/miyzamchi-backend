@@ -2,8 +2,10 @@
 /**
  * Miyzamchi 2.0 — Parser Service (Node-сторона оркестратора)
  * ==========================================================
- * Единая точка «файл -> Markdown». Тяжёлый PDF уходит в приватный Cloud Run
- * (Docling), лёгкие DOCX/TXT обрабатываются локально (минимум RAM на Render 512MB).
+ * Единая точка «файл -> Markdown». ВСЕ форматы (.pdf/.docx/.txt/...) уходят в
+ * приватный Cloud Run (IBM Docling) — единый умный ИИ-парсер, понимающий
+ * семантику документа. Локальный mammoth/fs-парсинг УБРАН (давал «кашу» при
+ * чанкинге, не понимал структуру).
  *
  * АУТЕНТИФИКАЦИЯ Cloud Run (OIDC ID-token):
  *   Render НЕ внутри GCP, поэтому metadata-сервер недоступен. Мы храним JSON-ключ
@@ -25,10 +27,21 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
-const mammoth = require('mammoth');
 const { GoogleAuth } = require('google-auth-library');
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.PARSER_TIMEOUT_MS || 100000);
+
+// MIME по расширению — для корректного multipart-заголовка к Docling.
+// Docling определяет формат по имени файла, но валидный contentType не вредит.
+const MIME_BY_EXT = {
+  '.pdf': 'application/pdf',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.doc': 'application/msword',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.html': 'text/html',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
 
 // --- OIDC ID-token client (ленивый синглтон) ------------------------------
 let _idTokenClientPromise = null;
@@ -74,18 +87,22 @@ function cleanError(err) {
   return e;
 }
 
-// --- PDF -> Cloud Run (Docling) -------------------------------------------
-async function parsePdfViaCloudRun(filePath, originalName, attempt = 1) {
+// --- ЛЮБОЙ формат -> Cloud Run (Docling) ----------------------------------
+// Единый умный парсер: PDF/DOCX/TXT/... — Docling сам определяет формат по имени.
+async function parseViaCloudRun(filePath, originalName, attempt = 1) {
   const base = process.env.PARSER_SERVICE_URL;
   if (!base) throw new Error('PARSER_SERVICE_URL не задан');
   const audience = base.replace(/\/+$/, '');
   const endpoint = `${audience}/parse`;
 
+  const ext = path.extname(originalName || filePath).toLowerCase();
+  const contentType = MIME_BY_EXT[ext] || 'application/octet-stream';
+
   // Свежий стрим и форма на КАЖДУЮ попытку (стрим одноразовый!).
   const form = new FormData();
   form.append('file', fs.createReadStream(filePath), {
     filename: originalName,
-    contentType: 'application/pdf',
+    contentType,
   });
   const authHeaders = await buildAuthHeaders(audience);
 
@@ -93,7 +110,7 @@ async function parsePdfViaCloudRun(filePath, originalName, attempt = 1) {
     const res = await axios.post(endpoint, form, {
       headers: { ...form.getHeaders(), ...authHeaders },
       timeout: DEFAULT_TIMEOUT_MS,
-      maxBodyLength: Infinity,    // не упираемся в лимит тела (большой PDF)
+      maxBodyLength: Infinity,    // не упираемся в лимит тела (большой файл)
       maxContentLength: Infinity,
     });
     const markdown = (res.data && res.data.markdown) || '';
@@ -106,7 +123,7 @@ async function parsePdfViaCloudRun(filePath, originalName, attempt = 1) {
   } catch (err) {
     if (attempt === 1 && isRetriableError(err)) {
       // Один «прогревочный» ретрай: первый запрос мог разбудить холодный Cloud Run.
-      return parsePdfViaCloudRun(filePath, originalName, attempt + 1);
+      return parseViaCloudRun(filePath, originalName, attempt + 1);
     }
     throw cleanError(err);
   }
@@ -122,21 +139,9 @@ async function parsePdfViaCloudRun(filePath, originalName, attempt = 1) {
  * @returns {Promise<{markdown:string, source:string, structure_confidence:'high'|'low'}>}
  */
 async function extractMarkdown(filePath, originalName) {
-  const ext = path.extname(originalName || filePath).toLowerCase();
   try {
-    if (ext === '.pdf') {
-      return await parsePdfViaCloudRun(filePath, originalName);
-    }
-    if (ext === '.docx') {
-      // mammoth локально: минимальный RAM, диск не нужен.
-      const { value } = await mammoth.convertToMarkdown({ path: filePath });
-      return { markdown: value, source: 'mammoth', structure_confidence: detectStructureConfidence(value) };
-    }
-    if (ext === '.txt' || ext === '.md') {
-      const text = await fs.promises.readFile(filePath, 'utf8');
-      return { markdown: text, source: 'txt', structure_confidence: detectStructureConfidence(text) };
-    }
-    throw new Error(`Неподдерживаемый тип файла: ${ext || '(нет расширения)'}`);
+    // Единый путь: ВСЕ форматы (.pdf/.docx/.txt/...) -> Cloud Run/Docling.
+    return await parseViaCloudRun(filePath, originalName);
   } finally {
     // ZDR: гарантированно удаляем временный файл сразу после обработки.
     fs.promises.unlink(filePath).catch(() => { /* файл мог не создаться — игнор */ });
@@ -146,5 +151,5 @@ async function extractMarkdown(filePath, originalName) {
 module.exports = {
   extractMarkdown,
   // экспортируем для unit-тестов / переиспользования
-  _internals: { detectStructureConfidence, isRetriableError, parsePdfViaCloudRun },
+  _internals: { detectStructureConfidence, isRetriableError, parseViaCloudRun },
 };

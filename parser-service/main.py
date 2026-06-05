@@ -2,7 +2,8 @@
 Miyzamchi 2.0 — Parser Microservice (IBM Docling)
 =================================================
 Приватный FastAPI-сервис для Google Cloud Run (2GB RAM).
-Принимает PDF, парсит ЕГО В ПАМЯТИ (Zero Data Retention) и отдаёт Markdown.
+Принимает ЛЮБОЙ документ (PDF/DOCX/TXT/...), парсит В ПАМЯТИ (Zero Data Retention)
+и отдаёт Markdown. Формат Docling определяет по расширению имени файла.
 
 АУТЕНТИФИКАЦИЯ:
     Сервис деплоится как `--no-allow-unauthenticated`. Валидацию OIDC ID-токена
@@ -63,9 +64,11 @@ def health() -> dict:
 
 
 def _convert_to_markdown(raw: bytes, filename: str) -> dict:
-    """Синхронный (CPU-bound) парсинг. Запускается в отдельном потоке."""
+    """Синхронный (CPU-bound) парсинг ЛЮБОГО формата (PDF/DOCX/TXT/...).
+    Docling определяет формат по расширению имени файла. Запускается в потоке."""
     assert _converter is not None, "Converter not initialized"
     # DocumentStream оборачивает байты в поток — Docling не трогает диск.
+    # name (с расширением) обязателен: по нему Docling выбирает бэкенд парсинга.
     source = DocumentStream(name=filename, stream=io.BytesIO(raw))
     result = _converter.convert(source)
     doc = result.document
@@ -98,10 +101,15 @@ async def parse(file: UploadFile = File(...)) -> JSONResponse:
             detail=f"File too large: {size} bytes (limit {MAX_FILE_BYTES})",
         )
 
+    # Имя файла обязательно: Docling по расширению (.pdf/.docx/.txt/...) выбирает
+    # парсер. Эндпоинт НЕ фильтрует по типу — принимает любой поддерживаемый формат.
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename required (для определения формата)")
+
     log.info("Parsing '%s' (%d bytes)...", file.filename, size)
     try:
         # Docling блокирует поток → уводим в threadpool, чтобы /health не вис.
-        payload = await asyncio.to_thread(_convert_to_markdown, raw, file.filename or "doc.pdf")
+        payload = await asyncio.to_thread(_convert_to_markdown, raw, file.filename)
     except Exception as exc:  # noqa: BLE001 — наружу отдаём чистую 422
         log.exception("Docling failed for '%s'", file.filename)
         raise HTTPException(status_code=422, detail=f"Parse error: {exc}") from exc

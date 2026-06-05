@@ -476,17 +476,28 @@ async function streamUploadDocument({documentText, onStep, onStatus, signal}){
    PR3: принимает опциональный sessionId — если он есть, бэкенд
    пропускает context+segment+triage (фоновый прогрев уже сделал их).
    ═════════════════════════════════════════════════════════════ */
-async function streamAnalyzeDocument({documentText, userQuery, sessionId, onStatus, onText, onSources, onMetadata, onConfidence, onStep, onTableRow, onPurityIndex, onTelemetry, onAgentSearch, signal}){
-  const url = BACKEND_URL + '/api/analyze-document';
-  console.log('[IDE Analyze] Sending to:', url, '| doc:', documentText?.length, 'ch | query:', (userQuery||'').slice(0,40), '| sessionId:', sessionId ? sessionId.slice(0,8) : 'none');
+async function streamAnalyzeDocument({documentText, userQuery, sessionId, file, onStatus, onText, onSources, onMetadata, onConfidence, onStep, onTableRow, onPurityIndex, onTelemetry, onAgentSearch, signal}){
+  // V2 (Stateful Multi-Agent RAG): /api/v2/analyze-document.
+  //   • Есть file (PDF/DOCX из вложения) → шлём ФИЗИЧЕСКИЙ файл multipart/form-data
+  //     → бэкенд V2 стримит его в Cloud Run/Docling (умный серверный парсинг).
+  //   • Нет file (печатный текст из TipTap-редактора / incognito) → fallback: JSON documentText.
+  const url = BACKEND_URL + '/api/v2/analyze-document';
+  let fetchOpts;
+  if (file) {
+    const fd = new FormData();
+    fd.append('file', file, file.name || 'document');
+    if (userQuery) fd.append('userQuery', userQuery);
+    if (sessionId) fd.append('sessionId', sessionId);
+    // Content-Type НЕ ставим вручную — браузер сам подставит boundary для multipart.
+    fetchOpts = { method:'POST', body: fd, signal };
+    console.log('[IDE Analyze] →', url, '| FILE:', file.name, `(${file.size} B)`, '| query:', (userQuery||'').slice(0,40));
+  } else {
+    fetchOpts = { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({documentText, userQuery, sessionId}), signal };
+    console.log('[IDE Analyze] →', url, '| TEXT:', documentText?.length, 'ch | query:', (userQuery||'').slice(0,40));
+  }
   let res;
   try{
-    res = await fetch(url, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({documentText, userQuery, sessionId}),
-      signal
-    });
+    res = await fetch(url, fetchOpts);
   }catch(fetchErr){
     throw new Error(`Fetch failed → ${url}\n${fetchErr.name}: ${fetchErr.message}`);
   }
@@ -962,6 +973,7 @@ const AnalyzeDocsMode = () => {
       if (mode === 'audit') {
         await streamAnalyzeDocument({
           documentText: slots[0].text,
+          file: slots[0].file || null,   // V2: физический файл слота → Cloud Run/Docling (fallback на текст)
           userQuery: 'Проведи полный юридический аудит документа',
           sessionId: null,
           signal: ac.signal,
@@ -7597,7 +7609,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
   const processAttFile=useCallback(async(file)=>{
     const id=++attachCounterRef.current;
     const isImage=file.type.startsWith('image/');
-    setAttachments(p=>[...p,{id,name:file.name,size:file.size,isImage,status:'loading'}]);
+    setAttachments(p=>[...p,{id,name:file.name,size:file.size,isImage,status:'loading',file}]);
     try{
       if(isImage){
         const dataUrl=await new Promise((res,rej)=>{
@@ -7963,7 +7975,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
   };
 
   // ── Document-Grounded Analysis client (pipeline /api/analyze-document) ──
-  const runAnalyzeDocumentSmart = async (documentText, userQuery, sessionId = null) => {
+  const runAnalyzeDocumentSmart = async (documentText, userQuery, sessionId = null, file = null) => {
     setThinking(true);
     startTiming();
     const ts = Date.now();
@@ -8004,6 +8016,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         documentText,
         userQuery,
         sessionId,                  // ⚡ PR3: если фоновый прогрев был — пропустит context+segment+triage
+        file,                       // V2: если есть физический файл — улетит multipart → Cloud Run/Docling
         signal: controller.signal,
         onStatus: (s) => {
           setStreamStatus(s);
@@ -8187,7 +8200,10 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
       setStick(true);
       setInp('');
       setAttachments([]);
-      runAnalyzeDocumentSmart(documentSource, userText, shadowSessionId);
+      // V2: в обычном режиме шлём ФИЗИЧЕСКИЙ файл вложения (→ Cloud Run/Docling).
+      // В incognito файл НЕ шлём (он не анонимизирован) — уходит анонимизированный текст.
+      const analyzeFile = (!incognito && largeAtt && largeAtt.file) ? largeAtt.file : null;
+      runAnalyzeDocumentSmart(documentSource, userText, shadowSessionId, analyzeFile);
       return;
     }
 
