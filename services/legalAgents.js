@@ -240,7 +240,15 @@ const JUDGE_SYS = `Ты — Старший партнёр юридической
   Международный пакт, Всеобщая декларация) — это НЕ ошибки. Вынеси их ОТДЕЛЬНОЙ секцией в конце
   "## ⚠️ Требуется ручная проверка": перечисли акт и пометь, что его нет в базе и нужна проверка юристом.
   НИКОГДА не помечай эти пункты как 🔴 ОШИБКА.
-- Если ошибок нет вообще — верни одну строку: "✅ Документ прошёл нормоконтроль. Существенных ошибок цитирования не выявлено."
+- ОБЯЗАТЕЛЬНАЯ финальная секция "## ✅ Подтвержденные нормы и утверждения" (данные из confirmed) —
+  показывает юристу проделанную работу. Выводи СПИСКОМ, каждый пункт с новой строки "- ":
+  • если есть npa И article → компактно: "- <npa>, ст. <article> — процитировано верно."
+    (пример: "- УК КР, ст. 191 — процитировано верно.")
+  • если article/npa отсутствуют → сделай КРАТКУЮ выжимку тезиса (до 5-7 слов) из поля thesis:
+    "- <выжимка> — верно по смыслу." (пример: "- Утверждение о сроках задержания — верно по смыслу.")
+  Не дублируй пункты. Если confirmed пуст — секцию опусти.
+- Если ошибок и ручной проверки нет (только confirmed) — начни с "✅ Существенных ошибок цитирования не выявлено.",
+  затем выведи секцию подтверждённых норм.
 
 ЗАПРЕТЫ: вода, общие рекомендации, упоминание фрагментов/индексов/технических деталей.`;
 
@@ -248,13 +256,24 @@ const JUDGE_SYS = `Ты — Старший партнёр юридической
 function groupByNpa(graph) {
   const byNpa = new Map();
   const blind = [];
+  const confirmed = [];
   for (const g of (graph || [])) {
     // Слепые зоны и международные акты «вне базы» → блок ручной проверки, НЕ ошибки.
     if (g.blind_spot || g.status === 'unverified' || g.status === 'out_of_base') { blind.push(g); continue; }
-    if (g.status !== 'error') continue;            // в отчёт Судье — только ошибки
-    const key = g.npa ? normalizeNpaName(g.npa) : 'Прочие нормы';
-    if (!byNpa.has(key)) byNpa.set(key, []);
-    byNpa.get(key).push(g);
+    if (g.status === 'error') {
+      const key = g.npa ? normalizeNpaName(g.npa) : 'Прочие нормы';
+      if (!byNpa.has(key)) byNpa.set(key, []);
+      byNpa.get(key).push(g);
+    } else if (g.status === 'correct' && (g.npa || g.article || (g.cited_articles && g.cited_articles.length))) {
+      // ✅ Верно: показываем юристу проделанную работу. Пустые boilerplate-чанки
+      // (без НПА/статьи/подтверждённых статей) НЕ включаем — чтобы не зашумлять отчёт.
+      confirmed.push({
+        npa: g.npa || null,
+        article: g.article || null,
+        cited_articles: g.cited_articles || [],
+        thesis: g.thesis || '',
+      });
+    }
   }
   const groups = Array.from(byNpa.entries()).map(([npaName, items]) => ({
     npa: npaName,
@@ -269,29 +288,29 @@ function groupByNpa(graph) {
     marker: b.marker || (b.status === 'out_of_base' ? '⚠️ Вне базы' : '⚠️ Слепая зона'),
     hint: b.detail || 'ссылка не подтверждена базой НПА — нужна ручная проверка',
   }));
-  return { groups, blind_spots };
+  return { groups, blind_spots, confirmed };
 }
 
 async function judge({ graph, effort }) {
-  const { groups, blind_spots } = groupByNpa(graph);
+  const { groups, blind_spots, confirmed } = groupByNpa(graph);
 
-  // Чистый документ — без вызова LLM (экономия).
-  if (groups.length === 0 && blind_spots.length === 0) {
+  // Совсем пустой граф — без вызова LLM (экономия).
+  if (groups.length === 0 && blind_spots.length === 0 && confirmed.length === 0) {
     return {
       summary: '✅ Документ прошёл нормоконтроль. Существенных ошибок цитирования не выявлено.',
-      model: 'skip', groups, blind_spots,
+      model: 'skip', groups, blind_spots, confirmed,
     };
   }
 
-  const userPrompt = `СТРУКТУРИРОВАННЫЙ ОТЧЁТ (сгруппирован по НПА):\n${JSON.stringify({ groups, blind_spots }, null, 2)}\n\nСформируй финальный отчёт по формату: группировка по НПА, короткие заголовки, дедуп.`;
+  const userPrompt = `СТРУКТУРИРОВАННЫЙ ОТЧЁТ (errors сгруппированы по НПА, плюс blind_spots и confirmed):\n${JSON.stringify({ groups, blind_spots, confirmed }, null, 2)}\n\nСформируй финальный отчёт по формату: ошибки по НПА, ручная проверка, и секция подтверждённых норм.`;
 
   try {
     const { text, model } = await clients.deepseekReason({
       systemPrompt: JUDGE_SYS, userPrompt, reasoning_effort: effort,
     });
-    return { summary: text, model, groups, blind_spots };
+    return { summary: text, model, groups, blind_spots, confirmed };
   } catch (err) {
-    return { summary: `Не удалось сформировать итог: ${err.message}`, model: 'error', groups, blind_spots };
+    return { summary: `Не удалось сформировать итог: ${err.message}`, model: 'error', groups, blind_spots, confirmed };
   }
 }
 

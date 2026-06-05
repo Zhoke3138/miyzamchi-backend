@@ -154,6 +154,8 @@ async function validateChunk(chunkText, index, state, deps) {
     cited_articles: Array.isArray(v.cited_articles) ? v.cited_articles : [],
     // Слепая зона ИЛИ международный акт «вне базы» → в блок ручной проверки.
     blind_spot: v.status === 'unverified' || v.status === 'out_of_base',
+    // Краткая формулировка сути фрагмента (для секции «✅ Подтверждённые», когда нет статьи).
+    thesis: String((queries && queries[0]) || '').slice(0, 200),
   };
 }
 
