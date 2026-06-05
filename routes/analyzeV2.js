@@ -152,7 +152,8 @@ async function validateChunk(chunkText, index, state, deps) {
     marker: v.marker,
     detail: v.detail || '',
     cited_articles: Array.isArray(v.cited_articles) ? v.cited_articles : [],
-    blind_spot: v.status === 'unverified',
+    // Слепая зона ИЛИ международный акт «вне базы» → в блок ручной проверки.
+    blind_spot: v.status === 'unverified' || v.status === 'out_of_base',
   };
 }
 
@@ -191,13 +192,14 @@ function computeMetrics(graph, N) {
 // Шаг thinking-box: correct→success, unverified→warning, error→error.
 function toStepStatus(status) {
   if (status === 'error') return 'error';
-  if (status === 'unverified') return 'warning';
+  if (status === 'unverified' || status === 'out_of_base') return 'warning';
   return 'success';
 }
 
-// Строка таблицы результатов. Статус UI: error→critical, unverified→warning, correct→ok.
+// Строка таблицы результатов. Статус UI: error→critical, unverified/out_of_base→warning, correct→ok.
 function verdictToRow(v) {
-  const uiStatus = v.status === 'error' ? 'critical' : v.status === 'unverified' ? 'warning' : 'ok';
+  const uiStatus = v.status === 'error' ? 'critical'
+    : (v.status === 'unverified' || v.status === 'out_of_base') ? 'warning' : 'ok';
   const ref = [v.npa, v.article ? `ст.${v.article}` : ''].filter(Boolean).join(', ');
   return {
     item_number: ref ? `Фрагмент ${v.index + 1} (${ref})` : `Фрагмент ${v.index + 1}`,

@@ -12,7 +12,7 @@
  */
 
 const clients = require('./llmClients');
-const { normalizeNpaName } = require('../lib/npaAliases');
+const { normalizeNpaName, getDbExactName } = require('../lib/npaAliases');
 
 // ── Безопасный парс JSON (Gemini иногда оборачивает в ```json ... ```) ─────
 function safeJson(text, fallback) {
@@ -104,9 +104,10 @@ async function expandQuery(chunkText) {
 // Pinecone search — ЖЁСТКАЯ привязка к НПА (фильтр) + soft-fallback
 // ═══════════════════════════════════════════════════════════════════════
 async function pineconeSearch(queries, npa = null, topKPerQuery = 6) {
-  // Нормализуем извлечённое имя НПА в каноническую форму (npaAliases).
-  const canonical = npa ? normalizeNpaName(npa) : null;
-  const filter = canonical ? { npa_title: { $eq: canonical } } : null;
+  // ТОЧНАЯ строка npa_title из базы (а не короткая каноническая) — иначе $eq не сматчит.
+  // Если точная строка неизвестна → exact=null → фильтр не ставим (чистый вектор).
+  const exact = npa ? getDbExactName(npa) : null;
+  const filter = exact ? { npa_title: { $eq: exact } } : null;
 
   // Один прогон по всем запросам (с фильтром или без), merge по id с max score.
   async function run(useFilter) {
@@ -129,16 +130,16 @@ async function pineconeSearch(queries, npa = null, topKPerQuery = 6) {
 
   let hits = await run(!!filter);
 
-  // Soft-fallback: фильтр дал 0 (имя НПА в базе может быть в другом формате) → чистый вектор.
+  // Soft-fallback: фильтр дал 0 (точная строка всё ещё не совпала) → чистый вектор.
   if (filter && hits.length === 0) {
-    console.warn(`[Pinecone] фильтр npa_title="${canonical}" → 0 результатов, fallback на чистый семантический поиск`);
+    console.warn(`[Pinecone] фильтр npa_title="${exact}" → 0 результатов, fallback на чистый семантический поиск`);
     hits = await run(false);
   }
 
-  // DEBUG (временно): сверяем формат npa_title в базе с тем, что даёт npaAliases.
+  // DEBUG (временно): сверяем формат npa_title в базе с тем, что мы ищем.
   if (hits.length) {
     console.log('[Pinecone DEBUG] npa_title[0] в базе =', JSON.stringify(hits[0].metadata && hits[0].metadata.npa_title),
-      '| искали (canonical) =', JSON.stringify(canonical));
+      '| искали (exact) =', JSON.stringify(exact), '| npa(raw) =', JSON.stringify(npa));
   }
 
   // «Сырые» hits; двухступенчатый score-фильтр применит роут (twoStagePineconeFilter).
@@ -154,9 +155,9 @@ const VALIDATOR_SYS = `Ты — инспектор нормоконтроля п
 номера статей, номера частей/пунктов и сами формулировки нормы.
 
 Верни СТРОГО JSON:
-{ "status": "correct" | "error",
-  "marker": "✅ Верно" | "🔴 ОШИБКА",
-  "detail": "<если error: что именно не так и как исправить; если correct: пусто>",
+{ "status": "correct" | "error" | "out_of_base",
+  "marker": "✅ Верно" | "🔴 ОШИБКА" | "⚠️ Вне базы",
+  "detail": "<если error: что не так и как исправить; если out_of_base: название акта; если correct: пусто>",
   "cited_articles": ["<НПА, ст.N из эталона>"] }
 
 ЖЕЛЕЗНЫЕ ПРАВИЛА:
@@ -166,7 +167,12 @@ const VALIDATOR_SYS = `Ты — инспектор нормоконтроля п
 3. detail при ошибке — чётко: «указано X, верно Y» + как исправить.
 4. Если цитирование точное — status:"correct", marker:"✅ Верно", detail пустой.
 5. cited_articles — только статьи из предоставленного эталона.
-6. Без markdown — только JSON.`;
+6. МЕЖДУНАРОДНЫЕ АКТЫ: если в тексте ссылка на международный акт (например «Конвенция ООН»,
+   «Международный пакт», «Всеобщая декларация»), которого НЕТ в эталонном тексте из базы —
+   это НЕ ошибка. Верни status:"out_of_base", marker:"⚠️ Вне базы",
+   detail:"Международный акт (<название>). Требуется ручная проверка юриста".
+   НИКОГДА не помечай отсутствие международного акта в базе как 🔴 ОШИБКА.
+7. Без markdown — только JSON.`;
 
 function renderArticles(articles) {
   if (!articles || !articles.length) return '(релевантных статей из базы не найдено)';
@@ -199,10 +205,15 @@ async function validate({ chunkText, ctx, articles, npa, article }) {
     });
     const parsed = safeJson(raw, null);
     if (!parsed || !parsed.status) return ok;
-    const status = parsed.status === 'error' ? 'error' : 'correct';
+    const status = parsed.status === 'error' ? 'error'
+      : parsed.status === 'out_of_base' ? 'out_of_base'
+        : 'correct';
+    const marker = status === 'error' ? '🔴 ОШИБКА'
+      : status === 'out_of_base' ? '⚠️ Вне базы'
+        : '✅ Верно';
     return {
       status,
-      marker: status === 'error' ? '🔴 ОШИБКА' : '✅ Верно',
+      marker,
       detail: typeof parsed.detail === 'string' ? parsed.detail : '',
       cited_articles: Array.isArray(parsed.cited_articles) ? parsed.cited_articles : [],
     };
@@ -225,7 +236,10 @@ const JUDGE_SYS = `Ты — Старший партнёр юридической
 - Для каждого пункта сделай КОРОТКИЙ осмысленный заголовок (до 5-7 слов) жирным, затем суть и как исправить.
 - Убери ДУБЛИРУЮЩИЕСЯ ошибки (одна и та же ошибка из разных фрагментов — один пункт).
 - Не выдумывай новых ошибок и номеров статей — опирайся ТОЛЬКО на отчёт.
-- Если есть «Слепые зоны» — вынеси их в конце секцией "## ⚠️ Требует ручной проверки" (маркер ⚠️).
+- Блок blind_spots (маркеры ⚠️ Слепая зона / ⚠️ Вне базы, в т.ч. международные акты — Конвенция ООН,
+  Международный пакт, Всеобщая декларация) — это НЕ ошибки. Вынеси их ОТДЕЛЬНОЙ секцией в конце
+  "## ⚠️ Требуется ручная проверка": перечисли акт и пометь, что его нет в базе и нужна проверка юристом.
+  НИКОГДА не помечай эти пункты как 🔴 ОШИБКА.
 - Если ошибок нет вообще — верни одну строку: "✅ Документ прошёл нормоконтроль. Существенных ошибок цитирования не выявлено."
 
 ЗАПРЕТЫ: вода, общие рекомендации, упоминание фрагментов/индексов/технических деталей.`;
@@ -235,7 +249,8 @@ function groupByNpa(graph) {
   const byNpa = new Map();
   const blind = [];
   for (const g of (graph || [])) {
-    if (g.blind_spot || g.status === 'unverified') { blind.push(g); continue; }
+    // Слепые зоны и международные акты «вне базы» → блок ручной проверки, НЕ ошибки.
+    if (g.blind_spot || g.status === 'unverified' || g.status === 'out_of_base') { blind.push(g); continue; }
     if (g.status !== 'error') continue;            // в отчёт Судье — только ошибки
     const key = g.npa ? normalizeNpaName(g.npa) : 'Прочие нормы';
     if (!byNpa.has(key)) byNpa.set(key, []);
@@ -251,7 +266,8 @@ function groupByNpa(graph) {
   }));
   const blind_spots = blind.map((b) => ({
     npa: b.npa || null, article: b.article || null,
-    hint: b.detail || 'ссылка не подтверждена базой НПА',
+    marker: b.marker || (b.status === 'out_of_base' ? '⚠️ Вне базы' : '⚠️ Слепая зона'),
+    hint: b.detail || 'ссылка не подтверждена базой НПА — нужна ручная проверка',
   }));
   return { groups, blind_spots };
 }
