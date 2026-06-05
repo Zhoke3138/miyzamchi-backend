@@ -113,35 +113,46 @@ function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 /**
- * Валидация одного чанка. [INTEGRATE]:
- *   1) Query Expansion (3-4 синонима) — deps.expandQuery
- *   2) Pinecone двухступенчатый фильтр (abs >=0.70, хвост >= maxScore-0.15) — deps.pineconeSearch
- *   3) Строгий Валидатор gemini-3.1-flash-lite -> { verdict, reason, cited_articles }
+ * Map-шаг: проверка одного чанка.
+ *   1) Agent 1 (expandQuery) -> { npa, article, queries } за 1 вызов
+ *   2) Поиск с жёсткой привязкой к НПА (soft-fallback) + score-фильтр
+ *   3) Agent 2 (validate, нормоконтроль) -> { status, marker, detail, cited_articles }
  *
- * Blind Spot: риск есть, но релевантных статей нет -> cited_articles = [].
+ * Вердикт-словарь: 'correct' (✅) | 'error' (🔴) | 'unverified' (⚠️ Слепая зона).
  */
 async function validateChunk(chunkText, index, state, deps) {
   const ctx = buildInjectedContext(chunkText, state);
 
-  // [INTEGRATE] поиск законов
-  const queries = (await deps.expandQuery?.(chunkText)) || [chunkText];
-  const hits = (await deps.pineconeSearch?.(queries)) || [];
+  // Agent 1: НПА + статья + синонимы.
+  const ex = (await deps.expandQuery?.(chunkText)) || { npa: null, article: null, queries: [chunkText] };
+  const queries = (Array.isArray(ex.queries) && ex.queries.length) ? ex.queries : [chunkText];
+
+  // Поиск с привязкой к НПА (фильтр внутри pineconeSearch) + двухступенчатый score-фильтр.
+  const hits = (await deps.pineconeSearch?.(queries, ex.npa)) || [];
   const articles = twoStagePineconeFilter(hits);
 
-  // [INTEGRATE] строгий валидатор -> строгий JSON
-  const verdict = (await deps.validate?.({ chunkText, ctx, articles })) || {
-    verdict: 'clean', reason: '', cited_articles: [],
-  };
+  let v;
+  if (articles.length === 0 && (ex.npa || ex.article)) {
+    // Ссылка заявлена, но эталона в базе нет → Слепая зона (ручная проверка).
+    v = { status: 'unverified', marker: '⚠️ Слепая зона', detail: 'Ссылка не подтверждена базой НПА — нужна ручная проверка', cited_articles: [] };
+  } else if (articles.length === 0) {
+    // Ни ссылки, ни эталона — проверять нечего.
+    v = { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
+  } else {
+    // Agent 2: нормоконтроль по эталону.
+    v = (await deps.validate?.({ chunkText, ctx, articles, npa: ex.npa, article: ex.article })) ||
+        { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
+  }
 
-  // Контракт ТЗ 3.4: риск есть, статей нет -> пустой массив (Blind Spot)
-  const citedArticles = Array.isArray(verdict.cited_articles) ? verdict.cited_articles : [];
-  const isRisk = verdict.verdict === 'critical' || verdict.verdict === 'warning';
   return {
     index,
-    verdict: verdict.verdict,
-    reason: verdict.reason || '',
-    cited_articles: citedArticles,
-    blind_spot: isRisk && citedArticles.length === 0,
+    npa: ex.npa || null,
+    article: ex.article || null,
+    status: v.status,
+    marker: v.marker,
+    detail: v.detail || '',
+    cited_articles: Array.isArray(v.cited_articles) ? v.cited_articles : [],
+    blind_spot: v.status === 'unverified',
   };
 }
 
@@ -161,40 +172,42 @@ function twoStagePineconeFilter(hits, absThreshold = 0.70, tail = 0.15) {
  * Динамический reasoning_effort (ТЗ 4.1).
  * High — порядок проверки первым, т.к. перекрывает остальные.
  */
-function pickReasoningEffort({ N, criticalCount, warningCount, blindSpotCount }) {
+function pickReasoningEffort({ N, errorCount, blindSpotCount }) {
   const blindRatio = N ? blindSpotCount / N : 0;
   if (N > 100 || blindRatio > 0.3) return 'high';
-  if (N < 15 && criticalCount === 0 && blindSpotCount === 0) return 'low';
-  if (warningCount > 0 || criticalCount > 0) return 'medium';
+  if (errorCount > 0) return 'medium';
   return 'low';
 }
 
-/** Метрики (ТЗ 4.3): confidenceScore = 1 - Слепые/N; purityIndex = 1 - Риски/N. */
+/** Метрики: confidenceScore = 1 - Слепые/N; purityIndex = 1 - Ошибки/N. */
 function computeMetrics(graph, N) {
   const blind = graph.filter((g) => g.blind_spot).length;
-  const risks = graph.filter((g) => g.verdict === 'critical' || g.verdict === 'warning').length;
+  const errors = graph.filter((g) => g.status === 'error').length;
   const safeDiv = (x) => (N ? +(1 - x / N).toFixed(3) : 1);
-  return { confidenceScore: safeDiv(blind), purityIndex: safeDiv(risks), blindSpots: blind, risks };
+  return { confidenceScore: safeDiv(blind), purityIndex: safeDiv(errors), blindSpots: blind, errors };
 }
 
 // ── Маппинг вердикта в формат фронта (SSE-контракт прода) ──────────────────
-// Статус шага thinking-box: clean→success, warning→warning, critical→error.
-function toStepStatus(verdict) {
-  return verdict === 'critical' ? 'error' : verdict === 'warning' ? 'warning' : 'success';
+// Шаг thinking-box: correct→success, unverified→warning, error→error.
+function toStepStatus(status) {
+  if (status === 'error') return 'error';
+  if (status === 'unverified') return 'warning';
+  return 'success';
 }
 
-// Строка таблицы результатов. Статус: clean→ok, иначе сам verdict.
+// Строка таблицы результатов. Статус UI: error→critical, unverified→warning, correct→ok.
 function verdictToRow(v) {
-  const isClean = v.verdict === 'clean';
+  const uiStatus = v.status === 'error' ? 'critical' : v.status === 'unverified' ? 'warning' : 'ok';
+  const ref = [v.npa, v.article ? `ст.${v.article}` : ''].filter(Boolean).join(', ');
   return {
-    item_number: `Фрагмент ${v.index + 1}`,
-    short_verdict: isClean ? '✅ Без рисков' : (v.reason ? v.reason.slice(0, 140) : 'Выявлен риск'),
-    status: isClean ? 'ok' : v.verdict,
+    item_number: ref ? `Фрагмент ${v.index + 1} (${ref})` : `Фрагмент ${v.index + 1}`,
+    short_verdict: `${v.marker || ''}${v.detail ? ': ' + v.detail.slice(0, 140) : ''}`.trim(),
+    status: uiStatus,
     confidence: null,
-    legal_rationale: v.reason || '',
+    legal_rationale: v.detail || '',
     applicable_articles: v.cited_articles || [],
     law_refs: v.cited_articles || [],
-    // V2-расширение: пометка Слепой зоны (риск без подтверждённой статьи).
+    // Пометка Слепой зоны (ссылка не подтверждена базой).
     triage: v.blind_spot ? 'blind_spot' : undefined,
   };
 }
@@ -265,9 +278,9 @@ function createAnalyzeV2Router(deps = {}) {
           // fastest-first: строка таблицы и шаг уходят сразу, не дожидаясь волны.
           step({
             id: `seg_${idx}`,
-            status: toStepStatus(v.verdict),
+            status: toStepStatus(v.status),
             text: `Фрагмент ${idx + 1}`,
-            reason: v.reason ? v.reason.slice(0, 80) : (v.verdict === 'clean' ? '✅ Без рисков' : ''),
+            reason: v.detail ? v.detail.slice(0, 80) : (v.marker || ''),
           });
           sse({ tableRow: verdictToRow(v) });
           return v;
@@ -276,14 +289,13 @@ function createAnalyzeV2Router(deps = {}) {
       const graph = settled.filter((s) => s.status === 'fulfilled').map((s) => s.value);
       step({ id: 'validate', status: 'success', text: `Проверено фрагментов: ${graph.length}` });
 
-      // ── ФАЗА 3: Judgment ─────────────────────────────────────────────
-      const criticalCount = graph.filter((g) => g.verdict === 'critical').length;
-      const warningCount = graph.filter((g) => g.verdict === 'warning').length;
+      // ── ФАЗА 3: Reduce (Final Judge) ─────────────────────────────────
+      const errorCount = graph.filter((g) => g.status === 'error').length;
       const blindSpotCount = graph.filter((g) => g.blind_spot).length;
-      const effort = pickReasoningEffort({ N: state.N, criticalCount, warningCount, blindSpotCount });
+      const effort = pickReasoningEffort({ N: state.N, errorCount, blindSpotCount });
 
-      // purityIndex в формате прода: доля непроблемных пунктов, 0-100.
-      const purityIndex = state.N ? Math.round(((state.N - criticalCount) / state.N) * 100) : 100;
+      // purityIndex: доля пунктов без ошибок цитирования, 0-100.
+      const purityIndex = state.N ? Math.round(((state.N - errorCount) / state.N) * 100) : 100;
       sse({ purityIndex });
 
       step({ id: 'judge', status: 'loading', text: `🧠 Финальный судья (effort=${effort})` });
@@ -293,11 +305,11 @@ function createAnalyzeV2Router(deps = {}) {
       // Текст судьи (markdown, 2 секции) — фронт рендерит как основной отчёт.
       if (report.summary) sse({ text: report.summary });
 
-      // Executive Summary card.
-      const risks = graph.filter((g) => g.verdict === 'critical' || g.verdict === 'warning');
+      // Executive Summary card (ошибки + слепые зоны).
+      const risks = graph.filter((g) => g.status === 'error' || g.blind_spot);
       const topRisks = risks.slice(0, 3).map((r) => ({
-        id: `Фрагмент ${r.index + 1}`,
-        title: (r.reason || '').slice(0, 120),
+        id: [r.npa, r.article ? `ст.${r.article}` : ''].filter(Boolean).join(', ') || `Фрагмент ${r.index + 1}`,
+        title: (r.detail || r.marker || '').slice(0, 120),
         confidence: 50,
       }));
       sse({

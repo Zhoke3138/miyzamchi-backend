@@ -58,15 +58,18 @@ async function getEmbedding(text) {
 const PINECONE_HOST = (process.env.PINECONE_HOST || '').replace(/\/+$/, '');
 const PINECONE_API_KEY = process.env.PINECONE_API_KEY;
 
-async function queryPinecone(vector, topK = 15) {
+async function queryPinecone(vector, topK = 15, filter = null) {
   if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error('PINECONE_HOST/PINECONE_API_KEY не заданы');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 4000);
   try {
+    const body = { vector, topK, includeMetadata: true };
+    // Жёсткая привязка к НПА: метаданный фильтр Pinecone (напр. { npa_title: { $eq } }).
+    if (filter) body.filter = filter;
     const res = await fetch(`${PINECONE_HOST}/query`, {
       method: 'POST',
       headers: { 'Api-Key': PINECONE_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vector, topK, includeMetadata: true }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     const data = await res.json();
