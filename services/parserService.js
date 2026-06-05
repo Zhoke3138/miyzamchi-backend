@@ -43,16 +43,47 @@ const MIME_BY_EXT = {
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 };
 
+// --- Безопасная загрузка service-account ключа из env ----------------------
+// На Render значение многострочного JSON часто приходит «битым»: либо обёрнуто
+// внешними кавычками, либо переносы в private_key экранированы как '\\n' (2 символа)
+// вместо реальных \n — тогда RSA-подпись OIDC-токена невалидна и Cloud Run даёт 403.
+function loadServiceAccount() {
+  const raw = process.env.GCP_SA_KEY_JSON;
+  if (!raw) throw new Error('GCP_SA_KEY_JSON не задан в env');
+
+  let creds;
+  try {
+    creds = JSON.parse(raw);
+  } catch (e1) {
+    // Мягкая чистка: снимаем внешние кавычки и пробуем снова.
+    try {
+      const cleaned = raw.trim().replace(/^['"]+|['"]+$/g, '');
+      creds = JSON.parse(cleaned);
+      console.warn('[ParserAuth] GCP_SA_KEY_JSON распарсен после снятия внешних кавычек');
+    } catch (e2) {
+      console.error('[ParserAuth] JSON.parse(GCP_SA_KEY_JSON) FAILED:', e1.message);
+      throw new Error(`GCP_SA_KEY_JSON: невалидный JSON (${e1.message})`);
+    }
+  }
+
+  // КРИТИЧНО: нормализуем экранированные переносы в private_key (Render-классика).
+  if (creds && typeof creds.private_key === 'string' && creds.private_key.includes('\\n')) {
+    creds.private_key = creds.private_key.replace(/\\n/g, '\n');
+    console.log('[ParserAuth] private_key: нормализовал экранированные \\n → реальные переносы');
+  }
+  return creds;
+}
+
 // --- OIDC ID-token client (ленивый синглтон) ------------------------------
 let _idTokenClientPromise = null;
 
 function getIdTokenClient(audience) {
   if (!_idTokenClientPromise) {
-    if (!process.env.GCP_SA_KEY_JSON) {
-      throw new Error('GCP_SA_KEY_JSON не задан — нечем подписать запрос к Cloud Run');
-    }
-    const credentials = JSON.parse(process.env.GCP_SA_KEY_JSON);
+    const credentials = loadServiceAccount();
+    console.log('[ParserAuth] SA-ключ распарсен УСПЕШНО | client_email:',
+      credentials.client_email, '| audience:', audience);
     const auth = new GoogleAuth({ credentials });
+    // targetAudience = базовый URL сервиса (без /parse) — иначе токен невалиден.
     _idTokenClientPromise = auth.getIdTokenClient(audience);
   }
   return _idTokenClientPromise;
@@ -60,8 +91,22 @@ function getIdTokenClient(audience) {
 
 async function buildAuthHeaders(audience) {
   const client = await getIdTokenClient(audience);
-  // getRequestHeaders вернёт { Authorization: 'Bearer <id_token>' }
-  return client.getRequestHeaders(audience);
+  // ФИКС 403: в google-auth-library v10 getRequestHeaders() возвращает fetch-style
+  // Headers (НЕ plain object). Старый код делал `{ ...authHeaders }` — спред Headers
+  // даёт {} → Authorization терялся, Cloud Run видел запрос без токена → 403.
+  // Берём заголовок корректно через Headers.get() (работает и для v9 plain-object).
+  const h = await client.getRequestHeaders(audience);
+  let authorization;
+  if (h && typeof h.get === 'function') {
+    authorization = h.get('authorization') || h.get('Authorization'); // v10 Headers
+  } else if (h) {
+    authorization = h.Authorization || h.authorization;                // v9 plain object
+  }
+  if (!authorization) throw new Error('OIDC Authorization пуст (getRequestHeaders не вернул токен)');
+
+  const token = String(authorization).replace(/^Bearer\s+/i, '');
+  console.log('[ParserAuth] idToken получен:', token.substring(0, 10) + '...');
+  return { Authorization: `Bearer ${token}` };
 }
 
 // --- Вспомогательное -------------------------------------------------------
@@ -92,8 +137,12 @@ function cleanError(err) {
 async function parseViaCloudRun(filePath, originalName, attempt = 1) {
   const base = process.env.PARSER_SERVICE_URL;
   if (!base) throw new Error('PARSER_SERVICE_URL не задан');
-  const audience = base.replace(/\/+$/, '');
+  const audience = base.replace(/\/+$/, '');   // базовый URL без хвостовых слешей и /parse
   const endpoint = `${audience}/parse`;
+
+  // Диагностика: видно, нет ли лишних слешей / неверного URL.
+  console.log('[Parser] PARSER_SERVICE_URL=', JSON.stringify(base),
+    '| audience=', audience, '| endpoint=', endpoint, '| attempt=', attempt);
 
   const ext = path.extname(originalName || filePath).toLowerCase();
   const contentType = MIME_BY_EXT[ext] || 'application/octet-stream';
@@ -121,6 +170,12 @@ async function parseViaCloudRun(filePath, originalName, attempt = 1) {
       structure_confidence: detectStructureConfidence(markdown),
     };
   } catch (err) {
+    // Полные детали ошибки авторизации/запроса (403 обычно несёт тело от IAM Cloud Run).
+    const status = err.response && err.response.status;
+    const data = err.response && err.response.data;
+    console.error('[Parser] Cloud Run FAILED:', status || err.code || '(no status)',
+      '| data:', data ? JSON.stringify(data).slice(0, 600) : (err.message || ''));
+
     if (attempt === 1 && isRetriableError(err)) {
       // Один «прогревочный» ретрай: первый запрос мог разбудить холодный Cloud Run.
       return parseViaCloudRun(filePath, originalName, attempt + 1);
