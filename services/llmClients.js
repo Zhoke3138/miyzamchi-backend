@@ -108,35 +108,44 @@ const _deepseek = DEEPSEEK_ENABLED
   ? new OpenAI({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com' })
   : null;
 
-// effort -> бюджет вывода (реальный рычаг; reasoning_effort пробрасываем как hint,
-// OpenAI SDK форвардит неизвестные поля — DeepSeek учтёт либо проигнорирует).
-const EFFORT_MAX_TOKENS = { low: 1500, medium: 3000, high: 6000 };
-
-async function deepseekReason({ systemPrompt, userPrompt, reasoning_effort = 'medium' }) {
-  const maxTokens = EFFORT_MAX_TOKENS[reasoning_effort] || EFFORT_MAX_TOKENS.medium;
+// Финальный Судья = deepseek-v4-pro с Chain-of-Thought (reasoning).
+// Правила API (deepseek-v4-pro):
+//   • temperature/top_p/presence_penalty/frequency_penalty — НЕ поддерживаются (не передаём);
+//   • reasoning_effort — только 'high' | 'max';
+//   • включение рассуждений: { thinking: { type: 'enabled' } };
+//   • max_tokens большой (32000).
+// Примечание (Node openai SDK): в Python это extra_body={...}. В Node SDK неизвестные
+// поля кладутся ПРЯМО в тело запроса (проверено в server.js), поэтому thinking и
+// reasoning_effort передаём верхним уровнем — они доходят до DeepSeek as-is.
+async function deepseekReason({ systemPrompt, userPrompt, reasoning_effort = 'high' }) {
+  const effort = reasoning_effort === 'max' ? 'max' : 'high';   // допустимы только high|max
 
   if (!_deepseek) {
-    // Прозрачный fallback на Gemini 2.5 Flash, если DeepSeek не настроен.
+    // Прозрачный fallback на Gemini 2.5 Flash, если DEEPSEEK_API_KEY не задан.
     const text = await geminiJson({
       systemPrompt, userPrompt, model: 'gemini-2.5-flash',
-      maxOutputTokens: maxTokens, timeoutMs: 30000,
+      maxOutputTokens: 8192, timeoutMs: 45000,
     });
     return { text, model: 'gemini-2.5-flash(fallback)' };
   }
 
   const completion = await _deepseek.chat.completions.create({
-    model: 'deepseek-reasoner',
-    reasoning_effort,            // пробрасывается как есть (см. коммент выше)
-    max_tokens: maxTokens,
+    model: 'deepseek-v4-pro',
+    reasoning_effort: effort,
+    max_tokens: 32000,
+    thinking: { type: 'enabled' },   // Node-эквивалент Python extra_body
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
   });
-  return {
-    text: completion.choices?.[0]?.message?.content || '',
-    model: 'deepseek-reasoner',
-  };
+
+  const msg = (completion.choices && completion.choices[0] && completion.choices[0].message) || {};
+  // Лог цепочки рассуждений (если модель вернула reasoning_content).
+  if (msg.reasoning_content) {
+    console.log('[DeepSeek DEBUG] reasoning_content:', String(msg.reasoning_content).slice(0, 1500));
+  }
+  return { text: msg.content || '', model: 'deepseek-v4-pro' };
 }
 
 module.exports = {

@@ -18,6 +18,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const { runInWaves } = require('../lib/waveThrottle');
+const { normalizeNpaName } = require('../lib/npaAliases');
 
 // Загрузка во ВРЕМЕННЫЙ файл с уникальным именем (ZDR-friendly: parserService удалит).
 // multer/express подключаются ЛЕНИВО внутри фабрики — чтобы импорт чистых функций
@@ -159,8 +160,9 @@ async function validateChunk(chunkText, index, state, deps) {
   };
 }
 
-/** Двухступенчатый фильтр Pinecone (ТЗ 3.3). */
-function twoStagePineconeFilter(hits, absThreshold = 0.70, tail = 0.15) {
+/** Двухступенчатый фильтр Pinecone. Пороги смягчены (защита от False Positives:
+ *  ниже порог + шире хвост → в эталон попадают соседние абзацы/продолжение нормы). */
+function twoStagePineconeFilter(hits, absThreshold = 0.65, tail = 0.25) {
   if (!hits.length) return [];
   const stage1 = hits.filter((h) => h.score >= absThreshold);
   if (!stage1.length) return [];
@@ -175,11 +177,11 @@ function twoStagePineconeFilter(hits, absThreshold = 0.70, tail = 0.15) {
  * Динамический reasoning_effort (ТЗ 4.1).
  * High — порядок проверки первым, т.к. перекрывает остальные.
  */
-function pickReasoningEffort({ N, errorCount, blindSpotCount }) {
-  const blindRatio = N ? blindSpotCount / N : 0;
-  if (N > 100 || blindRatio > 0.3) return 'high';
-  if (errorCount > 0) return 'medium';
-  return 'low';
+// deepseek-v4-pro принимает только 'high' | 'max'. Динамика сложности:
+// >3 ошибок/слепых зон суммарно ИЛИ >2 разных НПА → 'max', иначе 'high'.
+function pickReasoningEffort({ errorCount = 0, blindSpotCount = 0, distinctNpaCount = 0 }) {
+  if ((errorCount + blindSpotCount) > 3 || distinctNpaCount > 2) return 'max';
+  return 'high';
 }
 
 /** Метрики: confidenceScore = 1 - Слепые/N; purityIndex = 1 - Ошибки/N. */
@@ -296,13 +298,17 @@ function createAnalyzeV2Router(deps = {}) {
       // ── ФАЗА 3: Reduce (Final Judge) ─────────────────────────────────
       const errorCount = graph.filter((g) => g.status === 'error').length;
       const blindSpotCount = graph.filter((g) => g.blind_spot).length;
-      const effort = pickReasoningEffort({ N: state.N, errorCount, blindSpotCount });
+      // Сколько РАЗНЫХ НПА затронуто ошибками (нормализуем имена, чтобы не задвоить).
+      const distinctNpaCount = new Set(
+        graph.filter((g) => g.status === 'error' && g.npa).map((g) => normalizeNpaName(g.npa)),
+      ).size;
+      const effort = pickReasoningEffort({ errorCount, blindSpotCount, distinctNpaCount });
 
       // purityIndex: доля пунктов без ошибок цитирования, 0-100.
       const purityIndex = state.N ? Math.round(((state.N - errorCount) / state.N) * 100) : 100;
       sse({ purityIndex });
 
-      step({ id: 'judge', status: 'loading', text: `🧠 Финальный судья (effort=${effort})` });
+      step({ id: 'judge', status: 'loading', text: `🧠 Финальный судья (DeepSeek-v4-pro, effort=${effort})` });
       const report = (await resolvedDeps.judge?.({ graph, effort, state })) || { summary: '', risks: graph };
       step({ id: 'judge', status: 'success', text: 'Итоговый отчёт готов' });
 
