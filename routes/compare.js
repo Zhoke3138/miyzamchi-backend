@@ -19,7 +19,7 @@
 const express = require('express');
 // Гибридный аудит: пословный diff/redline + переиспользование Agent 2 (нормоконтроль).
 // compareService самодостаточен (diff + legalAgents/llmClients/env), server.js не трогаем.
-const { classifyChange, legalAudit, segmentForCompare } = require('../services/compareService');
+const { classifyChange, legalAudit, segmentForCompare, extractContractContext } = require('../services/compareService');
 
 // ── ПАРАМЕТРЫ ───────────────────────────────────────────────────────
 const ALIGN_THRESHOLD     = 0.78;     // мин. cos-сходство для пары
@@ -124,6 +124,30 @@ function cosineSim(a, b) {
 // Для каждого старого пункта ищем НАИБОЛЕЕ похожий новый из ещё не занятых.
 // Не-сматчившиеся: старые → "удалено", новые → "добавлено".
 function alignSegments(oldSegs, newSegs) {
+    // ── ЖЁСТКИЙ ФОЛБЭК 1-в-1 по индексу (Проблема 1) ────────────────
+    // Сегментация теперь детерминированная: если число сегментов совпадает,
+    // структура почти наверняка идентична (правки «на месте»). Спариваем
+    // строго 0↔0, 1↔1, …, ИГНОРИРУЯ порог 0.78 — иначе сильно изменённый
+    // пункт распадается на ложные removed+added. Гарантируем ровно N пар.
+    if (oldSegs.length > 0 && oldSegs.length === newSegs.length) {
+        let scoreSum = 0;
+        const paired = oldSegs.map((o, i) => {
+            const n = newSegs[i];
+            const score = cosineSim(o._vec, n._vec);
+            scoreSum += score;
+            return {
+                oldId: o.id, oldNumber: o.number, oldHeading: o.heading, oldText: o.text,
+                newId: n.id, newNumber: n.number, newHeading: n.heading, newText: n.text,
+                alignScore: Number(score.toFixed(3)),
+                forcedByIndex: true
+            };
+        });
+        // Диагностика: средний cos подскажет, если структуры всё же разъехались
+        // (массовая перестановка пунктов — редкий кейс, виден по низкому среднему).
+        console.log(`[compare] ALIGN 1-в-1 по индексу: ${paired.length} пар, средний cos=${(scoreSum / paired.length).toFixed(3)}`);
+        return paired;
+    }
+
     const usedNew = new Set();
     const pairs = [];
 
@@ -364,18 +388,32 @@ ${JSON.stringify(input, null, 2)}
                 // Один LLM-вызов на НОВОЙ редакции (она каноничная — то, что подписывают).
                 // Контекст инжектируется и в сегментаторы (лучшие заголовки), и
                 // в каждый воркер (правильная отраслевая интерпретация).
-                sendStep(res, { id: 'context', status: 'loading', text: 'Определяю тип и отрасль документа' });
+                sendStep(res, { id: 'context', status: 'loading', text: 'Определяю тип, отрасль и применимое право' });
                 sendStatus(res, '🧭 Определяю контекст документа...');
+                // Параллельно: паспорт документа (для воркеров) + применимое право
+                // (для роутинга юр-поиска). contractCtx считается по СТАРОЙ редакции —
+                // это чистый эталон, по нему точнее определяются регулирующие НПА.
                 let docContext = null;
-                try { docContext = await extractDocumentContext(newDocumentText); } catch (e) {
-                    log.warn(`[compare:context] failed: ${e.message}`);
+                let contractCtx = { subject: '', governing_npas: [] };
+                {
+                    const [dc, cc] = await Promise.all([
+                        extractDocumentContext(newDocumentText).catch((e) => {
+                            log.warn(`[compare:context] failed: ${e.message}`); return null;
+                        }),
+                        extractContractContext(oldDocumentText).catch((e) => {
+                            log.warn(`[compare:governing-law] failed: ${e.message}`); return { subject: '', governing_npas: [] };
+                        }),
+                    ]);
+                    docContext = dc;
+                    contractCtx = cc || { subject: '', governing_npas: [] };
                 }
                 const docContextStr = formatDocContext(docContext);
+                const govLawStr = (contractCtx.governing_npas || []).join(', ');
                 sendStep(res, {
                     id: 'context',
                     status: docContext ? 'success' : 'warning',
-                    text: docContext?.document_type || 'Контекст не определён',
-                    reason: docContext?.subject_area || null
+                    text: docContext?.document_type || contractCtx.subject || 'Контекст не определён',
+                    reason: govLawStr ? `Применимое право: ${govLawStr}` : (docContext?.subject_area || null)
                 });
 
                 // ═══ ЭТАП 1: ALIGN ═══════════════════════════════════════
@@ -483,8 +521,15 @@ ${JSON.stringify(input, null, 2)}
                         // и не превышен потолок аудитов.
                         const doLegal = !!pair.newText && legalAuditsRun < LEGAL_AUDIT_CAP;
                         if (doLegal) legalAuditsRun++;
+                        // ЯКОРНЫЙ поиск: oldText (эталон) находит норму; проверяем, не
+                        // нарушает ли её newText. Роутинг по применимому праву документа.
                         const legalPromise = doLegal
-                            ? legalAudit(pair.newText)
+                            ? legalAudit({
+                                oldText: pair.oldText,
+                                newText: pair.newText,
+                                subject: contractCtx.subject,
+                                governingNpas: contractCtx.governing_npas,
+                              })
                             : Promise.resolve({ status: 'skipped', marker: '', detail: '', cited_articles: [], npa: null });
 
                         const [mat, legal] = await Promise.all([matPromise, legalPromise]);

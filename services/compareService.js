@@ -15,7 +15,11 @@
 
 const Diff = require('diff');
 const legalAgents = require('./legalAgents');
+const clients = require('./llmClients');
 const { segmentDocumentRegex, wrapAsAnalyzeSegments } = require('../lib/segmentRegex');
+
+// Переиспользуем готовые хелперы Agent 2 (рендер эталона + безопасный JSON).
+const { renderArticles, safeJson } = legalAgents._internals;
 
 // ── ПАРАМЕТРЫ ───────────────────────────────────────────────────────
 // Порог «косметики»: доля изменённых символов. Ниже него (и без числовых
@@ -128,41 +132,154 @@ function filterHits(hits) {
   return kept;
 }
 
-// ── ЮРИДИЧЕСКИЙ АУДИТ пункта (переиспользует Agent 2 из legalAgents.js) ──
-// Берём НОВУЮ редакцию пункта (от контрагента) и проверяем, не противоречит ли
-// она НПА КР. Возвращает компактный вердикт для финального судьи.
-//   status: 'error'      — пункт ПРОТИВОРЕЧИТ норме (🔴, ничтожное/оспоримое условие)
-//           'correct'    — соответствует / нет противоречий с эталоном
-//           'out_of_base'— ссылка на акт вне базы (международный и т.п.) — ручная проверка
-//           'no_base'    — релевантных норм в базе не нашлось (нечего проверять)
-//           'skipped'    — аудит не запускался (короткий/служебный пункт)
-async function legalAudit(clauseText, deps = legalAgents) {
-  const text = String(clauseText || '').trim();
-  // Совсем короткие пункты (реквизиты, «г. Бишкек», даты) не аудируем.
-  if (text.length < 40) {
+// ── ДОКУМЕНТ-УРОВНЕВЫЙ РОУТИНГ: определяем применимое право один раз ──
+// Анти-галлюцинация (Проблема 3): без темы Pinecone тащит законы из чужой отрасли
+// (правила сотовой связи в договор ЖКХ). Определяем тему + применимые НПА ОДИН раз
+// по эталонному (старому) тексту и подмешиваем их в КАЖДЫЙ поиск как якорь/фильтр.
+const CONTRACT_CONTEXT_SYS = `Ты — определитель применимого права для документа Кыргызской Республики.
+По тексту договора определи его отрасль и КАКИЕ нормативные акты КР его регулируют.
+Верни СТРОГО JSON:
+{ "subject": "<краткая тема договора: напр. 'теплоснабжение', 'аренда помещения', 'поставка товаров', 'оказание услуг'>",
+  "governing_npas": ["<НПА 1>", "<НПА 2>"] }
+ПРАВИЛА:
+- governing_npas: 1-3 САМЫХ применимых акта. Гражданский кодекс КР применим почти всегда;
+  добавь профильный акт по отрасли (Правила теплоснабжения, Трудовой кодекс КР, Жилищный кодекс КР и т.п.).
+  Полные официальные названия, раскрывай аббревиатуры.
+- subject — 1-3 слова, суть предмета договора.
+- Только JSON, без markdown.`;
+
+async function extractContractContext(docText) {
+  const fallback = { subject: '', governing_npas: [] };
+  const src = String(docText || '').trim();
+  if (src.length < 80) return fallback;
+  try {
+    const raw = await clients.geminiJson({
+      systemPrompt: CONTRACT_CONTEXT_SYS,
+      userPrompt: `ДОГОВОР:\n${src.slice(0, 12000)}`,
+      model: 'gemini-3.1-flash-lite', maxOutputTokens: 512, timeoutMs: 12000,
+    });
+    const p = safeJson(raw, {});
+    const npas = Array.isArray(p.governing_npas)
+      ? p.governing_npas.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 3)
+      : [];
+    const subject = p.subject && String(p.subject).trim() ? String(p.subject).trim() : '';
+    console.log('[Compare DEBUG] governing_law:', JSON.stringify({ subject, governing_npas: npas }));
+    return { subject, governing_npas: npas };
+  } catch (_) {
+    return fallback; // graceful: без контекста — деградируем к поиску без темы
+  }
+}
+
+// ── ВАЛИДАТОР СРАВНЕНИЯ (Проблема 2): «старое vs новое vs закон» ──────
+// Принимает ТРИ переменные: original_text, modified_text, governing_law (эталон по
+// СТАРОМУ тексту). Вопрос: противоречит ли новая редакция императивной норме, на
+// которой основан пункт? Это иначе, чем нормоконтроль цитирования в analyzeV2.
+const COMPARE_VALIDATOR_SYS = `Ты — инспектор нормоконтроля договоров Кыргызской Республики.
+Тебе даны:
+• ORIGINAL_TEXT — старая (эталонная) редакция пункта договора;
+• MODIFIED_TEXT — новая редакция (правка контрагента);
+• GOVERNING_LAW — нормы закона КР, на которых основан пункт (найдены по старому тексту).
+
+ВОПРОС: противоречит ли НОВАЯ редакция (MODIFIED_TEXT) ИМПЕРАТИВНОЙ норме из GOVERNING_LAW?
+
+Верни СТРОГО JSON:
+{ "status": "error" | "correct" | "out_of_base",
+  "marker": "🔴 ОШИБКА" | "✅ Верно" | "⚠️ Вне базы",
+  "detail": "<если error: какую норму и ЧЕМ именно нарушает новая редакция + как исправить>",
+  "cited_articles": ["<НПА, ст.N из GOVERNING_LAW>"] }
+
+ЖЕЛЕЗНЫЕ ПРАВИЛА:
+1. status:"error" ТОЛЬКО при ПРЯМОМ противоречии новой редакции ИМПЕРАТИВНОЙ норме
+   (закон запрещает X, а новая редакция вводит X; закон ставит предел, новая редакция его превышает).
+2. ДИСПОЗИТИВНЫЕ нормы (которые стороны вправе менять соглашением) — изменение НЕ нарушение → "correct".
+3. АНТИ-ГАЛЛЮЦИНАЦИЯ: если GOVERNING_LAW относится к ДРУГОЙ отрасли, не связанной с предметом
+   договора (SUBJECT), это нерелевантный поиск — верни status:"out_of_base" и НЕ выдумывай нарушение.
+4. Опирайся ТОЛЬКО на текст GOVERNING_LAW. Запрещено придумывать нормы/номера по памяти.
+5. cited_articles — только статьи из GOVERNING_LAW.
+6. Без markdown — только JSON.`;
+
+async function compareValidate({ original_text, modified_text, articles, npa, subject }) {
+  const userPrompt = `SUBJECT (предмет договора): ${subject || 'не определён'}
+ПРИМЕНИМОЕ ПРАВО (эталон): ${npa || 'по семантике'}
+
+ORIGINAL_TEXT (старая редакция):
+${original_text || '(пункт отсутствовал — это добавление)'}
+
+MODIFIED_TEXT (новая редакция):
+${modified_text || '(пункт удалён)'}
+
+GOVERNING_LAW (нормы из базы НПА КР, найденные по СТАРОМУ тексту):
+${renderArticles(articles)}`;
+
+  const ok = { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
+  try {
+    const raw = await clients.geminiJson({
+      systemPrompt: COMPARE_VALIDATOR_SYS, userPrompt,
+      model: 'gemini-3.1-flash-lite', maxOutputTokens: 1024, timeoutMs: 15000,
+    });
+    const parsed = safeJson(raw, null);
+    if (!parsed || !parsed.status) return ok;
+    const status = parsed.status === 'error' ? 'error'
+      : parsed.status === 'out_of_base' ? 'out_of_base' : 'correct';
+    const marker = status === 'error' ? '🔴 ОШИБКА'
+      : status === 'out_of_base' ? '⚠️ Вне базы' : '✅ Верно';
+    return {
+      status, marker,
+      detail: typeof parsed.detail === 'string' ? parsed.detail : '',
+      cited_articles: Array.isArray(parsed.cited_articles) ? parsed.cited_articles : [],
+    };
+  } catch (_) {
+    return ok; // graceful: при сбое не плодим ложных нарушений
+  }
+}
+
+// Дефолтные зависимости аудита: поиск из Agent 2 + наш валидатор сравнения.
+function defaultAuditDeps() {
+  return {
+    expandQuery: legalAgents.expandQuery,
+    pineconeSearch: legalAgents.pineconeSearch,
+    validate: compareValidate,
+  };
+}
+
+// ── ЮРИДИЧЕСКИЙ АУДИТ пары (ЯКОРНЫЙ поиск по СТАРОМУ тексту) ─────────
+// Проблема 2: поиск НПА вёлся по newText (испорченный текст) → база не находила
+// оригинальную норму. Теперь якорь поиска — oldText (эталон), он гарантированно
+// приводит к правильному НПА; затем проверяем, не нарушает ли его новая редакция.
+//   status: 'error'/'correct'/'out_of_base'/'no_base'/'skipped'
+async function legalAudit({ oldText, newText, subject = '', governingNpas = [] } = {}, deps = defaultAuditDeps()) {
+  const original = String(oldText || '').trim();
+  const modified = String(newText || '').trim();
+  // Якорь поиска — эталонный СТАРЫЙ текст; для чистых добавлений берём новый.
+  const anchor = original || modified;
+  if (anchor.length < 40) {
     return { status: 'skipped', marker: '', detail: '', cited_articles: [], npa: null, article: null };
   }
 
   try {
-    const { npa, article, queries } = await deps.expandQuery(text);
-    const rawHits = await deps.pineconeSearch(queries, npa);
-    const articles = filterHits(rawHits);
+    const { npa, article, queries } = await deps.expandQuery(anchor);
+    // Роутинг: НПА пункта, иначе документ-уровневый применимый акт.
+    const effectiveNpa = npa || (governingNpas && governingNpas[0]) || null;
+    // Тематический bias: гоним вектор в нужную отрасль/кодекс (анти-сотовая-связь).
+    const prefix = [subject, effectiveNpa].filter(Boolean).join('. ');
+    const biased = (queries || []).map((q) => (prefix ? `${prefix}. ${q}` : q));
 
+    const rawHits = await deps.pineconeSearch(biased, effectiveNpa);
+    const articles = filterHits(rawHits);
     if (!articles.length) {
-      return { status: 'no_base', marker: '', detail: '', cited_articles: [], npa: npa || null, article: article || null };
+      return { status: 'no_base', marker: '', detail: '', cited_articles: [], npa: effectiveNpa, article: article || null };
     }
 
-    const v = await deps.validate({ chunkText: text, ctx: null, articles, npa, article });
+    const v = await deps.validate({ original_text: original, modified_text: modified, articles, npa: effectiveNpa, subject });
     return {
       status: v.status || 'correct',
       marker: v.marker || '',
       detail: v.detail || '',
       cited_articles: Array.isArray(v.cited_articles) ? v.cited_articles : [],
-      npa: npa || null,
+      npa: effectiveNpa,
       article: article || null,
     };
   } catch (e) {
-    // Graceful: сбой аудита не должен валить всё сравнение.
     return { status: 'skipped', marker: '', detail: '', cited_articles: [], npa: null, article: null, error: e.message };
   }
 }
@@ -170,9 +287,11 @@ async function legalAudit(clauseText, deps = legalAgents) {
 module.exports = {
   classifyChange,
   legalAudit,
+  extractContractContext,
+  compareValidate,
   segmentForCompare,
   escapeHtml,
   filterHits,
   COSMETIC_RATIO,
-  _internals: { NUMERIC_TRIGGER_RE, HIT_REL_FACTOR, HIT_ABS_FLOOR, HIT_MAX, normalizeForCompare, COMPARE_MAX_SEGMENTS },
+  _internals: { NUMERIC_TRIGGER_RE, HIT_REL_FACTOR, HIT_ABS_FLOOR, HIT_MAX, normalizeForCompare, COMPARE_MAX_SEGMENTS, defaultAuditDeps },
 };
