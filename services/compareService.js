@@ -15,6 +15,7 @@
 
 const Diff = require('diff');
 const legalAgents = require('./legalAgents');
+const { segmentDocumentRegex, wrapAsAnalyzeSegments } = require('../lib/segmentRegex');
 
 // ── ПАРАМЕТРЫ ───────────────────────────────────────────────────────
 // Порог «косметики»: доля изменённых символов. Ниже него (и без числовых
@@ -32,6 +33,29 @@ const NUMERIC_TRIGGER_RE = /[0-9]|%|сом|руб|долл|евро|процен
 const HIT_REL_FACTOR = 0.6;     // ≥ 60% от лучшего score
 const HIT_ABS_FLOOR  = 0.35;    // и не ниже абсолютного дна
 const HIT_MAX        = 6;       // не более 6 эталонных статей в промпт
+
+// Потолок сегментов НА ДОКУМЕНТ (применяется симметрично к обеим редакциям).
+const COMPARE_MAX_SEGMENTS = 90;
+
+// ── ДЕТЕРМИНИРОВАННАЯ СЕГМЕНТАЦИЯ для режима сравнения (БЕЗ LLM) ──────
+// КРИТИЧНО для ALIGN: LLM-сегментатор недетерминирован — режет два почти
+// одинаковых документа по-разному (49 vs 53), и выравнивание «съезжает»,
+// плодя ложные изменения. Здесь — чистая regex-сегментация (segmentDocumentRegex),
+// та же боевая логика Phase 2 из analyze: одинаковая структура → одинаковое
+// число сегментов → ALIGN опирается на жёсткую структуру.
+function normalizeForCompare(text) {
+  // CRLF/CR → LF, чтобы построчный split был идентичен для обеих редакций
+  // (одна могла прийти из Word с \r\n, другая — из редактора с \n).
+  return String(text || '').replace(/\r\n?/g, '\n');
+}
+
+function segmentForCompare(text, maxSegments = COMPARE_MAX_SEGMENTS) {
+  const chunks = segmentDocumentRegex(normalizeForCompare(text));
+  const wrapped = wrapAsAnalyzeSegments(chunks); // → [{id, number, heading, text}]
+  return (maxSegments && wrapped.length > maxSegments)
+    ? wrapped.slice(0, maxSegments)
+    : wrapped;
+}
 
 // ── HTML-экранирование (XSS: текст документа недоверенный, IDE рендерит HTML) ──
 function escapeHtml(s) {
@@ -146,8 +170,9 @@ async function legalAudit(clauseText, deps = legalAgents) {
 module.exports = {
   classifyChange,
   legalAudit,
+  segmentForCompare,
   escapeHtml,
   filterHits,
   COSMETIC_RATIO,
-  _internals: { NUMERIC_TRIGGER_RE, HIT_REL_FACTOR, HIT_ABS_FLOOR, HIT_MAX },
+  _internals: { NUMERIC_TRIGGER_RE, HIT_REL_FACTOR, HIT_ABS_FLOOR, HIT_MAX, normalizeForCompare, COMPARE_MAX_SEGMENTS },
 };
