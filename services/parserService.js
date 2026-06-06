@@ -28,6 +28,8 @@ const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
 const { GoogleAuth } = require('google-auth-library');
+const pdfParse = require('pdf-parse'); // локальный счётчик страниц + текст (дёшево, для роутинга)
+const mammoth = require('mammoth');    // локальное извлечение текста DOCX (только короткий путь)
 
 const DEFAULT_TIMEOUT_MS = Number(process.env.PARSER_TIMEOUT_MS || 100000);
 
@@ -184,27 +186,107 @@ async function parseViaCloudRun(filePath, originalName, attempt = 1) {
   }
 }
 
-// --- Публичный API ---------------------------------------------------------
+// --- Умный роутинг парсинга (Docling vs локально) -------------------------
+const SMALL_PAGE_LIMIT   = 3;                  // ≤3 страниц = «короткий» документ
+const SMALL_CHAR_LIMIT   = 9000;               // ~3 страницы юр-текста (для DOCX/TXT)
+const SAFE_BUFFER_BYTES  = 4 * 1024 * 1024;    // выше — НЕ буферим в RAM, сразу Docling (стримом)
+
+async function viaDocling(filePath, originalName) {
+  const r = await parseViaCloudRun(filePath, originalName);
+  return { ...r, needsFragmentation: false };
+}
+
 /**
- * Извлекает Markdown из файла любого поддерживаемого типа.
- * ВАЖНО: filePath (временный файл в /tmp) удаляется здесь же в finally (ZDR).
+ * Роутер парсинга. Короткие документы (≤3 стр.) НЕ дёргают тяжёлый Docling:
+ * текст извлекается локально (pdf-parse/mammoth/fs), а смысловую нарезку делает
+ * Gemini (needsFragmentation:true → роут вызовет deps.fragmentDocument).
+ * Большие документы и СКАНЫ (PDF без текстового слоя) → Docling/Cloud Run.
+ * ZDR: временный файл удаляется здесь же в finally.
  *
- * @param {string} filePath     путь к временному файлу
- * @param {string} originalName исходное имя (нужно расширение)
- * @returns {Promise<{markdown:string, source:string, structure_confidence:'high'|'low'}>}
+ * @returns {Promise<{markdown:string, source:string, structure_confidence:'high'|'low',
+ *                    pages:number|null, needsFragmentation:boolean}>}
  */
-async function extractMarkdown(filePath, originalName) {
+async function smartParse(filePath, originalName) {
+  const ext = path.extname(originalName || filePath).toLowerCase();
   try {
-    // Единый путь: ВСЕ форматы (.pdf/.docx/.txt/...) -> Cloud Run/Docling.
-    return await parseViaCloudRun(filePath, originalName);
+    const stat = await fs.promises.stat(filePath).catch(() => ({ size: Infinity }));
+
+    // ── PDF ──
+    if (ext === '.pdf') {
+      if (stat.size > SAFE_BUFFER_BYTES) {
+        console.log(`[smartParse] PDF ${stat.size}B > буфер-лимита → Docling (не буферим)`);
+        return await viaDocling(filePath, originalName);
+      }
+      const buffer = await fs.promises.readFile(filePath);
+      let pdf = null;
+      try { pdf = await pdfParse(buffer); } catch (_) { pdf = null; }
+      const pages = pdf ? pdf.numpages : null;
+      const text = pdf ? String(pdf.text || '').trim() : '';
+
+      if (!text) {                                    // нет текстового слоя → СКАН → OCR в Docling
+        console.log(`[smartParse] PDF pages=${pages}, текст пуст (скан?) → Docling (OCR)`);
+        return await viaDocling(filePath, originalName);
+      }
+      if (pages && pages > SMALL_PAGE_LIMIT) {        // многостраничный → Docling
+        console.log(`[smartParse] PDF pages=${pages} > ${SMALL_PAGE_LIMIT} → Docling`);
+        return await viaDocling(filePath, originalName);
+      }
+      console.log(`[smartParse] PDF pages=${pages} ≤ ${SMALL_PAGE_LIMIT} → лёгкий путь (Gemini)`);
+      return { markdown: text, source: 'pdf-parse', structure_confidence: 'low', pages, needsFragmentation: true };
+    }
+
+    // ── DOCX ──
+    if (ext === '.docx' || ext === '.doc') {
+      if (stat.size > SAFE_BUFFER_BYTES) return await viaDocling(filePath, originalName);
+      const buffer = await fs.promises.readFile(filePath);
+      let text = '';
+      try { const r = await mammoth.extractRawText({ buffer }); text = String(r.value || '').trim(); } catch (_) { text = ''; }
+      if (!text) return await viaDocling(filePath, originalName);   // не извлекли локально → Docling
+      if (text.length > SMALL_CHAR_LIMIT) {
+        console.log(`[smartParse] DOCX chars=${text.length} > ${SMALL_CHAR_LIMIT} → Docling`);
+        return await viaDocling(filePath, originalName);
+      }
+      console.log(`[smartParse] DOCX chars=${text.length} ≤ ${SMALL_CHAR_LIMIT} → лёгкий путь (Gemini)`);
+      return { markdown: text, source: 'mammoth', structure_confidence: 'low', pages: Math.ceil(text.length / 3000), needsFragmentation: true };
+    }
+
+    // ── TXT/MD (Docling не нужен в принципе) ──
+    if (ext === '.txt' || ext === '.md') {
+      const text = (await fs.promises.readFile(filePath, 'utf8')).trim();
+      const confidence = detectStructureConfidence(text);
+      const short = text.length <= SMALL_CHAR_LIMIT;
+      return {
+        markdown: text, source: 'txt', structure_confidence: confidence,
+        pages: Math.ceil(text.length / 3000), needsFragmentation: short,
+      };
+    }
+
+    // ── прочие форматы → Docling ──
+    return await viaDocling(filePath, originalName);
   } finally {
     // ZDR: гарантированно удаляем временный файл сразу после обработки.
     fs.promises.unlink(filePath).catch(() => { /* файл мог не создаться — игнор */ });
   }
 }
 
+// --- Публичный API ---------------------------------------------------------
+/**
+ * LEGACY: извлекает Markdown ЛЮБОГО формата через Docling (без роутинга).
+ * Оставлен для обратной совместимости; основной путь теперь smartParse.
+ * ZDR: filePath удаляется в finally.
+ */
+async function extractMarkdown(filePath, originalName) {
+  try {
+    return await parseViaCloudRun(filePath, originalName);
+  } finally {
+    fs.promises.unlink(filePath).catch(() => { /* игнор */ });
+  }
+}
+
 module.exports = {
+  smartParse,
   extractMarkdown,
   // экспортируем для unit-тестов / переиспользования
-  _internals: { detectStructureConfidence, isRetriableError, parseViaCloudRun },
+  _internals: { detectStructureConfidence, isRetriableError, parseViaCloudRun, viaDocling,
+    SMALL_PAGE_LIMIT, SMALL_CHAR_LIMIT, SAFE_BUFFER_BYTES },
 };

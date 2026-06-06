@@ -88,6 +88,7 @@ async function geminiJson({
   systemPrompt, userPrompt,
   model = 'gemini-3.1-flash-lite',
   temperature = 0.2, maxOutputTokens = 2048, timeoutMs = 15000,
+  thinkingConfig = null,
 }) {
   const { text } = await callGeminiSingle({
     apiKey: getNextKey(),
@@ -98,6 +99,7 @@ async function geminiJson({
     timeoutMs,
     temperature,
     maxOutputTokens,
+    thinkingConfig,
   });
   return text;
 }

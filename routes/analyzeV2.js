@@ -224,7 +224,7 @@ function verdictToRow(v) {
 function createAnalyzeV2Router(deps = {}) {
   const express = require('express');
   const multer = require('multer');
-  const { extractMarkdown } = require('../services/parserService');
+  const { smartParse } = require('../services/parserService');
   const { createDefaultDeps } = require('../services/legalAgents');
   const router = express.Router();
   const upload = makeUpload(multer);
@@ -256,12 +256,18 @@ function createAnalyzeV2Router(deps = {}) {
     }
 
     try {
-      // ── ФАЗА 1: получение Markdown + чанкинг + словарь ────────────────
+      // ── ФАЗА 1: получение текста (умный роутинг) + фрагментация + словарь ──
       step({ id: 'parse', status: 'loading', text: 'Готовлю документ' });
-      let markdown; let source; let structure_confidence;
+      let markdown; let source; let structure_confidence; let preFragments = null;
       if (req.file) {
-        ({ markdown, source, structure_confidence } =
-          await extractMarkdown(req.file.path, req.file.originalname)); // удалит /tmp сам (ZDR)
+        // smartParse: короткие документы минуют Docling, текст берётся локально (ZDR).
+        const p = await smartParse(req.file.path, req.file.originalname); // удалит /tmp сам
+        ({ markdown, source, structure_confidence } = p);
+        // Короткий документ → семантическая нарезка Gemini (CoT) вместо regex-чанкинга.
+        if (p.needsFragmentation) {
+          step({ id: 'parse', status: 'loading', text: `Короткий документ (${source}) → умная фрагментация Gemini` });
+          preFragments = await resolvedDeps.fragmentDocument?.(markdown);
+        }
       } else {
         // Текст уже извлечён клиентом (pdfjs/mammoth) — Docling не нужен.
         markdown = String(bodyText);
@@ -271,9 +277,12 @@ function createAnalyzeV2Router(deps = {}) {
       step({ id: 'parse', status: 'success', text: `Источник: ${source}, структура: ${structure_confidence}` });
 
       step({ id: 'segment', status: 'loading', text: 'Разбиваю документ на фрагменты' });
-      const chunks = chunkDocument(markdown, structure_confidence);
+      // Если Gemini дал фрагменты — используем их; иначе regex-чанкинг.
+      const chunks = (preFragments && preFragments.length)
+        ? preFragments
+        : chunkDocument(markdown, structure_confidence);
       const state = await buildGlobalState(markdown, chunks, structure_confidence, resolvedDeps);
-      step({ id: 'segment', status: 'success', text: `Фрагментов: ${state.N}` });
+      step({ id: 'segment', status: 'success', text: `Фрагментов: ${state.N}${(preFragments && preFragments.length) ? ' (Gemini CoT)' : ''}` });
 
       // ── ФАЗА 2: волновая валидация (стримим tableRow по мере готовности) ─
       step({ id: 'validate', status: 'loading', text: '⚖️ Сверка с НПА КР (волновой троттлер)' });

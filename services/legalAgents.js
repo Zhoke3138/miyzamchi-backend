@@ -62,6 +62,48 @@ async function extractGlossary(markdown, _chunks) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// FRAGMENTER — семантическая нарезка КОРОТКОГО документа (лёгкий путь, без Docling)
+// ═══════════════════════════════════════════════════════════════════════
+const FRAGMENT_SYS = `Ты — сегментатор юридических документов Кыргызстана. Тебе дан КОРОТКИЙ документ (≤3 страниц).
+СНАЧАЛА в поле "reasoning" коротко проанализируй структуру документа: где преамбула/реквизиты,
+где содержательная часть (права, обязанности, нормы), где просительная/резолютивная часть.
+ЗАТЕМ нарежь документ на СМЫСЛОВЫЕ самостоятельные фрагменты: один фрагмент = один тезис/пункт/норма,
+пригодный для отдельной проверки. Не дроби предложения и не склеивай разные нормы.
+Верни СТРОГО JSON: { "reasoning": "<анализ структуры, 1-3 предложения>", "fragments": ["...", "..."] }`;
+
+// Нативный thinking (если SDK/модель поддержат) + prompt-level CoT (поле reasoning).
+// Если thinkingConfig вызовет ошибку — авто-повтор без него (prompt-CoT всё равно работает).
+async function fragmentDocument(text) {
+  const src = String(text || '').trim();
+  if (!src) return [];
+
+  const call = (useThinking) => clients.geminiJson({
+    systemPrompt: FRAGMENT_SYS,
+    userPrompt: `ДОКУМЕНТ:\n${src.slice(0, 16000)}`,
+    model: 'gemini-3.1-flash-lite',
+    maxOutputTokens: 4096,
+    timeoutMs: 25000,
+    thinkingConfig: useThinking ? { thinkingBudget: 1500 } : null,
+  });
+
+  let raw;
+  try {
+    raw = await call(true);                       // попытка нативного CoT
+  } catch (_) {
+    try { raw = await call(false); }              // фолбэк: только prompt-CoT
+    catch (_e) { return []; }                     // совсем не вышло → роут вернётся к chunkDocument
+  }
+
+  const parsed = safeJson(raw, {});
+  if (parsed.reasoning) {
+    console.log('[Gemini DEBUG] fragment reasoning:', String(parsed.reasoning).slice(0, 400));
+  }
+  return Array.isArray(parsed.fragments)
+    ? parsed.fragments.map((f) => String(f || '').trim()).filter(Boolean)
+    : [];
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // AGENT 1 — Extractor & Searcher (извлечение НПА/статьи + синонимы за 1 вызов)
 // ═══════════════════════════════════════════════════════════════════════
 const EXPAND_SYS = `Ты — экстрактор и поисковик для базы законов Кыргызской Республики.
@@ -325,11 +367,11 @@ async function judge({ graph, effort }) {
 }
 
 function createDefaultDeps() {
-  return { extractGlossary, expandQuery, pineconeSearch, validate, judge };
+  return { extractGlossary, fragmentDocument, expandQuery, pineconeSearch, validate, judge };
 }
 
 module.exports = {
   createDefaultDeps,
-  extractGlossary, expandQuery, pineconeSearch, validate, judge,
+  extractGlossary, fragmentDocument, expandQuery, pineconeSearch, validate, judge,
   _internals: { safeJson, renderArticles, groupByNpa },
 };
