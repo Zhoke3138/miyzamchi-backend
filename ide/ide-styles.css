@@ -3580,6 +3580,11 @@ button:focus-visible,.btn:focus-visible{
    UI семантического сравнения двух версий документа.
    Цвета цельны: красный — риск, жёлтый — сущ. изменение, зелёный — добавлено,
    серый — удалено, нейтральный — стилистика. */
+/* ── Redline / Track Changes (compareReport.redlineHtml) ── */
+.cmp-redline{ white-space:pre-wrap; word-break:break-word; line-height:1.55; }
+.ml-ins{ background:var(--green-soft); color:var(--green-ink); text-decoration:none; border-radius:3px; padding:0 2px; }
+.ml-del{ background:var(--red-soft); color:var(--red-ink); text-decoration:line-through; border-radius:3px; padding:0 2px; }
+
 .cmp-root{ display:flex; flex-direction:column; gap:var(--s-3); padding:var(--s-1); }
 .cmp-intro{ text-align:center; padding:var(--s-2) 0 var(--s-1); }
 .cmp-title{ font-family:var(--font-display); font-size:var(--text-xl); margin:0 0 var(--s-1); color:var(--text); font-weight:500; letter-spacing:-.01em; }

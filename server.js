@@ -1985,7 +1985,7 @@ async function handleFast(message, history, retrievalResult, res, retryCount = 0
 // с системным промптом AGENT_SYSTEM_PROMPT (строгий JSON).
 // История чата сохраняется — агент видит предыдущие правки.
 // ============================================================
-async function handleAgent(message, history, res, retryCount = 0, userQuery = null) {
+async function handleAgent(message, history, res, retryCount = 0, userQuery = null, documentContext = null) {
     // ─────────────────────────────────────────────────────────────
     // РОУТЕР: если запрос юриста БЕЗ реального документа — переадресуем
     // в 5-этапную deep-thinking цепочку. Agent-режим (JSON для редактирования)
@@ -1997,10 +1997,13 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
     // а не сам маркер.
     // ─────────────────────────────────────────────────────────────
     if (retryCount === 0) {
-        // 1) Тянем содержимое блока  ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА: """...""""
-        const docBlockMatch = message.match(/ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА[^"]*"""([\s\S]*?)"""/i);
-        const docBody = docBlockMatch ? docBlockMatch[1].trim() : '';
-        const hasRealDoc = docBody.length >= 100;
+        // 1) Источник текста документа:
+        //    • НОВЫЙ путь — отдельное поле req.body.documentContext (без regex-костыля);
+        //    • FALLBACK (старый клиент) — вырезаем блок ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА: """...""".
+        const ctxDoc = (documentContext && String(documentContext).trim()) || '';
+        const docBlockMatch = ctxDoc ? null : message.match(/ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА[^"]*"""([\s\S]*?)"""/i);
+        const docBody = ctxDoc || (docBlockMatch ? docBlockMatch[1].trim() : '');
+        const hasRealDoc = docBody.length >= 100;   // порог сохранён
 
         // 2) Fallback: явный analyze-document блок (когда вызывается из
         //    analyzeDocumentSmart как fallback с собранным промптом)
@@ -2060,9 +2063,15 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
         console.warn('[AGENT] Retrieval skipped:', retErr.message);
     }
 
-    const userPrompt = message + contextBlock;
+    // Если документ пришёл отдельным полем — подмешиваем его в prompt сами
+    // (в message его больше нет). При fallback-пути документ уже внутри message,
+    // поэтому повторно НЕ инжектим (иначе дубль).
+    const docBlock = (documentContext && String(documentContext).trim())
+        ? `\n\nТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА:\n"""\n${String(documentContext).trim()}\n"""\n`
+        : '';
+    const userPrompt = message + docBlock + contextBlock;
 
-    console.log(`[AGENT] Готовлю ответ | НПА найдено: ${allMatches.length} | history: ${cleanHistory.length}`);
+    console.log(`[AGENT] Готовлю ответ | НПА найдено: ${allMatches.length} | history: ${cleanHistory.length} | docCtx: ${docBlock ? 'field' : 'inline/none'}`);
 
     const apiKey = getNextKey();
     try {
@@ -2110,7 +2119,7 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
         }
 
         await delay(1500);
-        return handleAgent(message, history, res, retryCount + 1, userQuery);
+        return handleAgent(message, history, res, retryCount + 1, userQuery, documentContext);
     }
 }
 
@@ -3658,10 +3667,10 @@ app.post('/api/chat', requireClientToken, async (req, res) => {
     const tRouteStart = performance.now();
     let tRetrieval = 0;
     try {
-        const { message, history, mode = 'fast', agentMode = false, userQuery = null, skipRetrieval = false } = req.body;
+        const { message, history, mode = 'fast', agentMode = false, userQuery = null, skipRetrieval = false, documentContext = null } = req.body;
         if (!message) return res.status(400).json({ reply: "Пусто" });
 
-        logger.info('chat-request', { len: message.length, mode, agentMode, skipRetrieval, hasUserQuery: !!userQuery });
+        logger.info('chat-request', { len: message.length, mode, agentMode, skipRetrieval, hasUserQuery: !!userQuery, docCtxLen: documentContext ? String(documentContext).length : 0 });
 
         // SSE headers с антибуферизацией Render
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -3676,7 +3685,7 @@ app.post('/api/chat', requireClientToken, async (req, res) => {
         // AGENT MODE
         // ════════════════════════════════════════════════════════════════
         if (agentMode) {
-            await handleAgent(message, history, res, 0, userQuery);
+            await handleAgent(message, history, res, 0, userQuery, documentContext);
             res.write('data: [DONE]\n\n');
             res.end();
             return;

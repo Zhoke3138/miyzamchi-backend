@@ -369,15 +369,15 @@ const extractArticleNumbers=(sources=[])=>{
   return nums;
 };
 
-async function streamChat({message,history,mode,agentMode=false,userQuery=null,skipRetrieval=false,onStatus,onText,onSources,onMetadata,onConfidence,onStep,onTelemetry,signal}){
+async function streamChat({message,history,mode,agentMode=false,userQuery=null,skipRetrieval=false,documentContext=null,onStatus,onText,onSources,onMetadata,onConfidence,onStep,onTelemetry,signal}){
   const url=BACKEND_URL+'/api/chat';
-  console.log('[IDE Chat] Sending to:', url, 'mode:', mode, 'agentMode:', agentMode, 'skipRAG:', skipRetrieval);
+  console.log('[IDE Chat] Sending to:', url, 'mode:', mode, 'agentMode:', agentMode, 'skipRAG:', skipRetrieval, 'docCtx:', documentContext?documentContext.length+'ch':'none');
   let res;
   try{
     res=await fetch(url,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message,history,mode,agentMode,userQuery,skipRetrieval}),
+      body:JSON.stringify({message,history,mode,agentMode,userQuery,skipRetrieval,documentContext}),
       signal
     });
   }catch(fetchErr){
@@ -1306,10 +1306,12 @@ const AnalyzeDocsMode = () => {
                 className={pairClass(p) + ' cmp-side cmp-side--new' + (activePair === i ? ' cmp-pair--active' : '')}
                 onClick={() => setActivePair(activePair === i ? null : i)}
               >
-                {p.newText ? (
+                {(p.newText || p.redlineHtml) ? (
                   <React.Fragment>
-                    <div className="cmp-pair-num">п. {p.newNumber || '?'} · {p.newHeading || ''}</div>
-                    <div className="cmp-pair-text">{p.newText}</div>
+                    <div className="cmp-pair-num">п. {p.newNumber || p.oldNumber || '?'} · {p.newHeading || p.oldHeading || ''}</div>
+                    {p.redlineHtml
+                      ? <div className="cmp-pair-text cmp-redline" dangerouslySetInnerHTML={{__html: p.redlineHtml}}/>
+                      : <div className="cmp-pair-text">{p.newText}</div>}
                   </React.Fragment>
                 ) : <div className="cmp-pair-empty">— (пункт удалён в новой редакции)</div>}
                 {activePair === i && p.riskDescription && (
@@ -1568,11 +1570,13 @@ const buildAgentPrompt=(userMsg,doc)=>{
   const MAX_DOC=15000;
   const rawText=String(doc.text||'').trim();
   const isEmpty=rawText.length===0;
-  let docText=isEmpty?'(документ пуст)':rawText;
-  if(docText.length>MAX_DOC) docText=docText.slice(0,MAX_DOC)+'\n…[документ обрезан]';
+  // Текст документа больше НЕ вшивается в prompt — он уходит отдельным полем
+  // documentContext (бэкенд подмешивает его сам). Здесь только инструкция.
+  let docCtx=isEmpty?'':rawText;
+  if(docCtx.length>MAX_DOC) docCtx=docCtx.slice(0,MAX_DOC)+'\n…[документ обрезан]';
   const selBlock=doc.hasSelection?`\nВЫДЕЛЕННЫЙ ФРАГМЕНТ:\n"""\n${doc.selection}\n"""\n`:'';
   const emptyHint=isEmpty?'\n⚠️ Документ ПУСТ — обязательно верни "anchor_text": "EMPTY".':'';
-  return `Ты — профессиональный юрист-драфтер Кыргызской Республики.
+  const prompt=`Ты — профессиональный юрист-драфтер Кыргызской Республики.
 
 # КРИТИЧЕСКОЕ ПРАВИЛО — БЕЗ ГАЛЛЮЦИНАЦИЙ
 Тебе ЗАПРЕЩЕНО:
@@ -1590,10 +1594,7 @@ const buildAgentPrompt=(userMsg,doc)=>{
 • ПРАВКА документа — фразы «добавь», «впиши», «вставь», «замени», «исправь», «дополни», «составь пункт», «перепиши».
 • АНАЛИЗ без правки — «проанализируй», «разбери», «что думаешь», «оцени», «проверь риски», «найди ошибки», «объясни», «суммируй».
 
-ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА:
-"""
-${docText}
-"""
+ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА передан отдельным блоком (см. ниже, под этим запросом).
 ${selBlock}
 ЗАПРОС ПОЛЬЗОВАТЕЛЯ: ${userMsg}${emptyHint}
 
@@ -1613,6 +1614,7 @@ ${selBlock}
 3. При АНАЛИЗЕ insertion_text ВСЕГДА пустой — иначе анализ будет вставлен как правка.
 4. Если ответ длинный — заверши его до закрытия \`\`\`. Не обрывай JSON.
 5. Если упоминаешь номера статей в анализе — обязательно добавь disclaimer о сверке с минюстом.`;
+  return { prompt, documentContext: docCtx };
 };
 
 const parseAgentCommands=(text)=>{
@@ -7936,9 +7938,12 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
       const finalCombined = summaries.length ? summaries.join('\n\n') : 'Релевантной информации в документе не найдено.';
       
       let messageToSend;
+      let agentDocCtx2=null;
       if (agent) {
          // buildAgentPrompt expects {text, selection, hasSelection} — wrap the summary text
-         messageToSend = buildAgentPrompt(userQuery, { text: finalCombined, selection: '', hasSelection: false });
+         const built = buildAgentPrompt(userQuery, { text: finalCombined, selection: '', hasSelection: false });
+         messageToSend = built.prompt;
+         agentDocCtx2 = built.documentContext;   // концентрат фактов — отдельным полем
       } else {
          messageToSend = `Пользователь запросил: ${userQuery}\n\nВот концентрат фактов из документа:\n"""\n${finalCombined}\n"""\nНапиши финальный ответ.`;
       }
@@ -7950,6 +7955,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         mode: mode,
         agentMode: agent,
         userQuery: agent ? userQuery : null,    // ▸ короткий запрос для прицельного RAG-retrieval
+        documentContext: agentDocCtx2,          // ▸ текст документа отдельным полем (без regex-костыля)
         signal: controller.signal,
         onStatus: (s) => {
           setStreamStatus(s);
@@ -8249,6 +8255,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
       .map(m=>({role:m.role==='ai'?'model':'user',parts:[{text:String(m.text||'')}]}));
 
     let messageToSend=t;
+    let agentDocCtx=null;
     if(agent){
       const doc=getDocSnapshot();
       // [DEBUG] verify document text is actually captured before LLM call
@@ -8259,7 +8266,9 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         textPreview:(doc.text||'').slice(0,160)+((doc.text||'').length>160?'…':''),
         hasSelection:doc.hasSelection
       });
-      messageToSend=buildAgentPrompt(t,doc);
+      const built=buildAgentPrompt(t,doc);
+      messageToSend=built.prompt;
+      agentDocCtx=built.documentContext;   // документ уходит отдельным полем
     }
 
     const controller=new AbortController();
@@ -8272,6 +8281,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         mode,
         agentMode:agent,
         userQuery: agent ? t : null,    // ▸ короткий запрос для прицельного RAG-retrieval
+        documentContext: agentDocCtx,   // ▸ текст документа отдельным полем (без regex-костыля)
         signal:controller.signal,
         onStatus:(s)=>{
           if(mode!=='thinking') return;
