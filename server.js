@@ -118,6 +118,8 @@ app.use(helmet({
 // ALLOWED_ORIGINS в Render: comma-separated. Если не задан — дефолт
 // (Netlify production + старый MVP + Render-домен + localhost для dev).
 const DEFAULT_ALLOWED_ORIGINS = [
+    'https://miyzamchy-ceo.com.kg',            // новый prod-домен (CEO)
+    'http://miyzamchy-ceo.com.kg',             // тот же домен без TLS — на случай http-захода
     'https://miyzamchy-test.netlify.app',      // текущий prod-домен (Y, не I)
     'https://miyzamchy-test-mvp.netlify.app',  // старый MVP-домен — оставлен для обратной совместимости
     'https://miyzamchi-backend.onrender.com',
