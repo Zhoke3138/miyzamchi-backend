@@ -1248,6 +1248,15 @@ const AGENT_SYSTEM_PROMPT = `
 4. Если в АНАЛИЗЕ упоминаешь конкретные номера — обязательно добавь в reasoning disclaimer:
    "⚠️ Рекомендую сверить номера статей с актуальной редакцией на cbd.minjust.gov.kg."
 
+═══ ПОНИМАНИЕ «КОРЯВЫХ» ИНСТРУКЦИЙ — УМНАЯ ВСТАВКА ═══
+Юрист часто формулирует правку небрежно, разговорно, с опечатками или неполно.
+Твоя задача — извлечь НАМЕРЕНИЕ, а не понимать команду буквально:
+- «поменяй сумму» / «сумма не та» / «тут другая сумма» → найди в документе число-сумму и подготовь замену; anchor_text = фраза с этой суммой.
+- «дату поправь» / «срок не тот» → найди соответствующую дату/срок в тексте, замени.
+- «допиши про ответственность» / «нужен пункт о неустойке» → добавь новый пункт с ПРАВИЛЬНОЙ продолжающейся нумерацией после релевантного раздела.
+- «исправь» без указания что именно → опирайся на ВЫДЕЛЕННЫЙ ФРАГМЕНТ (если он есть в промпте) как на приоритетную цель правки.
+- Если значение указано нечётко («поставь нормальную дату», «адекватную сумму») и точное значение НЕ вытекает из документа/контекста — НЕ выдумывай его. В reasoning кратко спроси, какое именно значение подставить, а insertion_text оставь ПУСТЫМ.
+
 ═══ ЗАПРЕТЫ ═══
 1. НИКАКИХ свободных текстов вне json-блока.
 2. НИКАКИХ объяснений в insertion_text типа «Это статья X, потому что...» — только сам текст.
@@ -2079,8 +2088,40 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
 
     const cleanHistory = sanitizeHistory(history);
 
+    // ─────────────────────────────────────────────────────────────
+    // INTENT ROUTING — определяем намерение ПЕРЕД тяжёлым RAG.
+    // Классифицируем только по короткому userQuery (если фронт его прислал).
+    // Без userQuery надёжно классифицировать инструкцию нельзя (в message
+    // может быть весь документ) → безопасный дефолт RAG_AGENT (старое поведение).
+    // ─────────────────────────────────────────────────────────────
+    let intent = 'RAG_AGENT';
+    if (userQuery && userQuery.trim()) {
+        try {
+            intent = await classifyUserIntent(userQuery.trim());
+        } catch (e) {
+            console.warn('[AGENT] intent classify failed, fallback RAG_AGENT:', e.message);
+        }
+    }
+
+    // CLARIFY — намерение размыто: не угадываем, а спрашиваем юриста и выходим.
+    // ВАЖНО: фронт (parseAgentCommands) ждёт строгий JSON-блок. Поэтому вопрос
+    // упаковываем в тот же контракт — reasoning=вопрос, insertion_text="" (ничего
+    // не вставляем в документ). Иначе фронт покажет ошибку «не удалось получить ответ».
+    if (intent === 'CLARIFY') {
+        const clarifyJson = JSON.stringify({
+            reasoning: '🤔 Уточните, пожалуйста: вы хотите просто **внести техническую правку** (изменить сумму/дату/формулировку как есть) — или **проверить этот фрагмент на соответствие нормам** (ГК/ТК/УК КР) и при необходимости переписать его юридически корректно?',
+            anchor_text: '',
+            insertion_text: ''
+        }, null, 2);
+        res.write(`data: ${JSON.stringify({ text: '```json\n' + clarifyJson + '\n```' })}\n\n`);
+        console.log('[AGENT] intent=CLARIFY → запрошено уточнение, агент не запускался');
+        return;
+    }
+
     // Light retrieval — чтобы агент мог цитировать конкретные нормы НПА.
     // Не отправляем status-события клиенту (агент-режим тихий).
+    // ▸ Запускаем ТОЛЬКО для правовых задач (intent=RAG_AGENT). На технической
+    //   правке (intent=EDITOR) Pinecone+embedding пропускаем целиком.
     let contextBlock = '';
     let allMatches = [];
     try {
@@ -2089,7 +2130,7 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
         // ▸ Fallback на полный message только если userQuery отсутствует.
         const queryForEmbedding = (userQuery && userQuery.trim()) || message;
         const isCasual = isCasualMessage(queryForEmbedding);
-        if (!isCasual) {
+        if (!isCasual && intent === 'RAG_AGENT') {
             // ▸ Адаптивный TopK для агента:
             //   - короткий запрос (<60 символов, явная узкая просьба) → 8-10 матчей
             //   - средний запрос (60-200) → 12-15 матчей
@@ -2121,7 +2162,7 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
         : '';
     const userPrompt = message + docBlock + contextBlock;
 
-    console.log(`[AGENT] Готовлю ответ | НПА найдено: ${allMatches.length} | history: ${cleanHistory.length} | docCtx: ${docBlock ? 'field' : 'inline/none'}`);
+    console.log(`[AGENT] Готовлю ответ | intent: ${intent} | НПА найдено: ${allMatches.length} | history: ${cleanHistory.length} | docCtx: ${docBlock ? 'field' : 'inline/none'}`);
 
     const apiKey = getNextKey();
     try {
@@ -2249,6 +2290,75 @@ async function classifyQuery(message) {
     }
     const llm = await llmClassify(message);
     console.log(`[Classify] llm → ${llm} (msg=${message.length}ch)`);
+    return llm;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// INTENT CLASSIFICATION — "техническая правка" vs "правовой анализ"
+// ════════════════════════════════════════════════════════════════════
+// Перед тяжёлым RAG в handleAgent определяем НАМЕРЕНИЕ юриста по короткому
+// userQuery. Цель — не гонять Pinecone+embedding на тривиальных правках
+// (опечатка, сумма, дата, формат), где правовой контекст не нужен.
+// Паттерн идентичен classifyQuery: quickIntent (regex, 0мс) → llmIntent
+// (лёгкий LLM) → fail-safe default. Возвращает один из трёх режимов:
+//   'EDITOR'    — механическая правка без правовых последствий → RAG пропускаем
+//   'RAG_AGENT' — правовая задача (соответствие норме, выбор статьи) → RAG нужен
+//   'CLARIFY'   — намерение размыто → агент задаёт уточняющий вопрос
+// ════════════════════════════════════════════════════════════════════
+function quickIntent(query) {
+    if (!query) return null;
+    const q = String(query).trim().toLowerCase();
+
+    // --- RAG_AGENT: явные правовые маркеры (приоритет — проверяем ПЕРВЫМИ) ---
+    // Соответствие норме, правовая оценка, ссылка на НПА, добавление условия.
+    const legalMarkers = /(соответств|проверь.*(на|по)\s|правомер|законн|незаконн|противоречит|нарушает|оспор|обоснуй|сошлись|ссыл(ка|ку|ки|айся)\s+на\s+(ст|закон|кодекс|норм)|по\s+(гк|ук|тк|кодекс)|норм[аеуы]|неустойк|форс-?мажор|ответственност|штраф|пени|обязательств|санкци|оцени\s+риск|риск|правов)/i;
+    if (legalMarkers.test(q)) return 'RAG_AGENT';
+
+    // --- EDITOR: чистая техническая правка без правовых последствий ---
+    const editTarget = '(сумм|цифр|число|дат|срок|фио|имя|фамил|название|наименование|реквизит|слов|букв|опечат|орфограф)';
+    const editMarkers = new RegExp(
+        `(опечат|орфограф|поправь|подправь|перепиши\\s+слов|` +
+        `(исправь|замени|поменяй|измени|поставь|обнови)\\s+(${editTarget}|\\d)|` +
+        `удали\\s+(пункт|абзац|предложен|строк|слов|запят|пробел)|` +
+        `убери\\s+(пункт|абзац|предложен|строк|слов|запят|пробел|лишн)|` +
+        `перенеси|выдели\\s+жирн|сделай\\s+(заголов|жирн|курсив)|пронумеруй|разбей\\s+на\\s+пункт|формат)`, 'i'
+    );
+    if (editMarkers.test(q)) return 'EDITOR';
+
+    return null; // неясно — пусть решит LLM
+}
+
+async function llmIntent(query) {
+    const systemPrompt = `Ты — классификатор намерений юриста, работающего в РЕДАКТОРЕ документов Кыргызской Республики. У юриста открыт документ. Определи, что он хочет сделать:
+- "EDITOR"    — техническая правка БЕЗ правовых последствий: исправить опечатку, изменить сумму/цифру/дату/срок/ФИО/название, удалить или перенести текст, форматирование. Точное значение либо указано, либо очевидно из документа.
+- "RAG_AGENT" — правовая задача: проверить на соответствие норме, выбрать или сослаться на статью, добавить юридическое условие (неустойка, ответственность, форс-мажор), оценить риски, обосновать позицию.
+- "CLARIFY"   — намерение размыто: непонятно, нужна ли просто механическая правка ИЛИ правовая проверка (например "тут что-то не так с суммой", "посмотри этот пункт").
+
+Отвечаешь СТРОГО JSON, без markdown, без пояснений.`;
+    const userPrompt = `Запрос юриста: "${query}"
+
+Формат: {"intent": "EDITOR"} | {"intent": "RAG_AGENT"} | {"intent": "CLARIFY"}`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
+        const m = cleaned.match(/\{[\s\S]*\}/);
+        if (!m) return 'RAG_AGENT';
+        const intent = JSON.parse(m[0]).intent;
+        return ['EDITOR', 'RAG_AGENT', 'CLARIFY'].includes(intent) ? intent : 'RAG_AGENT';
+    } catch (e) {
+        console.error('[LLM-Intent] failed:', e.message);
+        return 'RAG_AGENT'; // fail-safe: лучше лишний RAG, чем пропущенная правовая проверка
+    }
+}
+
+async function classifyUserIntent(query) {
+    const quick = quickIntent(query);
+    if (quick) {
+        console.log(`[Intent] quick → ${quick} (q=${(query || '').length}ch)`);
+        return quick;
+    }
+    const llm = await llmIntent(query);
+    console.log(`[Intent] llm → ${llm} (q=${(query || '').length}ch)`);
     return llm;
 }
 
