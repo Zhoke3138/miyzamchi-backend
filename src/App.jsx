@@ -1398,37 +1398,102 @@ const parseAgentCommands=(text)=>{
 };
 
 const applyAgentCommand=(cmd,toastFn)=>{
-  if(!(!!window.docEngine)){toastFn&&toastFn('warning','Редактор не найден');return false;}
+  // ⚠️ После миграции на SuperDoc мутация идёт через ProseMirror-транзакцию:
+  //   view = window.docEngine.view (EditorView), view.dispatch(tr).
+  // Раньше тут были заглушки (const ok=true; null;) → тост врал об успехе,
+  // а документ не менялся. Теперь — реальные tr.insert / tr.replaceWith.
+  if(!window.docEngine){toastFn&&toastFn('warning','Редактор не найден');return false;}
+  const view = window.docEngine.view;
+  if(!view || !view.state){
+    console.error('[applyAgentCommand] SuperDoc view/state недоступен:', window.docEngine);
+    toastFn&&toastFn('warning','Редактор не готов (нет view)');
+    return false;
+  }
   const text=String(cmd.text||'').trim();
-  if(!text){toastFn&&toastFn('warning','Пустой текст команды');return false;}
+  if(!text && cmd.type!=='replace_all'){toastFn&&toastFn('warning','Пустой текст команды');return false;}
+
   try{
-    if(cmd.type==='insert_smart'){
-      const ok = true;
-      if(ok){
-        toastFn&&toastFn('check','Умная вставка применена');
-      } else {
-        toastFn&&toastFn('check','Текст добавлен в конец (якорь не найден)');
+    const { state } = view;
+    const schema = state.schema;
+    const paraType = schema.nodes.paragraph;
+
+    // Текст → массив абзацев (ProseMirror-узлы text не могут содержать \n,
+    // поэтому многострочную вставку режем на параграфы).
+    const makeParas=(t)=>{
+      if(!paraType) return null;
+      const lines=String(t).split(/\n+/).map(s=>s.trim()).filter(Boolean);
+      const nodes=(lines.length?lines:['']).map(line=>
+        line ? paraType.createAndFill(null, schema.text(line)) : paraType.createAndFill(null)
+      ).filter(Boolean);
+      return nodes.length?nodes:null;
+    };
+
+    // Позиция сразу ПОСЛЕ блока, содержащего anchor (или null если не найден).
+    const findBlockAfterAnchor=(anchor)=>{
+      if(!anchor) return null;
+      let result=null;
+      state.doc.descendants((node,pos)=>{
+        if(result!==null) return false;
+        if(node.isText && node.text && node.text.includes(anchor)){
+          const $=state.doc.resolve(pos);
+          result=$.after($.depth);   // конец абзаца с якорем
+          return false;
+        }
+        return true;
+      });
+      return result;
+    };
+
+    if(cmd.type==='insert_smart' || cmd.type==='insert_end' || cmd.type==='insert_cursor'){
+      const anchor=String(cmd.anchor||'').trim();
+      let pos=null, matched=false;
+      if(cmd.type==='insert_smart'){
+        pos=findBlockAfterAnchor(anchor);
+        matched=pos!==null;
+      } else if(cmd.type==='insert_cursor'){
+        pos=state.selection.to;
+        matched=true;
       }
-    }else if(cmd.type==='insert_end'){
-      null;
-      toastFn&&toastFn('check','Вставлено в конец');
-    }else if(cmd.type==='insert_cursor'){
-      null;
-      toastFn&&toastFn('check','Вставлено');
-    }else if(cmd.type==='replace_selection'){
-      const ok=true;
-      if(!ok){toastFn&&toastFn('warning','Нет выделения');return false;}
-      toastFn&&toastFn('check','Выделение заменено');
-    }else if(cmd.type==='replace_all'){
-      null;
-      toastFn&&toastFn('check','Документ заменён');
-    }else{
-      toastFn&&toastFn('warning','Неизвестная команда');return false;
+      if(pos===null) pos=state.doc.content.size;   // конец документа
+
+      const paras=makeParas(text);
+      console.log('[applyAgentCommand] insert', {type:cmd.type, anchor:anchor.slice(0,40), anchorMatched:matched, pos, docSize:state.doc.content.size, paras:paras&&paras.length, textLen:text.length});
+
+      const tr = paras ? state.tr.insert(pos, paras) : state.tr.insertText('\n'+text, pos);
+      view.dispatch(tr);
+      try{ window.docEngine.commands && window.docEngine.commands.focus && window.docEngine.commands.focus(); }catch(_){ }
+
+      if(cmd.type==='insert_smart') toastFn&&toastFn('check', matched?'Умная вставка применена':'Якорь не найден — добавлено в конец');
+      else if(cmd.type==='insert_cursor') toastFn&&toastFn('check','Вставлено в позицию курсора');
+      else toastFn&&toastFn('check','Вставлено в конец');
+      return true;
     }
-    return true;
+
+    if(cmd.type==='replace_selection'){
+      const {from,to}=state.selection;
+      if(from>=to){toastFn&&toastFn('warning','Нет выделения для замены');return false;}
+      console.log('[applyAgentCommand] replace_selection', {from,to,textLen:text.length});
+      view.dispatch(state.tr.insertText(text, from, to));
+      try{ window.docEngine.commands && window.docEngine.commands.focus && window.docEngine.commands.focus(); }catch(_){ }
+      toastFn&&toastFn('check','Выделение заменено');
+      return true;
+    }
+
+    if(cmd.type==='replace_all'){
+      const end=state.doc.content.size;
+      const paras=makeParas(text);
+      console.log('[applyAgentCommand] replace_all', {docSize:end,paras:paras&&paras.length,textLen:text.length});
+      const tr = paras ? state.tr.replaceWith(0, end, paras) : state.tr.insertText(text, 0, end);
+      view.dispatch(tr);
+      toastFn&&toastFn('check','Документ заменён');
+      return true;
+    }
+
+    toastFn&&toastFn('warning','Неизвестная команда: '+cmd.type);
+    return false;
   }catch(e){
-    console.error('applyAgentCommand failed:',e);
-    toastFn&&toastFn('warning','Ошибка применения: '+e.message);
+    console.error('[applyAgentCommand] mutation failed:', e, {cmdType:cmd.type, anchor:cmd.anchor});
+    toastFn&&toastFn('warning','Ошибка применения: '+(e&&e.message||e));
     return false;
   }
 };
@@ -7259,6 +7324,20 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           {previewing && <span style={{fontSize:9.5,color:'var(--accent)',fontWeight:700,letterSpacing:'.04em'}}>В РЕДАКТОРЕ →</span>}
         </div>
         <div style={{padding:'6px 10px',fontSize:11.5,color:'var(--text)',lineHeight:1.45,background:'var(--bg-editor)',maxHeight:120,overflowY:'auto',whiteSpace:'pre-wrap'}}>{cmd.text}</div>
+        {!applied && !rejected && (
+          <div style={{display:'flex',gap:6,padding:'6px 9px',borderTop:'1px solid var(--border)',background:'var(--bg-panel)'}}>
+            <button
+              onClick={()=>handleApplyCmd(msgId,idx,cmd)}
+              style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'5px 8px',fontSize:11,fontWeight:600,color:'#fff',background:'var(--accent)',border:'none',borderRadius:5,cursor:'pointer'}}>
+              <Ico k="check" sz={11} col="#fff"/> Применить
+            </button>
+            <button
+              onClick={()=>handleRejectCmd(msgId,idx)}
+              style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'5px 10px',fontSize:11,fontWeight:600,color:'var(--muted)',background:'transparent',border:'1px solid var(--border)',borderRadius:5,cursor:'pointer'}}>
+              Отклонить
+            </button>
+          </div>
+        )}
       </div>
     );
   };
