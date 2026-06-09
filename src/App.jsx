@@ -1269,16 +1269,28 @@ const ArticleModal=({article,onClose,onInsert})=>{
 const getDocSnapshot=()=>{
   if (!window.docEngine) return {text:"",selection:"",hasSelection:false};
   try {
-    const text = window.docEngine.getText() || '';
-    const { from, to } = window.docEngine.state.selection;
+    // ⚠️ SuperDoc API (после миграции с TipTap):
+    //   • текст       → docEngine.doc.getText({})  (а НЕ docEngine.getText())
+    //   • стейт/выбор → docEngine.view.state       (а НЕ docEngine.state)
+    // Старые TipTap-вызовы возвращали undefined → агент думал, что документ пуст.
+    const doc = window.docEngine.doc;
+    const text = (doc && typeof doc.getText === 'function')
+      ? String(doc.getText({}) || '')
+      : '';
+
     let selection = '';
     let hasSelection = false;
-    if (from < to) {
-      selection = window.docEngine.state.doc.textBetween(from, to, '\n');
-      hasSelection = selection.trim().length > 0;
+    const view = window.docEngine.view;
+    if (view && view.state) {
+      const { from, to } = view.state.selection;
+      if (from < to) {
+        selection = view.state.doc.textBetween(from, to, '\n');
+        hasSelection = selection.trim().length > 0;
+      }
     }
     return { text, selection, hasSelection };
   } catch (err) {
+    console.warn('[getDocSnapshot] failed:', err);
     return {text:"",selection:"",hasSelection:false};
   }
 };
