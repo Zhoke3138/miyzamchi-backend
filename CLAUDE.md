@@ -1,5 +1,7 @@
 # Мыйзамчы
 
+> 🗺️ **ПЕРЕД ЛЮБОЙ ПРАВКОЙ КОДА — сверься с [`claude_architecture.md`](claude_architecture.md)** (единая карта монорепо: активный фронт/бэк, AI-роутинг, что игнорировать).
+
 Кыргызский юридический AI-ассистент. Юрист загружает документ (договор, жалобу, иск) → система ищет противоречия с НПА КР через RAG (Pinecone) + мультиагентный аудит. Деплой на Render. Заливка кода через GitHub веб-интерфейс.
 
 ## Профиль пользователя
@@ -85,6 +87,7 @@
 - Touch `server.js`, `.env`, `scripts/seed.js` без явного "да"
 
 ## Документация архитектуры
+- `claude_architecture.md` — **🗺️ ЕДИНАЯ КАРТА (source of truth)**: активный фронт (`index.html→src/App.jsx`, Vite/Netlify) vs бэк (`server.js`+routes, Render), AI-роутинг намерений (`classifyUserIntent`), кладбище кода (`ide/`, `ide_bak/`, `ide-vite/`). Сверяться ПЕРЕД правками.
 - `ARCHITECTURE.md` — **Miyzamchi 2.0 (Stateful Multi-Agent RAG)**: микросервис парсинга (Node@Render ↔ Python/Docling@Cloud Run), гибридный чанкинг, волновой троттлер, ZDR, динамический reasoning_effort. Новые модули: `parser-service/`, `services/{parserService,llmClients,legalAgents}.js`, `lib/waveThrottle.js`, `routes/analyzeV2.js`
 - `DEPLOY_CLOUD_RUN.md` — пошаговый деплой парсера на Cloud Run (для не-программиста): SA, JSON-ключ, права, env на Render
 - `REFACTOR_ROADMAP.md` — детальный чек-лист всех 5 фаз с описанием design decisions
