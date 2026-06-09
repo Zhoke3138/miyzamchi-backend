@@ -1330,18 +1330,23 @@ ${selBlock}
 
 \`\`\`json
 {
-  "reasoning": "Если ПРАВКА — кратко (1-2 предложения) почему ты выбрал эту норму. Если АНАЛИЗ — полный ответ пользователю: разбор + выводы + обязательный disclaimer о проверке номеров статей если ты их упоминал. Это поле увидит пользователь.",
-  "anchor_text": "Только при ПРАВКЕ — точная фраза 5-10 слов из ТЕКУЩЕГО документа, СРАЗУ ПОСЛЕ которой нужно вставить новый текст. При АНАЛИЗЕ — пустая строка \\"\\". Если документ пуст — EMPTY.",
-  "insertion_text": "Только при ПРАВКЕ — готовый юридический текст. При АНАЛИЗЕ — пустая строка \\"\\""
+  "reasoning": "Если ПРАВКА — кратко (1-2 предложения) что и почему меняешь. Если АНАЛИЗ — полный ответ пользователю: разбор + выводы + disclaimer о сверке номеров статей. Это поле увидит пользователь.",
+  "commands": [
+    {"op": "replace", "old_text": "ТОЧНАЯ существующая фраза из документа (посимвольно, как есть)", "new_text": "новый текст"},
+    {"op": "insert_after", "anchor": "ТОЧНАЯ фраза-якорь из документа", "text": "новый абзац"},
+    {"op": "insert_end", "text": "текст для добавления в конец документа"}
+  ]
 }
 \`\`\`
 
-# ПРАВИЛА
-1. anchor_text — буквальная цитата из документа (при правке).
-2. При замене: anchor_text = начало выделенного фрагмента, insertion_text = новый текст.
-3. При АНАЛИЗЕ insertion_text ВСЕГДА пустой — иначе анализ будет вставлен как правка.
-4. Если ответ длинный — заверши его до закрытия \`\`\`. Не обрывай JSON.
-5. Если упоминаешь номера статей в анализе — обязательно добавь disclaimer о сверке с минюстом.`;
+# ПРАВИЛА КОМАНД (commands)
+1. ИЗМЕНИТЬ существующее (сумму, дату, ФИО, формулировку) → "op":"replace". old_text = ТОЧНАЯ существующая фраза из документа (скопируй буквально, посимвольно, со знаками), new_text = на что заменить. НЕ дублируй — именно replace.
+2. ДОБАВИТЬ новый пункт/абзац → "op":"insert_after" с anchor (фраза, ПОСЛЕ которой вставить) ЛИБО "op":"insert_end" (в конец).
+3. anchor и old_text копируй ДОСЛОВНО из ТЕКУЩЕГО документа — иначе фрагмент не найдётся при поиске.
+4. Можно вернуть НЕСКОЛЬКО команд (например, заменить и сумму, и дату).
+5. При АНАЛИЗЕ (без правки) → "commands": [] (пустой массив), весь ответ в reasoning.
+6. Документ пуст → используй только "insert_end". Не обрывай JSON.
+7. Если упоминаешь номера статей — добавь disclaimer о сверке с cbd.minjust.gov.kg.`;
   return { prompt, documentContext: docCtx };
 };
 
@@ -1362,17 +1367,44 @@ const parseAgentCommands=(text)=>{
     if (parsed.reasoning) {
       result.analysis = parsed.reasoning;
     }
-    // Support both new (insertion_text) and legacy (exact_insertion) field names
-    const insertion = (parsed.insertion_text || parsed.exact_insertion || '').toString().trim();
-    if (insertion) {
-      const rawAnchor = (parsed.anchor_text || '').trim();
-      // EMPTY = explicit signal that doc is empty → insert at end with no anchor
-      const isEmptyMarker = rawAnchor === 'EMPTY' || rawAnchor === '';
-      result.commands.push({
-        type: 'insert_smart',
-        text: insertion,
-        anchor: isEmptyMarker ? '' : rawAnchor
-      });
+
+    // ─── НОВЫЙ контракт: массив commands с операциями SuperDoc ───
+    // [{op:'replace', old_text, new_text}, {op:'insert_after', anchor, text},
+    //  {op:'insert_end', text}]. Маппим op → внутренний type для applyAgentCommand.
+    if (Array.isArray(parsed.commands)) {
+      for (const c of parsed.commands) {
+        if (!c || !c.op) continue;
+        const op = String(c.op).toLowerCase();
+        if (op === 'replace') {
+          const oldText = (c.old_text || c.oldText || '').toString().trim();
+          const newText = (c.new_text || c.newText || c.text || '').toString();
+          if (oldText && newText) result.commands.push({ type:'replace_smart', oldText, text:newText });
+        } else if (op === 'insert_after') {
+          const t = (c.text || c.new_text || '').toString().trim();
+          const anchor = (c.anchor || c.anchor_text || '').toString().trim();
+          if (t) result.commands.push({ type:'insert_after', anchor: anchor==='EMPTY'?'':anchor, text:t });
+        } else if (op === 'insert_end' || op === 'insert') {
+          const t = (c.text || '').toString().trim();
+          if (t) result.commands.push({ type:'insert_end', text:t });
+        } else if (op === 'replace_selection') {
+          const t = (c.text || c.new_text || '').toString().trim();
+          if (t) result.commands.push({ type:'replace_selection', text:t });
+        }
+      }
+    }
+
+    // ─── ОБРАТНАЯ СОВМЕСТИМОСТЬ: старый формат insertion_text/anchor_text ───
+    if (result.commands.length === 0) {
+      const insertion = (parsed.insertion_text || parsed.exact_insertion || '').toString().trim();
+      if (insertion) {
+        const rawAnchor = (parsed.anchor_text || '').trim();
+        const isEmptyMarker = rawAnchor === 'EMPTY' || rawAnchor === '';
+        result.commands.push({
+          type: 'insert_smart',
+          text: insertion,
+          anchor: isEmptyMarker ? '' : rawAnchor
+        });
+      }
     }
   } catch (e) {
     // JSON сломан (обрезанный stream / лишний текст). Пытаемся вытащить хоть reasoning
@@ -1397,11 +1429,30 @@ const parseAgentCommands=(text)=>{
   return result;
 };
 
+// Track Changes: включаем режим рецензирования один раз за сессию (идемпотентно).
+// Каждая ИИ-правка тогда становится tracked change — юрист принимает/отклоняет
+// её в SuperDoc или Word. Best-effort: если API нет — правка применится напрямую.
+const ensureTrackChanges=(editor)=>{
+  try{
+    // автор правок — чтобы в рецензировании было видно «Мыйзамчи AI»
+    try{
+      const sd=window.superdoc;
+      if(sd && !sd.user) sd.user={name:'Мыйзамчи AI', email:'ai@miyzamchi'};
+    }catch(_){ }
+    if(window.__miyzTrackOn) return true;
+    const c=editor && editor.commands;
+    if(c && typeof c.enableTrackChanges==='function'){ c.enableTrackChanges(); window.__miyzTrackOn=true; return true; }
+    if(c && typeof c.toggleTrackChanges==='function'){ c.toggleTrackChanges(); window.__miyzTrackOn=true; console.log('[trackChanges] enabled via toggle'); return true; }
+  }catch(e){ console.warn('[trackChanges] enable failed (правки пойдут напрямую):', e); }
+  return false;
+};
+
 const applyAgentCommand=(cmd,toastFn)=>{
-  // ⚠️ После миграции на SuperDoc мутация идёт через ProseMirror-транзакцию:
-  //   view = window.docEngine.view (EditorView), view.dispatch(tr).
-  // Раньше тут были заглушки (const ok=true; null;) → тост врал об успехе,
-  // а документ не менялся. Теперь — реальные tr.insert / tr.replaceWith.
+  // ⚠️ SuperDoc-нативный путь (эталон по superdoc_docs.md):
+  //   • replace → window.superdoc.search(old) → commands.insertContentAt({from,to}, new)
+  //   • insert  → editor.doc.insert({value, type}) / insertContentAt
+  // ProseMirror-транзакции (view.dispatch) остаются ФОЛБЭКОМ, если нативный
+  // метод недоступен в рантайме. Все мутации идут в режиме Track Changes.
   if(!window.docEngine){toastFn&&toastFn('warning','Редактор не найден');return false;}
   const view = window.docEngine.view;
   if(!view || !view.state){
@@ -1409,6 +1460,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
     toastFn&&toastFn('warning','Редактор не готов (нет view)');
     return false;
   }
+  const cmds = window.docEngine.commands || null;
   const text=String(cmd.text||'').trim();
   if(!text && cmd.type!=='replace_all'){toastFn&&toastFn('warning','Пустой текст команды');return false;}
 
@@ -1416,6 +1468,55 @@ const applyAgentCommand=(cmd,toastFn)=>{
     const { state } = view;
     const schema = state.schema;
     const paraType = schema.nodes.paragraph;
+
+    // ═══ REPLACE_SMART — точечная inline-замена old_text → new_text ═══
+    // Эталонный путь: нативный поиск SuperDoc + insertContentAt по {from,to}.
+    if(cmd.type==='replace_smart'){
+      const oldText=String(cmd.oldText||'').trim();
+      const newText=String(cmd.text||'');
+      if(!oldText){toastFn&&toastFn('warning','Не указан текст для замены (old_text)');return false;}
+      ensureTrackChanges(window.docEngine);
+
+      // 1) Нативный SuperDoc-поиск → точные координаты {from,to}
+      let matches=null;
+      try{
+        if(window.superdoc && typeof window.superdoc.search==='function') matches=window.superdoc.search(oldText);
+      }catch(e){ console.warn('[applyAgentCommand] superdoc.search упал, иду в PM-фолбэк:', e); }
+
+      if(matches && matches.length){
+        const m=matches[0];
+        console.log('[applyAgentCommand] replace via search+insertContentAt', {from:m.from,to:m.to,matches:matches.length,old:oldText.slice(0,40),newLen:newText.length});
+        if(cmds && typeof cmds.insertContentAt==='function'){
+          cmds.insertContentAt({from:m.from,to:m.to}, newText);
+        } else {
+          view.dispatch(view.state.tr.insertText(newText, m.from, m.to));
+        }
+        try{ cmds && cmds.focus && cmds.focus(); }catch(_){ }
+        toastFn&&toastFn('check', matches.length>1?`Заменено (1 из ${matches.length} совпадений)`:'Заменено');
+        return true;
+      }
+
+      // 2) ФОЛБЭК: ручной поиск по text-нодам ProseMirror
+      let done=false;
+      state.doc.descendants((node,pos)=>{
+        if(done) return false;
+        if(node.isText && node.text){
+          const idx=node.text.indexOf(oldText);
+          if(idx!==-1){
+            const from=pos+idx, to=from+oldText.length;
+            console.log('[applyAgentCommand] replace via PM fallback', {from,to,old:oldText.slice(0,40)});
+            view.dispatch(state.tr.insertText(newText, from, to));
+            done=true; return false;
+          }
+        }
+        return true;
+      });
+      if(done){ try{ cmds && cmds.focus && cmds.focus(); }catch(_){ } toastFn&&toastFn('check','Заменено'); return true; }
+
+      console.warn('[applyAgentCommand] replace: фрагмент не найден:', oldText.slice(0,80));
+      toastFn&&toastFn('warning','Фрагмент не найден: «'+oldText.slice(0,40)+'»');
+      return false;
+    }
 
     // Текст → массив абзацев (ProseMirror-узлы text не могут содержать \n,
     // поэтому многострочную вставку режем на параграфы).
@@ -1444,10 +1545,28 @@ const applyAgentCommand=(cmd,toastFn)=>{
       return result;
     };
 
-    if(cmd.type==='insert_smart' || cmd.type==='insert_end' || cmd.type==='insert_cursor'){
+    if(cmd.type==='insert_smart' || cmd.type==='insert_after' || cmd.type==='insert_end' || cmd.type==='insert_cursor'){
+      ensureTrackChanges(window.docEngine);
       const anchor=String(cmd.anchor||'').trim();
+      const isAnchored=(cmd.type==='insert_smart'||cmd.type==='insert_after');
+
+      // Нативный путь для вставки В КОНЕЦ (без якоря): editor.doc.insert с markdown —
+      // переносы строк станут реальными абзацами (см. superdoc_docs.md).
+      if(cmd.type==='insert_end' || (isAnchored && !anchor)){
+        try{
+          const docApi=window.docEngine.doc;
+          if(docApi && typeof docApi.insert==='function'){
+            docApi.insert({ value:text, type:'markdown' });
+            console.log('[applyAgentCommand] insert_end via doc.insert(markdown)', {textLen:text.length});
+            try{ cmds && cmds.focus && cmds.focus(); }catch(_){ }
+            toastFn&&toastFn('check','Вставлено в конец');
+            return true;
+          }
+        }catch(e){ console.warn('[applyAgentCommand] doc.insert упал, PM-фолбэк:', e); }
+      }
+
       let pos=null, matched=false;
-      if(cmd.type==='insert_smart'){
+      if(isAnchored){
         pos=findBlockAfterAnchor(anchor);
         matched=pos!==null;
       } else if(cmd.type==='insert_cursor'){
@@ -1463,13 +1582,14 @@ const applyAgentCommand=(cmd,toastFn)=>{
       view.dispatch(tr);
       try{ window.docEngine.commands && window.docEngine.commands.focus && window.docEngine.commands.focus(); }catch(_){ }
 
-      if(cmd.type==='insert_smart') toastFn&&toastFn('check', matched?'Умная вставка применена':'Якорь не найден — добавлено в конец');
+      if(isAnchored) toastFn&&toastFn('check', matched?'Вставка применена':'Якорь не найден — добавлено в конец');
       else if(cmd.type==='insert_cursor') toastFn&&toastFn('check','Вставлено в позицию курсора');
       else toastFn&&toastFn('check','Вставлено в конец');
       return true;
     }
 
     if(cmd.type==='replace_selection'){
+      ensureTrackChanges(window.docEngine);
       const {from,to}=state.selection;
       if(from>=to){toastFn&&toastFn('warning','Нет выделения для замены');return false;}
       console.log('[applyAgentCommand] replace_selection', {from,to,textLen:text.length});
@@ -1480,6 +1600,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
     }
 
     if(cmd.type==='replace_all'){
+      ensureTrackChanges(window.docEngine);
       const end=state.doc.content.size;
       const paras=makeParas(text);
       console.log('[applyAgentCommand] replace_all', {docSize:end,paras:paras&&paras.length,textLen:text.length});
@@ -1499,7 +1620,9 @@ const applyAgentCommand=(cmd,toastFn)=>{
 };
 
 const COMMAND_META={
+  replace_smart:{label:'Заменить фрагмент',icon:'sparkles',color:'var(--orange)'},
   insert_smart:{label:'Умная вставка',icon:'sparkles',color:'var(--accent)'},
+  insert_after:{label:'Вставить после фрагмента',icon:'plus',color:'var(--accent)'},
   insert_end:{label:'Вставить в конец',icon:'plus',color:'var(--green)'},
   insert_cursor:{label:'Вставить в курсор',icon:'plus',color:'var(--accent)'},
   replace_selection:{label:'Заменить выделение',icon:'sparkles',color:'var(--orange)'},
@@ -7323,7 +7446,11 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           {rejected && <span style={{fontSize:9.5,color:'var(--muted)',fontWeight:700,letterSpacing:'.04em'}}>ОТКЛОНЕНО</span>}
           {previewing && <span style={{fontSize:9.5,color:'var(--accent)',fontWeight:700,letterSpacing:'.04em'}}>В РЕДАКТОРЕ →</span>}
         </div>
-        <div style={{padding:'6px 10px',fontSize:11.5,color:'var(--text)',lineHeight:1.45,background:'var(--bg-editor)',maxHeight:120,overflowY:'auto',whiteSpace:'pre-wrap'}}>{cmd.text}</div>
+        <div style={{padding:'6px 10px',fontSize:11.5,color:'var(--text)',lineHeight:1.45,background:'var(--bg-editor)',maxHeight:120,overflowY:'auto',whiteSpace:'pre-wrap'}}>
+          {cmd.type==='replace_smart' && cmd.oldText
+            ? (<span><span style={{textDecoration:'line-through',color:'var(--muted)'}}>{cmd.oldText}</span>{'  →  '}<span style={{color:'var(--green)',fontWeight:600}}>{cmd.text}</span></span>)
+            : cmd.text}
+        </div>
         {!applied && !rejected && (
           <div style={{display:'flex',gap:6,padding:'6px 9px',borderTop:'1px solid var(--border)',background:'var(--bg-panel)'}}>
             <button
