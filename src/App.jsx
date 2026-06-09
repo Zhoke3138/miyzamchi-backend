@@ -1,6 +1,5 @@
 import { SuperDocEditor } from '@superdoc-dev/react';
 import '@superdoc-dev/react/style.css';
-import { dispatchSuperDocTool } from '@superdoc-dev/sdk';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import * as ReactDOM from 'react-dom/client';
 import DOMPurify from 'dompurify';
@@ -435,7 +434,14 @@ async function executeAIEdit({ instruction, text, doc }) {
         for (const call of data.tool_calls) {
           try {
             const args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : call.arguments;
-            await dispatchSuperDocTool(doc, call.name, args);
+            // Исполнение инструмента
+            if (window.superdoc && typeof window.superdoc.dispatchTool === 'function') {
+              await window.superdoc.dispatchTool(call.name, args);
+            } else if (doc.commands && typeof doc.commands[call.name] === 'function') {
+              doc.commands[call.name](args);
+            } else {
+              console.warn(`[IDE SplitExecution] Tool ${call.name} dispatch method not found on client.`);
+            }
             toolResponses.push({
                functionResponse: { name: call.name, response: { status: "success" } }
             });
