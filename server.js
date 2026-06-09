@@ -2044,7 +2044,30 @@ async function handleFast(message, history, retrievalResult, res, retryCount = 0
 // с системным промптом AGENT_SYSTEM_PROMPT (строгий JSON).
 // История чата сохраняется — агент видит предыдущие правки.
 // ============================================================
+// ════════════════════════════════════════════════════════════════════
+// EDIT_COMMAND_REGEX — единый источник истины для распознавания ПРЯМЫХ
+// команд редактирования. Используется и на верхнем уровне handleAgent
+// (чтобы обойти doc-router → handleDeepThinking), и в classifyUserIntent.
+// • Граница (?!\p{L}) + флаг u — \b в JS НЕ работает после кириллицы.
+// • (?:^|\s) — глагол в начале ИЛИ после пробела (ловит «проверь и измени»).
+// • Включены частые опечатки ввода: зиени, испарвь, заемни, помеяй, удоли…
+// ════════════════════════════════════════════════════════════════════
+const EDIT_COMMAND_REGEX = /(?:^|\s)(измени|измини|зиени|исправь|испарвь|замени|заемни|удали|удоли|поменяй|помеяй|установи|перепиши|сделай|подправь)(?!\p{L})/iu;
+
 async function handleAgent(message, history, res, retryCount = 0, userQuery = null, documentContext = null) {
+    // ─── KILL-SWITCH (ВЕРХНИЙ УРОВЕНЬ — до любого RAG-роутинга) ────────
+    // Прямая команда редактирования ("Измени сумму…", даже с опечаткой
+    // "ЗИени…") ОБЯЗАНА идти в редактор (JSON-тулзы), а НЕ в RAG/DeepThinking.
+    // Проверяем ДО doc-router, иначе короткий запрос без распознанного
+    // документа уходил в classifyQuery → 'complex' → handleDeepThinking (баг).
+    // Берём userQuery (короткая инструкция); fallback — первые 200 символов
+    // message, чтобы НЕ сканировать весь документ (ложные срабатывания).
+    const killQuery = (userQuery && userQuery.trim()) || String(message || '').slice(0, 200);
+    const forceEditor = EDIT_COMMAND_REGEX.test(killQuery);
+    if (forceEditor) {
+        console.log(`[AGENT] KILL-SWITCH → EDITOR forced (bypass doc-router & RAG) | q="${killQuery.slice(0, 60)}"`);
+    }
+
     // ─────────────────────────────────────────────────────────────
     // РОУТЕР: если запрос юриста БЕЗ реального документа — переадресуем
     // в 5-этапную deep-thinking цепочку. Agent-режим (JSON для редактирования)
@@ -2055,7 +2078,7 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
     // даже когда документа нет. Поэтому ищем ТЕЛО блока между """...""",
     // а не сам маркер.
     // ─────────────────────────────────────────────────────────────
-    if (retryCount === 0) {
+    if (retryCount === 0 && !forceEditor) {
         // 1) Источник текста документа:
         //    • НОВЫЙ путь — отдельное поле req.body.documentContext (без regex-костыля);
         //    • FALLBACK (старый клиент) — вырезаем блок ТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА: """...""".
@@ -2095,7 +2118,9 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
     // может быть весь документ) → безопасный дефолт RAG_AGENT (старое поведение).
     // ─────────────────────────────────────────────────────────────
     let intent = 'RAG_AGENT';
-    if (userQuery && userQuery.trim()) {
+    if (forceEditor) {
+        intent = 'EDITOR';   // kill-switch уже решил — RAG не нужен, LLM не зовём
+    } else if (userQuery && userQuery.trim()) {
         try {
             intent = await classifyUserIntent(userQuery.trim());
         } catch (e) {
@@ -2352,19 +2377,11 @@ async function llmIntent(query) {
 }
 
 async function classifyUserIntent(query) {
-    // ─── KILL SWITCH ───────────────────────────────────────────────
-    // Железный перехват прямых команд редактирования. Срабатывает РАНЬШЕ
-    // правовых маркеров (quickIntent) и LLM (llmIntent). Нужен потому, что
-    // фраза вида "Измени сумму претензии на 33 033" раньше уходила в
-    // RAG_AGENT из-за слова "претензия" → фронт ждал tool_calls, получал
-    // текст консультации и падал. Если запрос НАЧИНАЕТСЯ с императива-правки —
-    // это всегда EDITOR, RAG не нужен.
-    // ⚠️ Граница слова — НЕ \b: в JS \b опирается на ASCII \w, и после кириллицы
-    // не срабатывает («измени\b» молча не матчится). Используем (?!\p{L}) с
-    // флагом u — «дальше не буква» (пробел/цифра/знак/конец). Так "Измени сумму"
-    // ловится, а "изменился"/"заменителем" — нет.
-    const editRegex = /^\s*(измени|исправь|замени|удали|поменяй|установи|перепиши|сделай|подправь)(?!\p{L})/iu;
-    if (query && editRegex.test(query)) {
+    // ─── KILL SWITCH (второй уровень защиты) ────────────────────────
+    // Прямые команды редактирования (+ частые опечатки) → EDITOR сразу,
+    // в обход правовых маркеров (quickIntent) и LLM (llmIntent). Используем
+    // общий EDIT_COMMAND_REGEX — тот же, что и на верхнем уровне handleAgent.
+    if (query && EDIT_COMMAND_REGEX.test(query)) {
         console.log(`[Intent] kill-switch → EDITOR (q=${(query || '').length}ch)`);
         return 'EDITOR';
     }
