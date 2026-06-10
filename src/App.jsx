@@ -1417,13 +1417,14 @@ const ensureTrackChanges=(editor)=>{
 };
 
 const applyAgentCommand=(cmd,toastFn)=>{
-  // ⚠️ SuperDoc-нативный путь (эталон по superdoc_docs.md):
-  //   • replace → window.superdoc.search(old) → commands.insertContentAt({from,to}, new)
-  //   • insert  → editor.doc.insert({value, type}) / insertContentAt
-  // ProseMirror-транзакции (view.dispatch) остаются ФОЛБЭКОМ, если нативный
-  // метод недоступен в рантайме. Все мутации идут в режиме Track Changes.
+  // ⚠️ Чистый SuperDoc Document API (editor.doc) — НЕ deprecated:
+  //   replace→doc.find→doc.replace · comment→doc.comments.create ·
+  //   format→doc.format.apply · insert→doc.insert. editor.commands и editor.view
+  //   ОБА deprecated (само чтение печатает warning) → берём ЛЕНИВО (getCmds/
+  //   ensurePM) и ТОЛЬКО как fallback. Мутации — в режиме Track Changes.
   if(!window.docEngine){toastFn&&toastFn('warning','Редактор не найден');return false;}
-  const cmds = window.docEngine.commands || null;
+  const docApi = window.docEngine.doc || null;
+  const getCmds=()=>{ try{ return window.docEngine.commands||null; }catch(_){ return null; } };
   const text=String(cmd.text||'').trim();
   if(!text && cmd.type!=='replace_all' && cmd.type!=='format'){toastFn&&toastFn('warning','Пустой текст команды');return false;}
 
@@ -1439,36 +1440,53 @@ const applyAgentCommand=(cmd,toastFn)=>{
     return true;
   };
 
+  // Чистый поиск target по тексту через Document API (без commands/view).
+  // doc.find → { context:[{ target, textRanges }] } — берём target для мутаций.
+  const findTarget=(needle)=>{
+    if(!needle || !docApi || typeof docApi.find!=='function') return null;
+    try{
+      const fr=docApi.find({ select:{ text: needle } });
+      const arr = fr && (fr.context || fr.items || fr.matches);
+      if(Array.isArray(arr) && arr.length){ const c0=arr[0]; return (c0 && (c0.target || (c0.textRanges && c0.textRanges[0]) || c0.address)) || null; }
+    }catch(e){ console.warn('[applyAgentCommand] doc.find упал:', e); }
+    return null;
+  };
+
   try{
 
     // ═══ REPLACE_SMART — точечная inline-замена old_text → new_text ═══
-    // Эталонный путь: нативный поиск SuperDoc + insertContentAt по {from,to}.
+    // Эталон: чистый Document API doc.find → doc.replace; PM/search — фолбэк.
     if(cmd.type==='replace_smart'){
       const oldText=String(cmd.oldText||'').trim();
       const newText=String(cmd.text||'');
       if(!oldText){toastFn&&toastFn('warning','Не указан текст для замены (old_text)');return false;}
       ensureTrackChanges(window.docEngine);
 
-      // 1) Нативный SuperDoc-поиск → точные координаты {from,to}
-      let matches=null;
+      // 1) ЧИСТЫЙ Document API: doc.find → doc.replace (без deprecated commands/view)
       try{
-        if(window.superdoc && typeof window.superdoc.search==='function') matches=window.superdoc.search(oldText);
-      }catch(e){ console.warn('[applyAgentCommand] superdoc.search упал, иду в PM-фолбэк:', e); }
-
-      if(matches && matches.length){
-        const m=matches[0];
-        console.log('[applyAgentCommand] replace via search+insertContentAt', {from:m.from,to:m.to,matches:matches.length,old:oldText.slice(0,40),newLen:newText.length});
-        if(cmds && typeof cmds.insertContentAt==='function'){
-          cmds.insertContentAt({from:m.from,to:m.to}, newText);
-        } else if(ensurePM()){
-          view.dispatch(state.tr.insertText(newText, m.from, m.to));
+        const target=findTarget(oldText);
+        if(target && docApi && typeof docApi.replace==='function'){
+          const r=docApi.replace({ target, text:newText });
+          if(r && typeof r.then==='function') r.catch(e=>console.error('[applyAgentCommand] replace async fail:', e));
+          console.log('[applyAgentCommand] replace via doc.replace (Document API)', {old:oldText.slice(0,40),newLen:newText.length});
+          toastFn&&toastFn('check','Заменено');
+          return true;
         }
-        try{ cmds && cmds.focus && cmds.focus(); }catch(_){ }
-        toastFn&&toastFn('check', matches.length>1?`Заменено (1 из ${matches.length} совпадений)`:'Заменено');
+      }catch(e){ console.warn('[applyAgentCommand] doc.replace упал, фолбэк:', e); }
+
+      // 2) ФОЛБЭК: window.superdoc.search → commands.insertContentAt
+      let matches=null;
+      try{ if(window.superdoc && typeof window.superdoc.search==='function') matches=window.superdoc.search(oldText); }catch(e){ console.warn('[applyAgentCommand] search упал:', e); }
+      if(matches && matches.length){
+        const m=matches[0]; const c=getCmds();
+        console.log('[applyAgentCommand] replace via search+insertContentAt (fallback)', {from:m.from,to:m.to,matches:matches.length});
+        if(c && typeof c.insertContentAt==='function') c.insertContentAt({from:m.from,to:m.to}, newText);
+        else if(ensurePM()) view.dispatch(state.tr.insertText(newText, m.from, m.to));
+        toastFn&&toastFn('check', matches.length>1?`Заменено (1 из ${matches.length})`:'Заменено');
         return true;
       }
 
-      // 2) ФОЛБЭК: ручной поиск по text-нодам ProseMirror
+      // 3) ФОЛБЭК: ручной поиск по text-нодам ProseMirror
       let done=false;
       if(ensurePM()) state.doc.descendants((node,pos)=>{
         if(done) return false;
@@ -1483,29 +1501,30 @@ const applyAgentCommand=(cmd,toastFn)=>{
         }
         return true;
       });
-      if(done){ try{ cmds && cmds.focus && cmds.focus(); }catch(_){ } toastFn&&toastFn('check','Заменено'); return true; }
+      if(done){ toastFn&&toastFn('check','Заменено'); return true; }
 
       console.warn('[applyAgentCommand] replace: фрагмент не найден:', oldText.slice(0,80));
       toastFn&&toastFn('warning','Фрагмент не найден: «'+oldText.slice(0,40)+'»');
       return false;
     }
 
-    // Мост «поиск → выделение → Document API target». Доки SuperDoc советуют
-    // строить target для comments/format через editor.doc.selection.current().
-    // 1) находим фразу нативным поиском → {from,to}; 2) выделяем её командой
-    // setTextSelection; 3) берём портативный target из selection.current().
-    const selectByText=(anchor)=>{
+    // resolveTarget: target по тексту. PRIMARY — чистый doc.find (без commands/
+    // view, не дёргает deprecated API и не кидает TextSelection-ошибку).
+    // FALLBACK — search + setTextSelection + selection.current (deprecated путь).
+    const resolveTarget=(anchor)=>{
+      const t=findTarget(anchor);
+      if(t) return { target:t, via:'find' };
       let matches=null;
-      try{ if(window.superdoc && typeof window.superdoc.search==='function') matches=window.superdoc.search(anchor); }catch(e){ console.warn('[applyAgentCommand] search упал:', e); }
+      try{ if(window.superdoc && typeof window.superdoc.search==='function') matches=window.superdoc.search(anchor); }catch(_){ }
       if(!matches || !matches.length) return null;
-      const m=matches[0];
+      const m=matches[0]; const c=getCmds();
       try{
-        if(cmds && typeof cmds.setTextSelection==='function') cmds.setTextSelection({from:m.from,to:m.to});
+        if(c && typeof c.setTextSelection==='function') c.setTextSelection({from:m.from,to:m.to});
         else if(ensurePM()) view.dispatch(state.tr.setSelection(state.selection.constructor.create(state.doc, m.from, m.to)));
       }catch(e){ console.warn('[applyAgentCommand] setTextSelection упал:', e); }
       let target=null;
-      try{ const sel=window.docEngine.doc && window.docEngine.doc.selection; if(sel && typeof sel.current==='function') target=sel.current().target; }catch(e){ console.warn('[applyAgentCommand] selection.current упал:', e); }
-      return { target, from:m.from, to:m.to, matches:matches.length };
+      try{ const sel=docApi && docApi.selection; if(sel && typeof sel.current==='function') target=sel.current().target; }catch(e){ console.warn('[applyAgentCommand] selection.current упал:', e); }
+      return target ? { target, via:'selection', from:m.from, to:m.to } : null;
     };
 
     // ═══ COMMENT — повесить замечание на фрагмент (режим поиска рисков) ═══
@@ -1514,14 +1533,13 @@ const applyAgentCommand=(cmd,toastFn)=>{
       const anchor=String(cmd.anchor||'').trim();
       const body=text;
       if(!anchor){toastFn&&toastFn('warning','Не указан фрагмент для комментария (anchor)');return false;}
-      const sel=selectByText(anchor);
-      if(!sel){ console.warn('[applyAgentCommand] comment: фрагмент не найден:', anchor.slice(0,60)); toastFn&&toastFn('warning','Фрагмент не найден: «'+anchor.slice(0,40)+'»'); return false; }
-      const commentsApi=window.docEngine.doc && window.docEngine.doc.comments;
-      console.log('[applyAgentCommand] comment', {anchor:anchor.slice(0,40),from:sel.from,to:sel.to,hasTarget:!!sel.target,bodyLen:body.length});
+      const sel=resolveTarget(anchor);
+      if(!sel || !sel.target){ console.warn('[applyAgentCommand] comment: фрагмент не найден:', anchor.slice(0,60)); toastFn&&toastFn('warning','Фрагмент не найден: «'+anchor.slice(0,40)+'»'); return false; }
+      const commentsApi=docApi && docApi.comments;
+      console.log('[applyAgentCommand] comment', {anchor:anchor.slice(0,40),via:sel.via,bodyLen:body.length});
       if(commentsApi && typeof commentsApi.create==='function'){
-        const r=commentsApi.create(sel.target ? {target:sel.target, text:body} : {text:body});
+        const r=commentsApi.create({target:sel.target, text:body});
         if(r && typeof r.then==='function') r.then(()=>{}).catch(e=>console.error('[applyAgentCommand] comment async fail:', e));
-        try{ cmds && cmds.focus && cmds.focus(); }catch(_){ }
         toastFn&&toastFn('check','Комментарий добавлен');
         return true;
       }
@@ -1537,20 +1555,21 @@ const applyAgentCommand=(cmd,toastFn)=>{
       const marks=(cmd.marks && typeof cmd.marks==='object')?cmd.marks:{};
       if(!anchor){toastFn&&toastFn('warning','Не указан фрагмент для форматирования (anchor)');return false;}
       if(!Object.keys(marks).length){toastFn&&toastFn('warning','Не указан стиль (marks)');return false;}
-      const sel=selectByText(anchor);
-      if(!sel){ console.warn('[applyAgentCommand] format: фрагмент не найден:', anchor.slice(0,60)); toastFn&&toastFn('warning','Фрагмент не найден: «'+anchor.slice(0,40)+'»'); return false; }
-      console.log('[applyAgentCommand] format', {anchor:anchor.slice(0,40),from:sel.from,to:sel.to,marks,hasTarget:!!sel.target});
-      const fmtApi=window.docEngine.doc && window.docEngine.doc.format;
-      // 1) Эталон: Document API format.apply({target, inline})
-      if(sel.target && fmtApi && typeof fmtApi.apply==='function'){
-        const r=fmtApi.apply({target:sel.target, inline:marks});
-        if(r && typeof r.then==='function') r.then(()=>{}).catch(e=>console.error('[applyAgentCommand] format async fail:', e));
-        try{ cmds && cmds.focus && cmds.focus(); }catch(_){ }
-        toastFn&&toastFn('check','Форматирование применено');
-        return true;
+      const sel=resolveTarget(anchor);
+      if(!sel || !sel.target){ console.warn('[applyAgentCommand] format: фрагмент не найден:', anchor.slice(0,60)); toastFn&&toastFn('warning','Фрагмент не найден: «'+anchor.slice(0,40)+'»'); return false; }
+      console.log('[applyAgentCommand] format', {anchor:anchor.slice(0,40),via:sel.via,marks});
+      const fmtApi=docApi && docApi.format;
+      // 1) Чистый Document API: format.apply({target, inline})
+      if(fmtApi && typeof fmtApi.apply==='function'){
+        try{
+          const r=fmtApi.apply({target:sel.target, inline:marks});
+          if(r && typeof r.then==='function') r.then(()=>{}).catch(e=>console.error('[applyAgentCommand] format async fail:', e));
+          toastFn&&toastFn('check','Форматирование применено');
+          return true;
+        }catch(e){ console.warn('[applyAgentCommand] format.apply упал, PM-фолбэк:', e); }
       }
-      // 2) ФОЛБЭК: ProseMirror addMark по {from,to} для марок, что есть в схеме
-      if(ensurePM()) try{
+      // 2) ФОЛБЭК: ProseMirror addMark по {from,to} (только если есть координаты)
+      if(sel.from!=null && sel.to!=null && ensurePM()) try{
         const tr=state.tr; let applied=false;
         const markMap={bold:'bold',italic:'italic',underline:'underline',strike:'strike',highlight:'highlight',color:'textStyle'};
         for(const k of Object.keys(marks)){
@@ -1558,7 +1577,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
           const mt=schema.marks[markName];
           if(mt){ const attrs=(k==='color')?{color:marks[k]}:(typeof marks[k]==='object'?marks[k]:undefined); tr.addMark(sel.from, sel.to, mt.create(attrs)); applied=true; }
         }
-        if(applied){ view.dispatch(tr); try{ cmds && cmds.focus && cmds.focus(); }catch(_){ } toastFn&&toastFn('check','Форматирование применено'); return true; }
+        if(applied){ view.dispatch(tr); toastFn&&toastFn('check','Форматирование применено'); return true; }
       }catch(e){ console.error('[applyAgentCommand] format PM fallback fail:', e); }
       toastFn&&toastFn('warning','Не удалось применить формат');
       return false;
@@ -1600,11 +1619,9 @@ const applyAgentCommand=(cmd,toastFn)=>{
       // переносы строк станут реальными абзацами (см. superdoc_docs.md).
       if(cmd.type==='insert_end' || (isAnchored && !anchor)){
         try{
-          const docApi=window.docEngine.doc;
           if(docApi && typeof docApi.insert==='function'){
             docApi.insert({ value:text, type:'markdown' });
             console.log('[applyAgentCommand] insert_end via doc.insert(markdown)', {textLen:text.length});
-            try{ cmds && cmds.focus && cmds.focus(); }catch(_){ }
             toastFn&&toastFn('check','Вставлено в конец');
             return true;
           }
@@ -1627,7 +1644,6 @@ const applyAgentCommand=(cmd,toastFn)=>{
 
       const tr = paras ? state.tr.insert(pos, paras) : state.tr.insertText('\n'+text, pos);
       view.dispatch(tr);
-      try{ window.docEngine.commands && window.docEngine.commands.focus && window.docEngine.commands.focus(); }catch(_){ }
 
       if(isAnchored) toastFn&&toastFn('check', matched?'Вставка применена':'Якорь не найден — добавлено в конец');
       else if(cmd.type==='insert_cursor') toastFn&&toastFn('check','Вставлено в позицию курсора');
@@ -1642,7 +1658,6 @@ const applyAgentCommand=(cmd,toastFn)=>{
       if(from>=to){toastFn&&toastFn('warning','Нет выделения для замены');return false;}
       console.log('[applyAgentCommand] replace_selection', {from,to,textLen:text.length});
       view.dispatch(state.tr.insertText(text, from, to));
-      try{ window.docEngine.commands && window.docEngine.commands.focus && window.docEngine.commands.focus(); }catch(_){ }
       toastFn&&toastFn('check','Выделение заменено');
       return true;
     }
