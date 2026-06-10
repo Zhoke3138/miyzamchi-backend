@@ -174,11 +174,8 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.get('/ide', (req, res) => {
-    res.sendFile(path.join(__dirname, 'ide', 'MIyzamchy Legal IDE.html'));
-});
-// IDE assets (CSS, JS) под /ide/ — тоже с deny dotfiles
-app.use('/ide', express.static(path.join(__dirname, 'ide'), { dotfiles: 'deny' }));
+// (Удалён легаси-роут /ide — старый одностраничный TipTap-IDE снесён вместе с
+//  папкой ide/. Активный фронт деплоится отдельно на Netlify из src/.)
 
 // --- RATE LIMITING ---
 const rateLimit = require('express-rate-limit');
