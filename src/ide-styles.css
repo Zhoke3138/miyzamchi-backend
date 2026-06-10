@@ -46,11 +46,11 @@ body{
   --secondary: #8C9CCE;          /* мягкий cornflower */
   --secondary-hover: #7889BD;
   --bg-app: #FFFFFF;             /* основная зона документа — чистый белый */
-  --bg-panel: #F9FAFB;            /* sidebar, чат, тулбары — мягкий нейтральный */
+  --bg-panel: #F4F4F6;            /* sidebar, чат, тулбары — мягкий нейтральный */
   --bg-input: #FFFFFF;
-  --text-main: #111827;
-  --text-muted: #5B6171;          /* контраст 5.4:1 (WCAG AA) */
-  --border-color: #E5E7EB;
+  --text-main: #09090B;
+  --text-muted: #71717A;          /* контраст 5.4:1 (WCAG AA) */
+  --border-color: #E4E4E7;
   --shadow-color: rgba(17, 24, 39, 0.04);
 
   /* Surfaces — mapped to new tokens */
@@ -135,9 +135,9 @@ body{
   /* Radii — sharper, architectural */
   --radius-xs:4px;
   --radius-sm:6px;
-  --radius:10px;
-  --radius-lg:14px;
-  --radius-xl:20px;
+  --radius:8px;
+  --radius-lg:12px;
+  --radius-xl:16px;
   --radius-pill:999px;
   --radius-circle:50%;
 
@@ -213,12 +213,12 @@ body{
    Тёмная тема минимально поддерживается, но по умолчанию светлая.
    ════════════════════════════════════════════════════════════════════ */
 .dk{
-  --bg-app: #0B0F17;
-  --bg-panel: #141925;
-  --bg-input: #0B0F17;
-  --text-main: #F3F4F6;
-  --text-muted: #9CA3AF;
-  --border-color: #1F2937;
+  --bg-app: #09090B;
+  --bg-panel: #000000;
+  --bg-input: #09090B;
+  --text-main: #F4F4F5;
+  --text-muted: #A1A1AA;
+  --border-color: #27272A;
   --primary: #7B82E5;             /* осветлён для контраста на тёмном */
   --primary-hover: #9098E8;
   --secondary: #A8B4DC;
@@ -358,7 +358,7 @@ h1,h2,h3,h4,.display{
   font-family:var(--font-display);
   font-weight:400;
   letter-spacing:-.025em;
-  line-height:1.05;
+  line-height:1.15;
 }
 h1 em,h2 em,h3 em,.display em,.display-italic{
   font-style:italic;
@@ -681,16 +681,16 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
   font-feature-settings:"ss01","cv11","kern","liga";
 }
 .ai-md h1,.ai-md h2,.ai-md h3,.ai-md h4{
-  margin:18px 0 8px;
+  margin:22px 0 10px;
   font-family:var(--font-display);
   font-weight:400;
   font-style:italic;
   color:var(--text);
-  line-height:1.15;letter-spacing:-.02em;
+  line-height:1.2;letter-spacing:-.02em;
 }
-.ai-md h1{font-size:24px}
-.ai-md h2{font-size:20px}
-.ai-md h3{font-size:17px}
+.ai-md h1{font-size:28px}
+.ai-md h2{font-size:22px}
+.ai-md h3{font-size:18px}
 .ai-md h4{
   font-size:13px;font-style:normal;font-weight:600;
   font-family:var(--font-body);
@@ -4434,4 +4434,24 @@ body.dk .analyze-accordion-content {
 .superdoc-workspace-wrapper .sd-toolbar::-webkit-scrollbar,
 .superdoc-workspace-wrapper .superdoc-toolbar::-webkit-scrollbar {
     display: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   СКРЫТИЕ НАТИВНОГО REVIEW-ПОПОВЕРА TRACK CHANGES
+   Управление правками — ТОЛЬКО через кнопки в чате (Применить/Отклонить).
+   Прячем плавающий бабл SuperDoc (инициалы автора, дата, ✓/✗).
+   ⚠️ НЕ трогаем декорации диффа (.tracked-change, .track-*-dec) — это
+   жёлтое/зелёное в тексте, юрист должен их видеть.
+   ══════════════════════════════════════════════════════════════════ */
+.track-changes-commands,
+.track-changes-commands-popover,
+.sd-track-changes-popover,
+.superdoc-track-changes-popover,
+.sd-popover.track-changes,
+[class*="track-changes-commands"],
+[class*="track-changes-popover"],
+[class*="trackChangesPopover"] {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
 }

@@ -880,13 +880,17 @@ const AnalyzeDocsMode = () => {
           })}
         </div>
         <div className={'ad-mode-banner ad-mode-banner--' + (mode || 'none')}>
-          {mode === 'audit'   && <span>🔬 Режим: <b>Одиночный аудит</b> · Triage + Ищейки + DCR Final Judge</span>}
-          {mode === 'compare' && <span>⚖️ Режим: <b>Сравнение редакций</b> · semantic diff + Executive Summary</span>}
+          {mode === 'audit'   && <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Ico k="microscope" sz={14} col="var(--accent)" /> Режим: <b>Одиночный аудит</b> · Triage + Ищейки + DCR Final Judge</span>}
+          {mode === 'compare' && <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Ico k="scale" sz={14} col="var(--accent)" /> Режим: <b>Сравнение редакций</b> · semantic diff + Executive Summary</span>}
           {!mode              && <span>Загрузите хотя бы один документ, чтобы начать</span>}
         </div>
         <div className="cmp-actions">
           <button className="cmp-run-btn" disabled={!canRun} onClick={onRun}>
-            {mode === 'compare' ? '⚖️ Сравнить редакции' : '🔬 Запустить аудит'}
+            {mode === 'compare' ? (
+              <span style={{display:'inline-flex',alignItems:'center',gap:6,justifyContent:'center'}}><Ico k="scale" sz={14} /> Сравнить редакции</span>
+            ) : (
+              <span style={{display:'inline-flex',alignItems:'center',gap:6,justifyContent:'center'}}><Ico k="microscope" sz={14} /> Запустить аудит</span>
+            )}
           </button>
           {loadingCount > 0 && <span className="cmp-hint">Дождитесь извлечения текста…</span>}
           {readyCount === 0 && loadingCount === 0 && <span className="cmp-hint">Поддержка: PDF, DOCX, TXT, MD. Макс. 25 МБ.</span>}
@@ -1475,25 +1479,26 @@ const applyAgentCommand=(cmd,toastFn)=>{
     return true;
   };
 
-  // Чистый поиск target по тексту через Document API (без commands/view).
-  // TextSelector = { type:'text', pattern }. Результат: { context:[{target,textRanges}] }
-  // ИЛИ { items:[{handle,...}] }. Берём target/ref для мутаций. Форму пробуем
-  // несколькими вариантами (публичный API принимает и shorthand, и {select}).
+  // Поиск ГОТОВОГО SelectionTarget по тексту через Document API.
+  // ⚠️ doc.find → SDFindResult.items[].address = NodeAddress (БЛОК), это НЕ
+  // SelectionTarget → doc.replace кидает "target must be a SelectionTarget".
+  // Правильно: doc.match → QueryMatchOutput.context[i].target = SelectionTarget
+  // (kind:'selection'), готовый для doc.replace/comments/format.
+  // TextSelector = { type:'text', pattern }.
   const findTarget=(needle)=>{
-    if(!needle || !docApi || typeof docApi.find!=='function') return null;
+    if(!needle || !docApi || typeof docApi.match!=='function') return null;
     const tries=[
-      ()=>docApi.find({ select:{ type:'text', pattern: needle } }),
-      ()=>docApi.find({ type:'text', pattern: needle }),
-      ()=>docApi.find({ select:{ text: needle } }),
+      ()=> docApi.match({ select:{ type:'text', pattern: needle } }),
+      ()=> docApi.match({ type:'text', pattern: needle }),
+      ()=> docApi.match({ select:{ type:'text', text: needle } }),
     ];
     for(const fn of tries){
       try{
-        const fr=fn();
-        const arr = (fr && (fr.context || fr.items || fr.matches)) || (Array.isArray(fr)?fr:null);
-        if(Array.isArray(arr) && arr.length){
-          const c0=arr[0];
-          const target = c0 && (c0.target || (c0.textRanges && c0.textRanges[0]) || c0.address || (c0.handle && c0.handle.ref && { ref:c0.handle.ref }));
-          if(target) return target;
+        const out=fn(); if(!out) continue;
+        const ctx=out.context;
+        if(Array.isArray(ctx) && ctx.length){
+          const t=ctx.map(c=>c && c.target).find(Boolean);
+          if(t) return t;   // SelectionTarget {kind:'selection', start, end}
         }
       }catch(_){ /* пробуем следующую форму */ }
     }
@@ -2111,7 +2116,12 @@ const ICONS={
   'home':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>),
   'activity':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>),
   'edit':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>),
-  'maximize':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>)
+  'maximize':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>),
+  'coin':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><circle cx="8" cy="8" r="6"/><circle cx="18" cy="18" r="4"/><path d="M12 18a6 6 0 0 0-6-6"/></svg>),
+  'dollar':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>),
+  'scale':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v17M4 8h16M6 8l-2 5h4zm12 0l-2 5h4z"/></svg>),
+  'microscope':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18h8M3 22h18M14 22a7 7 0 1 0-14 0M14 14a4.5 4.5 0 0 0-8 0M12 2h4M14 2v6M8 8h8"/></svg>),
+  'brain':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3.001 3.001 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 0-3.12 3.001 3.001 0 0 0 0-4.88 2.5 2.5 0 0 0 0-3.12A2.5 2.5 0 0 0 14.5 2z"/></svg>)
 };
 
 /* ═══ Brand Logo — Kyrgyz tunduk + М (Мыйзамчы) ═══ */
@@ -3878,23 +3888,23 @@ const LeftPanel=({mode,actPanel,onClose,onCtx,onToast,onOpenFile,fsHandle,fsFile
               <span className={'myz-tele-pulse' + (pipelineRunning ? '' : ' myz-tele-pulse--idle')} title={pipelineRunning ? 'Запрос обрабатывается' : 'Готово'}/>
             </div>
             <div className="myz-tele-row" title="Длительность обработки">
-              <span className="myz-tele-ico">⏱</span>
+              <span className="myz-tele-ico"><Ico k="clock" sz={13} col="inherit" /></span>
               <span className="myz-tele-val">{(pipelineTele.elapsedMs / 1000).toFixed(1)}</span>
               <span className="myz-tele-unit">сек</span>
             </div>
             <div className="myz-tele-row" title="Токены: input / output">
-              <span className="myz-tele-ico">🪙</span>
+              <span className="myz-tele-ico"><Ico k="coin" sz={13} col="inherit" /></span>
               <span className="myz-tele-val">{(pipelineTele.input || 0).toLocaleString('ru-RU')}</span>
               <span className="myz-tele-sep">/</span>
               <span className="myz-tele-val">{(pipelineTele.output || 0).toLocaleString('ru-RU')}</span>
               <span className="myz-tele-unit">tok</span>
             </div>
             <div className="myz-tele-row" title="Накопленная стоимость пайплайна">
-              <span className="myz-tele-ico">💵</span>
+              <span className="myz-tele-ico"><Ico k="dollar" sz={13} col="inherit" /></span>
               <span className="myz-tele-val">${(pipelineTele.cost || 0).toFixed(5)}</span>
             </div>
             <div className="myz-tele-row" title="Количество LLM-вызовов">
-              <span className="myz-tele-ico">🤖</span>
+              <span className="myz-tele-ico"><Ico k="robot" sz={13} col="inherit" /></span>
               <span className="myz-tele-val">{pipelineTele.calls || 0}</span>
               <span className="myz-tele-unit">вызовов</span>
             </div>
@@ -5623,12 +5633,12 @@ const AntiGravityTracker = ({sessionStats, timing, onClose, onReset}) => {
   const tierBadge = (m) => {
     if (!m) return null;
     const s = String(m);
-    if (s.includes('deepseek-v4-pro'))   return {label:'⚖️ JUDGE',    color:'#a855f7'};
-    if (s.includes('deepseek'))          return {label:'🛠 WORKER',   color:'#0ea5e9'};
-    if (s.includes('flash-lite'))        return {label:'🛠 WORKER',   color:'#0ea5e9'};
-    if (s.includes('2.5-flash') || s.includes('flash-latest')) return {label:'🆘 FALLBACK', color:'#64748b'};
-    if (s.includes('flash'))             return {label:'🧠 SENIOR',   color:'#10b981'};
-    if (s.includes('embedding'))         return {label:'📍 EMBED',    color:'#94a3b8'};
+    if (s.includes('deepseek-v4-pro'))   return {label:'JUDGE',    color:'#a855f7'};
+    if (s.includes('deepseek'))          return {label:'WORKER',   color:'#0ea5e9'};
+    if (s.includes('flash-lite'))        return {label:'WORKER',   color:'#0ea5e9'};
+    if (s.includes('2.5-flash') || s.includes('flash-latest')) return {label:'FALLBACK', color:'#64748b'};
+    if (s.includes('flash'))             return {label:'SENIOR',   color:'#10b981'};
+    if (s.includes('embedding'))         return {label:'EMBED',    color:'#94a3b8'};
     return null;
   };
 
@@ -5639,7 +5649,7 @@ const AntiGravityTracker = ({sessionStats, timing, onClose, onReset}) => {
   return (
     <div className="ag-panel" role="status" aria-label="Token Telemetry">
       <div className="ag-head">
-        <span className="ag-head-title">🚀 Телеметрия моделей</span>
+        <span className="ag-head-title" style={{display:'inline-flex',alignItems:'center',gap:6}}><Ico k="rocket" sz={14} col="var(--accent)" /> Телеметрия моделей</span>
         <div style={{display:'flex', gap:6}}>
           {onReset && <button type="button" className="ag-btn" onClick={onReset} title="Сбросить счётчик">↻</button>}
           {onClose && <button type="button" className="ag-btn" onClick={onClose} title="Закрыть панель">×</button>}
@@ -5651,7 +5661,7 @@ const AntiGravityTracker = ({sessionStats, timing, onClose, onReset}) => {
         <div className="ag-timer-block">
           <div className="ag-timer-row">
             <span className="ag-timer-label">
-              <span className="ag-timer-ico">⏱</span> Полное ожидание
+              <span className="ag-timer-ico"><Ico k="clock" sz={13} col="inherit" /></span> Полное ожидание
               {timing.running && <span className="ag-live-dot" aria-label="идёт запрос" />}
             </span>
             <span className={`ag-timer-val ${timing.running ? 'live' : ''}`}>
@@ -5660,7 +5670,7 @@ const AntiGravityTracker = ({sessionStats, timing, onClose, onReset}) => {
           </div>
           <div className="ag-timer-row">
             <span className="ag-timer-label">
-              <span className="ag-timer-ico">🧠</span> Время моделей
+              <span className="ag-timer-ico"><Ico k="brain" sz={13} col="inherit" /></span> Время моделей
             </span>
             <span className="ag-timer-val secondary">
               {fmtSec(timing.lastModelSec)}<small>с</small>
@@ -5699,7 +5709,7 @@ const AntiGravityTracker = ({sessionStats, timing, onClose, onReset}) => {
           {modelEntries.length > 1 && (
             <>
               <div className="ag-breakdown-toggle" onClick={()=>setShowBreakdown(v=>!v)} role="button" tabIndex={0}>
-                <span>📊 По моделям ({modelEntries.length})</span>
+                <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Ico k="activity" sz={13} /> По моделям ({modelEntries.length})</span>
                 <span>{showBreakdown ? '▼' : '▶'}</span>
               </div>
               {showBreakdown && (
@@ -6108,7 +6118,7 @@ const DeepAuditPanel = ({data}) => {
                 <div className="deep-row-body">
                   <div className="deep-row-title">{p.title || p.description}</div>
                   {p.title && p.description && <div className="deep-row-text">{p.description}</div>}
-                  {p.deadline && <div className="deep-row-meta">⏱ {p.deadline}</div>}
+                  {p.deadline && <div className="deep-row-meta"><Ico k="clock" sz={11} style={{verticalAlign:'-1.5px',marginRight:4}} />{p.deadline}</div>}
                 </div>
               </div>
             ))}
