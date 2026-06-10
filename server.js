@@ -733,77 +733,69 @@ function sendConfidence(res, payload) {
 // ============================================================
 // AI РЕДАКТОР (API для IDE)
 // ============================================================
+// ═══════════════════════════════════════════════════════════════════
+// /api/edit — правка ВЫДЕЛЕННОГО фрагмента. Возвращает {reasoning, commands}.
+// ─────────────────────────────────────────────────────────────────
+// РАНЬШЕ здесь был Split Execution через @superdoc-dev/sdk (chooseTools/
+// getToolCatalog → Gemini functionDeclarations). Это давало HTTP 500:
+//   • chooseTools({provider:'gemini'}) бросает (валидны openai/anthropic/...)
+//   • схемы SuperDoc-инструментов несовместимы с Gemini function-calling
+// SDK — headless (server-side + Yjs), к браузерному редактору не подключён.
+// Теперь /api/edit использует ТОТ ЖЕ контракт, что и handleAgent: Gemini +
+// AGENT_SYSTEM_PROMPT → JSON {reasoning, commands[]}. Фронт применяет команды
+// нативным Document API (applyAgentCommand). НИКОГДА не отдаёт 500 — на ошибке
+// возвращает 200 с пустым commands и текстом в reasoning (фронт не падает).
+// ═══════════════════════════════════════════════════════════════════
 app.post('/api/edit', requireClientToken, async (req, res) => {
     serverStats.totalRequests++;
     try {
-        const { text, instruction, history = [], iterations = 0 } = req.body;
-        
-        // Защита от зацикливания (Max Iterations Guard)
-        if (iterations >= 10) {
-            return res.status(400).json({ error: "Max iterations limit exceeded (10)" });
+        const { text, instruction, documentContext = '' } = req.body;
+        if (!instruction) {
+            return res.json({ reasoning: 'Пустая инструкция.', commands: [] });
         }
 
-        if ((!text || !instruction) && history.length === 0) {
-            return res.status(400).json({ error: "Missing text/instruction or history" });
-        }
+        const selBlock = text
+            ? `\n\nВЫДЕЛЕННЫЙ ФРАГМЕНТ (основная цель правки — используй как old_text для replace):\n"""\n${String(text).slice(0, 8000)}\n"""`
+            : '';
+        const ctxBlock = documentContext
+            ? `\n\nТЕКУЩИЙ ТЕКСТ ДОКУМЕНТА:\n"""\n${String(documentContext).slice(0, 15000)}\n"""`
+            : '';
+        const userPrompt = `ЗАПРОС ЮРИСТА: ${instruction}${selBlock}${ctxBlock}`;
 
-        const { getToolCatalog, chooseTools, getSystemPrompt } = require('@superdoc-dev/sdk');
-        
-        let superdocTools = [];
-        try {
-            // Пытаемся получить нативные инструменты Gemini через SDK
-            const nativeTools = await chooseTools({ provider: 'gemini' });
-            superdocTools = Array.isArray(nativeTools) ? nativeTools : [];
-        } catch (err) {
-            // Fallback: маппинг generic схемы в формат Google Function Declarations
-            const catalog = await getToolCatalog();
-            superdocTools = catalog.tools.map(t => ({
-                name: t.name,
-                description: t.description || t.schema?.description || "SuperDoc tool",
-                parameters: t.schema
-            }));
-        }
-
-        const activeKey = getActiveKey();
-        const genAI = new GoogleGenerativeAI(activeKey);
-        
-        const superdocPrompt = getSystemPrompt();
+        const apiKey = getNextKey();
+        const genAI = new GoogleGenerativeAI(apiKey);
         const model = genAI.getGenerativeModel({
             model: PRIMARY_MODEL,
-            systemInstruction: "Ты — профессиональный юрист-редактор КР. Твоя задача — переписать предоставленный текст согласно инструкции.\n\n" + superdocPrompt + "\nUse tracked changes for all edits so a human can review them.",
-            tools: [{ functionDeclarations: superdocTools }]
+            systemInstruction: AGENT_SYSTEM_PROMPT,
+            generationConfig: { temperature: 0.4, topP: 0.9, maxOutputTokens: 4096 }
         });
 
-        // Поддержка Multi-turn для Split Execution
-        let contents = [];
-        if (history && history.length > 0) {
-            contents = history;
-        } else {
-            contents = [
-                { role: 'user', parts: [{ text: `Инструкция: ${instruction}\n\nТекст для редактирования:\n${text}` }] }
-            ];
-        }
+        const result = await model.generateContent(userPrompt);
+        const raw = ((result && result.response && result.response.text && result.response.text()) || '').trim();
 
-        const result = await model.generateContent({ contents });
-        const response = result.response;
-        
-        // Обработка tool_calls для Split Execution
-        const functionCalls = response.functionCalls && response.functionCalls();
-        if (functionCalls && functionCalls.length > 0) {
-            const superdocCalls = functionCalls.filter(fc => fc.name.startsWith('superdoc_'));
-            if (superdocCalls.length > 0) {
-                // Бэкенд не выполняет инструменты сам, а возвращает их на фронтенд
-                return res.json({ tool_calls: superdocCalls });
+        // Извлекаем JSON-блок {reasoning, commands}
+        let reasoning = '', commands = [];
+        try {
+            const m = raw.match(/```json\s*([\s\S]*?)\s*```/i) || raw.match(/\{[\s\S]*\}/);
+            const jsonStr = m ? (m[1] || m[0]) : raw;
+            const parsed = JSON.parse(jsonStr);
+            reasoning = parsed.reasoning || '';
+            commands = Array.isArray(parsed.commands) ? parsed.commands : [];
+            // обратная совместимость: insertion_text/anchor_text → одна команда
+            if (commands.length === 0 && parsed.insertion_text) {
+                commands = [{ op: 'insert_after', anchor: parsed.anchor_text === 'EMPTY' ? '' : (parsed.anchor_text || ''), text: parsed.insertion_text }];
             }
+        } catch (parseErr) {
+            console.warn('[/api/edit] JSON parse failed:', parseErr.message);
+            reasoning = raw || 'Не удалось разобрать ответ модели.';
         }
-
-        // Если не было инструментов, возвращаем обычный текст
-        const responseText = response.text().trim();
-        res.json({ result: responseText });
+        console.log(`[/api/edit] commands=${commands.length} reasoningLen=${reasoning.length}`);
+        return res.json({ reasoning, commands });
     } catch (error) {
         console.error("Ошибка в /api/edit:", error.message);
         serverStats.apiErrors++;
-        res.status(500).json({ error: "Ошибка при редактировании текста" });
+        // НЕ роняем 500 — фронт ждёт JSON и иначе крашится.
+        return res.json({ reasoning: '⚠️ Не удалось обработать правку: ' + error.message, commands: [] });
     }
 });
 

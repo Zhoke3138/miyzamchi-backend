@@ -381,103 +381,45 @@ async function streamCompareDocuments({oldDocumentText, newDocumentText, onStatu
 }
 
 /* ═════════════════════════════════════════════════════════════
-   executeAIEdit — Split Execution Dispatcher для /api/edit
+   executeAIEdit — правка выделенного фрагмента через /api/edit.
+   Бэкенд отдаёт { reasoning, commands[] } (тот же контракт, что и агент).
+   Применяем команды нативным Document API через applyAgentCommand.
+   Старый Split Execution (tool_calls + window.superdoc.dispatchTool)
+   удалён: он давал HTTP 500 и зависел от headless SDK.
    ═════════════════════════════════════════════════════════════ */
-async function executeAIEdit({ instruction, text, doc }) {
-  if (!doc) {
-    console.error('[IDE SplitExecution] Document instance not found');
-    return null;
-  }
-  
+async function executeAIEdit({ instruction, text, documentContext = '', onToast }) {
   const url = BACKEND_URL + '/api/edit';
-  console.log('[IDE SplitExecution] Requesting AI Edit:', url);
+  console.log('[IDE Edit] → /api/edit | instr:', (instruction || '').slice(0, 60), '| sel:', (text || '').length, 'ch');
 
-  let iterations = 0;
-  let history = [
-    { role: 'user', parts: [{ text: `Инструкция: ${instruction}\n\nТекст для редактирования:\n${text}` }] }
-  ];
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instruction, text, documentContext })
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
 
-  while (iterations < 10) {
-    iterations++;
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction, text, history, iterations })
-      });
-      
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      
-      // Перехват Tool Calls (Split Execution)
-      if (data.tool_calls && Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
-        console.log(`[IDE SplitExecution] Received ${data.tool_calls.length} tool calls. (Iteration ${iterations})`);
-        
-        // Включаем Track Changes от имени ИИ
-        try {
-          if (typeof doc.setTrackChanges === 'function') doc.setTrackChanges(true, 'Miyzamchi AI');
-          else { doc.trackChanges = true; doc.currentUser = 'Miyzamchi AI'; }
-        } catch (err) { console.warn('[IDE SplitExecution] Failed to enable Track Changes:', err); }
-
-        let hasError = false;
-        let toolResponses = [];
-
-        // Добавляем вызов инструментов в историю (от лица модели)
-        history.push({
-           role: 'model',
-           parts: data.tool_calls.map(tc => ({
-               functionCall: { name: tc.name, args: typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments }
-           }))
-        });
-
-        // Цикл диспетчеризации (Dispatch Loop)
-        for (const call of data.tool_calls) {
-          try {
-            const args = typeof call.arguments === 'string' ? JSON.parse(call.arguments) : call.arguments;
-            // Исполнение инструмента
-            if (window.superdoc && typeof window.superdoc.dispatchTool === 'function') {
-              await window.superdoc.dispatchTool(call.name, args);
-            } else if (doc.commands && typeof doc.commands[call.name] === 'function') {
-              doc.commands[call.name](args);
-            } else {
-              console.warn(`[IDE SplitExecution] Tool ${call.name} dispatch method not found on client.`);
-            }
-            toolResponses.push({
-               functionResponse: { name: call.name, response: { status: "success" } }
-            });
-          } catch (dispatchErr) {
-            console.error(`[IDE SplitExecution] Tool execution failed for ${call.name}:`, dispatchErr);
-            toolResponses.push({
-               functionResponse: { name: call.name, response: { error: dispatchErr.message } }
-            });
-            hasError = true;
-          }
-        }
-
-        // UI-Синхронизация
-        if (window.__shadowTrigger) window.__shadowTrigger();
-        else if (doc.view && doc.view.dispatch) doc.view.dispatch(doc.view.state.tr);
-        
-        // Feed errors back
-        history.push({ role: 'user', parts: toolResponses });
-        
-        if (!hasError) {
-           // Если все инструменты отработали успешно, завершаем цикл
-           return { type: 'tools', calls: data.tool_calls };
-        }
-        // В противном случае идем на следующий круг (continue), передавая ошибки модели
-      } else {
-        // Fallback: если бэкенд не вернул tools, возвращаем текст
-        return { type: 'text', result: data.result };
-      }
-    } catch (err) {
-      console.error('[IDE SplitExecution] Edit failed:', err);
-      throw err;
-    }
+  // Бэкенд → { reasoning, commands:[{op,...}] }. Переиспользуем parseAgentCommands
+  // для маппинга op → внутренний type (replace_smart/insert_after/comment/format…).
+  let analysis = data.reasoning || '';
+  let commands = [];
+  if (Array.isArray(data.commands) && data.commands.length) {
+    const parsed = parseAgentCommands(JSON.stringify({ reasoning: analysis, commands: data.commands }));
+    analysis = parsed.analysis || analysis;
+    commands = parsed.commands;
+  } else if (data.result) {
+    const parsed = parseAgentCommands(data.result);
+    analysis = parsed.analysis || analysis;
+    commands = parsed.commands;
   }
-  
-  console.warn('[IDE SplitExecution] Max iterations limit reached on frontend.');
-  return { type: 'tools', calls: [] };
+
+  let applied = 0;
+  for (const c of commands) {
+    try { if (applyAgentCommand(c, onToast)) applied++; }
+    catch (e) { console.error('[IDE Edit] applyAgentCommand failed:', e, c); }
+  }
+  console.log(`[IDE Edit] commands=${commands.length} applied=${applied}`);
+  return { analysis, applied, total: commands.length };
 }
 
 
@@ -1269,10 +1211,13 @@ const ArticleModal=({article,onClose,onInsert})=>{
 const getDocSnapshot=()=>{
   if (!window.docEngine) return {text:"",selection:"",hasSelection:false};
   try {
-    // ⚠️ SuperDoc API (после миграции с TipTap):
-    //   • текст       → docEngine.doc.getText({})  (а НЕ docEngine.getText())
-    //   • стейт/выбор → docEngine.view.state       (а НЕ docEngine.state)
-    // Старые TipTap-вызовы возвращали undefined → агент думал, что документ пуст.
+    // ⚠️ SuperDoc Document API (без deprecated editor.view):
+    //   • текст     → docEngine.doc.getText({})
+    //   • выделение → docEngine.doc.selection.current() (empty/target)
+    // editor.view (deprecated) дёргаем ТОЛЬКО когда выделение реально есть —
+    // чтобы извлечь его текст. Эта функция вызывается на каждый рендер,
+    // поэтому в обычном случае (без выделения) к view НЕ обращаемся → нет спама
+    // «editor.view is deprecated».
     const doc = window.docEngine.doc;
     const text = (doc && typeof doc.getText === 'function')
       ? String(doc.getText({}) || '')
@@ -1280,14 +1225,22 @@ const getDocSnapshot=()=>{
 
     let selection = '';
     let hasSelection = false;
-    const view = window.docEngine.view;
-    if (view && view.state) {
-      const { from, to } = view.state.selection;
-      if (from < to) {
-        selection = view.state.doc.textBetween(from, to, '\n');
-        hasSelection = selection.trim().length > 0;
+    try {
+      const sel = (doc && doc.selection && typeof doc.selection.current === 'function')
+        ? doc.selection.current()
+        : null;
+      if (sel && !sel.empty && sel.target) {
+        // есть непустое текстовое выделение → достаём его текст из view
+        const view = window.docEngine.view;
+        if (view && view.state) {
+          const { from, to } = view.state.selection;
+          if (from < to) {
+            selection = view.state.doc.textBetween(from, to, '\n');
+            hasSelection = selection.trim().length > 0;
+          }
+        }
       }
-    }
+    } catch (selErr) { /* нет выделения / API недоступен — не критично */ }
     return { text, selection, hasSelection };
   } catch (err) {
     console.warn('[getDocSnapshot] failed:', err);
@@ -1470,20 +1423,23 @@ const applyAgentCommand=(cmd,toastFn)=>{
   // ProseMirror-транзакции (view.dispatch) остаются ФОЛБЭКОМ, если нативный
   // метод недоступен в рантайме. Все мутации идут в режиме Track Changes.
   if(!window.docEngine){toastFn&&toastFn('warning','Редактор не найден');return false;}
-  const view = window.docEngine.view;
-  if(!view || !view.state){
-    console.error('[applyAgentCommand] SuperDoc view/state недоступен:', window.docEngine);
-    toastFn&&toastFn('warning','Редактор не готов (нет view)');
-    return false;
-  }
   const cmds = window.docEngine.commands || null;
   const text=String(cmd.text||'').trim();
   if(!text && cmd.type!=='replace_all' && cmd.type!=='format'){toastFn&&toastFn('warning','Пустой текст команды');return false;}
 
+  // Ленивый доступ к ProseMirror view/state — ТОЛЬКО для PM-fallback и
+  // insert/replace_selection/replace_all. Нативные команды (replace/comment/
+  // format/insert_end) к editor.view НЕ обращаются → нет deprecation warning.
+  let view=null, state=null, schema=null, paraType=null;
+  const ensurePM=()=>{
+    if(state) return true;
+    try{ view=window.docEngine.view||null; }catch(_){ view=null; }
+    if(!view || !view.state) return false;
+    state=view.state; schema=state.schema; paraType=schema.nodes.paragraph;
+    return true;
+  };
+
   try{
-    const { state } = view;
-    const schema = state.schema;
-    const paraType = schema.nodes.paragraph;
 
     // ═══ REPLACE_SMART — точечная inline-замена old_text → new_text ═══
     // Эталонный путь: нативный поиск SuperDoc + insertContentAt по {from,to}.
@@ -1504,8 +1460,8 @@ const applyAgentCommand=(cmd,toastFn)=>{
         console.log('[applyAgentCommand] replace via search+insertContentAt', {from:m.from,to:m.to,matches:matches.length,old:oldText.slice(0,40),newLen:newText.length});
         if(cmds && typeof cmds.insertContentAt==='function'){
           cmds.insertContentAt({from:m.from,to:m.to}, newText);
-        } else {
-          view.dispatch(view.state.tr.insertText(newText, m.from, m.to));
+        } else if(ensurePM()){
+          view.dispatch(state.tr.insertText(newText, m.from, m.to));
         }
         try{ cmds && cmds.focus && cmds.focus(); }catch(_){ }
         toastFn&&toastFn('check', matches.length>1?`Заменено (1 из ${matches.length} совпадений)`:'Заменено');
@@ -1514,7 +1470,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
 
       // 2) ФОЛБЭК: ручной поиск по text-нодам ProseMirror
       let done=false;
-      state.doc.descendants((node,pos)=>{
+      if(ensurePM()) state.doc.descendants((node,pos)=>{
         if(done) return false;
         if(node.isText && node.text){
           const idx=node.text.indexOf(oldText);
@@ -1545,7 +1501,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
       const m=matches[0];
       try{
         if(cmds && typeof cmds.setTextSelection==='function') cmds.setTextSelection({from:m.from,to:m.to});
-        else view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.create(view.state.doc, m.from, m.to)));
+        else if(ensurePM()) view.dispatch(state.tr.setSelection(state.selection.constructor.create(state.doc, m.from, m.to)));
       }catch(e){ console.warn('[applyAgentCommand] setTextSelection упал:', e); }
       let target=null;
       try{ const sel=window.docEngine.doc && window.docEngine.doc.selection; if(sel && typeof sel.current==='function') target=sel.current().target; }catch(e){ console.warn('[applyAgentCommand] selection.current упал:', e); }
@@ -1594,12 +1550,12 @@ const applyAgentCommand=(cmd,toastFn)=>{
         return true;
       }
       // 2) ФОЛБЭК: ProseMirror addMark по {from,to} для марок, что есть в схеме
-      try{
-        const tr=view.state.tr; let applied=false;
+      if(ensurePM()) try{
+        const tr=state.tr; let applied=false;
         const markMap={bold:'bold',italic:'italic',underline:'underline',strike:'strike',highlight:'highlight',color:'textStyle'};
         for(const k of Object.keys(marks)){
           const markName=markMap[k]||k;
-          const mt=view.state.schema.marks[markName];
+          const mt=schema.marks[markName];
           if(mt){ const attrs=(k==='color')?{color:marks[k]}:(typeof marks[k]==='object'?marks[k]:undefined); tr.addMark(sel.from, sel.to, mt.create(attrs)); applied=true; }
         }
         if(applied){ view.dispatch(tr); try{ cmds && cmds.focus && cmds.focus(); }catch(_){ } toastFn&&toastFn('check','Форматирование применено'); return true; }
@@ -1655,6 +1611,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
         }catch(e){ console.warn('[applyAgentCommand] doc.insert упал, PM-фолбэк:', e); }
       }
 
+      if(!ensurePM()){ toastFn&&toastFn('warning','Редактор не готов'); return false; }
       let pos=null, matched=false;
       if(isAnchored){
         pos=findBlockAfterAnchor(anchor);
@@ -1680,6 +1637,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
 
     if(cmd.type==='replace_selection'){
       ensureTrackChanges(window.docEngine);
+      if(!ensurePM()){ toastFn&&toastFn('warning','Редактор не готов'); return false; }
       const {from,to}=state.selection;
       if(from>=to){toastFn&&toastFn('warning','Нет выделения для замены');return false;}
       console.log('[applyAgentCommand] replace_selection', {from,to,textLen:text.length});
@@ -1691,6 +1649,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
 
     if(cmd.type==='replace_all'){
       ensureTrackChanges(window.docEngine);
+      if(!ensurePM()){ toastFn&&toastFn('warning','Редактор не готов'); return false; }
       const end=state.doc.content.size;
       const paras=makeParas(text);
       console.log('[applyAgentCommand] replace_all', {docSize:end,paras:paras&&paras.length,textLen:text.length});
@@ -7249,7 +7208,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
     //   3) БЕЗ ДОКУМЕНТА              → обычный handleAgent (логика ниже)
     // ─────────────────────────────────────────────────────────────────
     
-    // Path 0: AI Редактор (Split Execution). Запускается, если есть выделенный текст и введен промпт.
+    // Path 0: AI Редактор выделенного фрагмента. Запускается, если есть выделение + промпт.
     if (docSnapshot && docSnapshot.selection && userText) {
       setStick(true);
       setInp('');
@@ -7258,13 +7217,18 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
       setStreamStatus('Miyzamchi AI: Редактирую выделенный текст...');
       const ts = Date.now();
       const userMsg = { id: uid(), role: 'user', text: `[Редактирование выделенного]: ${userText}`, ts, agentReq: agent };
-      const aiMsg = { id: uid(), role: 'ai', text: 'Применяю правки к документу...', ts, status: 'success' };
+      const aiId = uid();
+      const aiMsg = { id: aiId, role: 'ai', text: 'Применяю правки к документу...', ts, status: 'success' };
       updateChatMessages(m => [...m, userMsg, aiMsg]);
-      
+
       try {
-        await executeAIEdit({ instruction: userText, text: docSnapshot.selection, doc: window.superdoc });
+        const r = await executeAIEdit({ instruction: userText, text: docSnapshot.selection, documentContext: docSnapshot.text, onToast });
+        const summary = (r.analysis || '').trim()
+          + (r.total ? `\n\n✓ Применено правок: ${r.applied}/${r.total}` : '\n\n_Правок не предложено._');
+        updateChatMessages(m => m.map(x => x.id === aiId ? { ...x, text: summary || 'Готово.' } : x));
       } catch(e) {
         console.error("AI Edit error:", e);
+        updateChatMessages(m => m.map(x => x.id === aiId ? { ...x, text: '⚠️ Не удалось выполнить правку: ' + e.message, status: 'warning' } : x));
       } finally {
         setThinking(false);
         setStreamStatus('');
@@ -7484,8 +7448,10 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
     );
   };
 
+  // Вставка текста (статья НПА / ответ ИИ) в редактор — НАТИВНО через SuperDoc.
+  // Раньше звала несуществующую insertIntoQuill (зомби-код TipTap/Quill) → crash.
   const handleInsertToQuill=(text)=>{
-    insertIntoQuill(text,onToast);
+    applyAgentCommand({ type:'insert_end', text:String(text||'') }, onToast);
     setArticleModal(null);
   };
 
