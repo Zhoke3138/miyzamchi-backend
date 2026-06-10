@@ -1416,6 +1416,41 @@ const ensureTrackChanges=(editor)=>{
   return false;
 };
 
+// Снимок id всех текущих tracked changes (editor.doc.trackChanges.list()).
+// Diff до/после применения команды → id'шники именно этой правки.
+const tcListIds=()=>{
+  try{
+    const tc=window.docEngine && window.docEngine.doc && window.docEngine.doc.trackChanges;
+    if(tc && typeof tc.list==='function'){
+      const r=tc.list();
+      const arr=(r && (r.items||r.changes||r.results)) || (Array.isArray(r)?r:[]);
+      return Array.isArray(arr) ? arr.map(c=> c && (c.id || (c.address && c.address.entityId))).filter(Boolean) : [];
+    }
+  }catch(e){ console.warn('[trackChanges.list] failed:', e); }
+  return [];
+};
+
+// Программное принятие/отклонение конкретного tracked change по id.
+// Эталон — editor.doc.trackChanges.decide({decision, target:{id}}).
+const decideTrackedChange=(id,decision)=>{
+  try{
+    const tc=window.docEngine && window.docEngine.doc && window.docEngine.doc.trackChanges;
+    if(tc && typeof tc.decide==='function'){ tc.decide({ decision, target:{ id } }); return true; }
+    if(tc && typeof tc[decision]==='function'){ tc[decision]({ id }); return true; } // fallback accept()/reject()
+  }catch(e){ console.error('[trackChanges.decide] failed:', e, {id,decision}); }
+  return false;
+};
+
+// Применить команду и вернуть id'шники созданных tracked changes (diff list).
+const applyCommandCaptureIds=(cmd,toastFn)=>{
+  const before=new Set(tcListIds());
+  const ok=applyAgentCommand(cmd,toastFn);
+  if(!ok) return { ok:false, ids:[] };
+  const after=tcListIds();
+  const ids=after.filter(id=>!before.has(id));
+  return { ok:true, ids };
+};
+
 const applyAgentCommand=(cmd,toastFn)=>{
   // ⚠️ Чистый SuperDoc Document API (editor.doc) — НЕ deprecated:
   //   replace→doc.find→doc.replace · comment→doc.comments.create ·
@@ -1441,16 +1476,31 @@ const applyAgentCommand=(cmd,toastFn)=>{
   };
 
   // Чистый поиск target по тексту через Document API (без commands/view).
-  // doc.find → { context:[{ target, textRanges }] } — берём target для мутаций.
+  // TextSelector = { type:'text', pattern }. Результат: { context:[{target,textRanges}] }
+  // ИЛИ { items:[{handle,...}] }. Берём target/ref для мутаций. Форму пробуем
+  // несколькими вариантами (публичный API принимает и shorthand, и {select}).
   const findTarget=(needle)=>{
     if(!needle || !docApi || typeof docApi.find!=='function') return null;
-    try{
-      const fr=docApi.find({ select:{ text: needle } });
-      const arr = fr && (fr.context || fr.items || fr.matches);
-      if(Array.isArray(arr) && arr.length){ const c0=arr[0]; return (c0 && (c0.target || (c0.textRanges && c0.textRanges[0]) || c0.address)) || null; }
-    }catch(e){ console.warn('[applyAgentCommand] doc.find упал:', e); }
+    const tries=[
+      ()=>docApi.find({ select:{ type:'text', pattern: needle } }),
+      ()=>docApi.find({ type:'text', pattern: needle }),
+      ()=>docApi.find({ select:{ text: needle } }),
+    ];
+    for(const fn of tries){
+      try{
+        const fr=fn();
+        const arr = (fr && (fr.context || fr.items || fr.matches)) || (Array.isArray(fr)?fr:null);
+        if(Array.isArray(arr) && arr.length){
+          const c0=arr[0];
+          const target = c0 && (c0.target || (c0.textRanges && c0.textRanges[0]) || c0.address || (c0.handle && c0.handle.ref && { ref:c0.handle.ref }));
+          if(target) return target;
+        }
+      }catch(_){ /* пробуем следующую форму */ }
+    }
     return null;
   };
+  // doc.* мутации принимают либо {target: SelectionTarget}, либо {ref: string}.
+  const asTargetArg=(t)=> (t && t.ref) ? { ref:t.ref } : { target:t };
 
   try{
 
@@ -1466,7 +1516,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
       try{
         const target=findTarget(oldText);
         if(target && docApi && typeof docApi.replace==='function'){
-          const r=docApi.replace({ target, text:newText });
+          const r=docApi.replace({ ...asTargetArg(target), text:newText });
           if(r && typeof r.then==='function') r.catch(e=>console.error('[applyAgentCommand] replace async fail:', e));
           console.log('[applyAgentCommand] replace via doc.replace (Document API)', {old:oldText.slice(0,40),newLen:newText.length});
           toastFn&&toastFn('check','Заменено');
@@ -1538,7 +1588,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
       const commentsApi=docApi && docApi.comments;
       console.log('[applyAgentCommand] comment', {anchor:anchor.slice(0,40),via:sel.via,bodyLen:body.length});
       if(commentsApi && typeof commentsApi.create==='function'){
-        const r=commentsApi.create({target:sel.target, text:body});
+        const r=commentsApi.create({...asTargetArg(sel.target), text:body});
         if(r && typeof r.then==='function') r.then(()=>{}).catch(e=>console.error('[applyAgentCommand] comment async fail:', e));
         toastFn&&toastFn('check','Комментарий добавлен');
         return true;
@@ -1562,7 +1612,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
       // 1) Чистый Document API: format.apply({target, inline})
       if(fmtApi && typeof fmtApi.apply==='function'){
         try{
-          const r=fmtApi.apply({target:sel.target, inline:marks});
+          const r=fmtApi.apply({...asTargetArg(sel.target), inline:marks});
           if(r && typeof r.then==='function') r.then(()=>{}).catch(e=>console.error('[applyAgentCommand] format async fail:', e));
           toastFn&&toastFn('check','Форматирование применено');
           return true;
@@ -7337,6 +7387,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
     const controller=new AbortController();
     abortRef.current=controller;
     let gotAnyText=false;
+    let agentFullText='';   // полный текст ответа агента — для авто-применения команд
     try{
       await streamChat({
         message:messageToSend,
@@ -7373,6 +7424,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             collapsedByContent = true;
             updateChatMessages(m => m.map(x => x.id === aiId ? { ...x, thinkCollapsed: true } : x));
           }
+          agentFullText+=chunk;
           updateChatMessages(m=>m.map(x=>x.id===aiId?{...x,text:(x.text||'')+chunk}:x));
         },
         onSources:(sources)=>{
@@ -7408,6 +7460,22 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           const finalSteps = steps.map(s => s.status === 'loading' ? { ...s, status: 'success' } : s);
           return { ...x, thinkRunning: false, thinkSteps: finalSteps, thinkCollapsed: collapsedByContent };
         }));
+      } else {
+        // AGENT: МГНОВЕННОЕ ПРЕВЬЮ. Авто-применяем команды как Tracked Changes сразу
+        // после ответа — юрист видит дифф (жёлтое зачёркнуто / зелёное добавлено) без
+        // клика. Кнопки в карточке чата = принять/отклонить именно эту правку.
+        try{
+          const parsed=parseAgentCommands(agentFullText);
+          if(parsed.commands && parsed.commands.length){
+            const changeIds={}; const applied={};
+            parsed.commands.forEach((cmd,idx)=>{
+              const r=applyCommandCaptureIds(cmd,onToast);
+              if(r.ok){ changeIds[idx]=r.ids; applied[idx]='previewing'; }
+            });
+            updateChatMessages(m=>m.map(x=>x.id===aiId?{...x,autoApplied:true,changeIds,appliedCmds:{...(x.appliedCmds||{}),...applied}}:x));
+            console.log('[auto-apply] applied commands:', parsed.commands.length, changeIds);
+          }
+        }catch(e){ console.error('[auto-apply] failed:', e); }
       }
     }
   };
@@ -7487,22 +7555,27 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
     }
   };
 
+  // ПРИНЯТЬ правку (Accept): финализируем tracked change(s) этой команды через
+  // editor.doc.trackChanges.decide(accept) — жёлтый/зелёный фон исчезает, текст
+  // становится постоянным. Команда уже применена авто-превью при ответе агента.
   const handleApplyCmd=(msgId,cmdIdx,cmd)=>{
-    if(typeof window.previewAgentEdit==='function'){
-      const ok=window.previewAgentEdit(cmd,{onResolve:(status)=>{
-        updateChatMessages(mm=>mm.map(x=>x.id===msgId?{...x,appliedCmds:{...(x.appliedCmds||{}),[cmdIdx]:status}}:x));
-      }});
-      if(ok){
-        updateChatMessages(mm=>mm.map(x=>x.id===msgId?{...x,appliedCmds:{...(x.appliedCmds||{}),[cmdIdx]:'previewing'}}:x));
-        onToast&&onToast('sparkles','Превью в редакторе → Применить / Отклонить');
-      }
-    }else{
-      const ok=applyAgentCommand(cmd,onToast);
-      if(ok) updateChatMessages(mm=>mm.map(x=>x.id===msgId?{...x,appliedCmds:{...(x.appliedCmds||{}),[cmdIdx]:'applied'}}:x));
-    }
+    const msg=(activeChat.chat?.messages||[]).find(x=>x.id===msgId);
+    const ids=(msg && msg.changeIds && msg.changeIds[cmdIdx]) || [];
+    let ok=true;
+    ids.forEach(id=>{ if(!decideTrackedChange(id,'accept')) ok=false; });
+    // Фолбэк: если правка ещё не применялась (нет changeIds) — применяем сейчас.
+    if(!ids.length && !(msg && msg.autoApplied)) applyAgentCommand(cmd,onToast);
+    updateChatMessages(mm=>mm.map(x=>x.id===msgId?{...x,appliedCmds:{...(x.appliedCmds||{}),[cmdIdx]:'applied'}}:x));
+    onToast&&onToast('check', ids.length?(ok?'Правка принята':'Принято (с предупреждениями)'):'Готово');
   };
+  // ОТКЛОНИТЬ правку (Reject): откатываем tracked change(s) через decide(reject) —
+  // зелёная вставка убирается, исходный текст восстанавливается.
   const handleRejectCmd=(msgId,cmdIdx)=>{
+    const msg=(activeChat.chat?.messages||[]).find(x=>x.id===msgId);
+    const ids=(msg && msg.changeIds && msg.changeIds[cmdIdx]) || [];
+    ids.forEach(id=>decideTrackedChange(id,'reject'));
     updateChatMessages(mm=>mm.map(x=>x.id===msgId?{...x,appliedCmds:{...(x.appliedCmds||{}),[cmdIdx]:'rejected'}}:x));
+    onToast&&onToast('check', ids.length?'Правка отклонена':'Отклонено');
   };
 
   const renderCommandCard=(cmd,idx,msgId,status)=>{
@@ -7546,33 +7619,9 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
     );
   };
 
-  // Auto-preview: первая необработанная команда агента → сразу в редактор с подсветкой
-  useEffect(() => {
-    if (!(!!window.docEngine) || typeof window.previewAgentEdit !== 'function') return;
-    const messages = activeChat.chat?.messages || [];
-    const anyPreviewing = messages.some(mm => mm.appliedCmds && Object.values(mm.appliedCmds).includes('previewing'));
-    if (anyPreviewing) return;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.role !== 'ai' || !m.agentMode || !m.text) continue;
-      const parsed = parseAgentCommands(m.text);
-      const applied = m.appliedCmds || {};
-      for (let idx = 0; idx < parsed.commands.length; idx++) {
-        if (applied[idx]) continue;
-        const cmd = parsed.commands[idx];
-        const ok = window.previewAgentEdit(cmd, {
-          onResolve: (status) => {
-            updateChatMessages(mm => mm.map(x => x.id === m.id ? { ...x, appliedCmds: { ...(x.appliedCmds || {}), [idx]: status } } : x));
-          }
-        });
-        if (ok) {
-          updateChatMessages(mm => mm.map(x => x.id === m.id ? { ...x, appliedCmds: { ...(x.appliedCmds || {}), [idx]: 'previewing' } } : x));
-        }
-        return;
-      }
-      break;
-    }
-  }, [activeChat.chat?.messages]);
+  // Авто-превью команд агента теперь выполняется ИМПЕРАТИВНО в потоке ответа
+  // (см. finally в обработчике send: applyCommandCaptureIds → Tracked Changes).
+  // Прежний useEffect зависел от window.previewAgentEdit, которого нет — удалён.
 
   const toggleThinkCollapsed = (msgId) => {
     updateChatMessages(m => m.map(x => x.id === msgId ? { ...x, thinkCollapsed: !x.thinkCollapsed } : x));
