@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мыйзамчы — юридический ИИ-ассистент</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.js"></script>
+    <!-- DOMPurify: XSS-санитизация HTML после marked.parse (см. safeParseMarkdown в script.js) -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+</head>
+
+<body>
+    <div class="container daynight-bg" id="daynight-bg" aria-hidden="true">
+        <div class="layer filter"></div>
+        <div class="layer sunset"><div class="text">Sunset</div></div>
+        <div class="layer nighttime"><div class="text">Night</div></div>
+        <div class="layer stars">
+            <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div>
+        </div>
+        <div class="layer shooting-stars" id="shooting-stars"></div>
+        <div class="note">Click to shift between Sunset and Night.</div>
+    </div>
+    <div class="bg-orbs" aria-hidden="true">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+    <div class="app-bg-gradient" aria-hidden="true"></div>
+
+    <div id="sidebar-overlay"></div>
+    <aside class="sidebar" id="sidebar">
+        <button id="close-btn" class="icon-btn close-btn"><i data-lucide="x" width="18" height="18"></i></button>
+        <div class="sidebar-header">
+            <div class="brand-title">
+                <span class="brand-logo"><i data-lucide="bot" width="20" height="20"></i></span>
+                <div class="brand-name-wrapper">
+                    <h2 class="brand-name"><span class="brand-m">M</span>iyzamchy</h2>
+                </div>
+                <button id="sidebar-collapse-btn" class="icon-btn sidebar-collapse-btn" title="Свернуть"><i data-lucide="chevron-left" width="18" height="18"></i></button>
+            </div>
+        </div>
+
+        <div class="sidebar-games">
+            <a href="games/swipe/index.html" class="game-link">
+                <i data-lucide="hand" width="16" height="16"></i> <span>Свайп правосудия</span>
+            </a>
+            <a href="games/millionaire/index.html" class="game-link">
+                <i data-lucide="trophy" width="16" height="16"></i> <span>Стать юристом</span>
+            </a>
+        </div>
+
+        <button class="new-chat-btn" id="new-chat-btn"><i data-lucide="plus" width="16" height="16"></i> Новый чат</button>
+        <div class="chat-history">
+            <h3>Недавние дела</h3>
+            <div class="history-container">
+                <ul id="history-list"></ul>
+            </div>
+        </div>
+    </aside>
+
+    <main class="main-content app-layout">
+        <header class="app-header">
+            <div class="header-left">
+                <button id="menu-btn" class="icon-btn" title="Открыть меню"><i data-lucide="menu" width="18" height="18"></i></button>
+                <span class="header-tunduk" id="header-mode-icon" title="Режим работы ИИ">
+                    <i data-lucide="zap" width="18" height="18"></i>
+                </span>
+                <span class="header-status-dot" id="header-status-dot" title="Проверка сервиса" aria-hidden="true"></span>
+            </div>
+            <div class="header-logo">
+                <span class="logo-text" data-text="Мыйзамчы">Мыйзамчы</span>
+                <span class="logo-smile" aria-hidden="true"><i data-lucide="bot" width="18" height="18"></i></span>
+            </div>
+            <div class="header-right">
+                <a href="ide/MIyzamchy Legal IDE.html" class="icon-btn ide-switch-btn" title="Профессиональная среда" aria-label="Перейти в Legal IDE">
+                    <i data-lucide="code" width="16" height="16"></i>
+                    <span class="ide-btn-text">Legal IDE</span>
+                </a>
+                <button id="theme-toggle" class="icon-btn theme-toggle-btn" title="Сменить тему">
+                    <span id="theme-icon"><i data-lucide="moon" width="18" height="18"></i></span>
+                </button>
+            </div>
+        </header>
+
+        <div class="chat-container" id="chat-container">
+            <div id="welcome-screen" class="welcome-screen">
+                <div class="welcome-logo">
+                    <span class="welcome-tunduk"><i data-lucide="scale" width="40" height="40"></i></span>
+                    <h1 class="welcome-title">Мыйзамчы</h1>
+                    <p class="welcome-subtitle">Юридический помощник по законодательству Кыргызстана</p>
+                    <div class="welcome-hints" aria-label="Как формулировать запрос">
+                        <span class="welcome-hint">Укажите город и ведомство</span>
+                        <span class="welcome-hint">Добавьте дату и сроки</span>
+                        <span class="welcome-hint">Опишите сторону спора</span>
+                    </div>
+                </div>
+                <div class="welcome-cards">
+                    <button class="welcome-card" data-prompt="Как подать исковое заявление в суд?">
+                        <span class="welcome-card-icon"><i data-lucide="scale" width="24" height="24"></i></span>
+                        <span class="welcome-card-text">Как подать иск в суд?</span>
+                    </button>
+                    <button class="welcome-card" data-prompt="Какие у меня трудовые права при увольнении?">
+                        <span class="welcome-card-icon"><i data-lucide="briefcase" width="24" height="24"></i></span>
+                        <span class="welcome-card-text">Мои права при увольнении</span>
+                    </button>
+                    <button class="welcome-card" data-prompt="Составь жалобу на действия работодателя">
+                        <span class="welcome-card-icon"><i data-lucide="file-text" width="24" height="24"></i></span>
+                        <span class="welcome-card-text">Составить жалобу</span>
+                    </button>
+                    <button class="welcome-card" data-prompt="Объясни что такое исковая давность простыми словами">
+                        <span class="welcome-card-icon"><i data-lucide="search" width="24" height="24"></i></span>
+                        <span class="welcome-card-text">Что такое исковая давность?</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="input-area">
+            <div class="input-wrapper">
+                <div class="input-box" id="input-box">
+                    <div class="attachments-row" id="attachments-row" hidden></div>
+                    <textarea id="user-input" class="chat-input" placeholder="Введите юридический запрос..." rows="1"></textarea>
+                    <input type="file" id="attach-file-input" multiple accept=".pdf,.docx,.doc,.txt,.md,.rtf,image/*" style="display:none">
+                    <div class="input-controls">
+                        <div class="input-controls-left">
+                            <button class="icon-btn attach-btn" id="attach-btn" type="button" aria-label="Прикрепить файлы (PDF, DOCX, изображения)" title="Прикрепить файлы — PDF, DOCX, TXT, изображения">
+                                <i data-lucide="paperclip" width="19" height="19" stroke-width="2.5"></i>
+                            </button>
+                        </div>
+                        <div class="input-controls-right">
+                            <div class="mode-selector-compact" id="mode-selector-compact">
+                                <button class="mode-trigger fast" id="mode-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="mode-dropdown">
+                                    <span id="mode-trigger-icon"><i data-lucide="zap" width="16" height="16"></i></span>
+                                    <span id="mode-trigger-label">Быстрый</span>
+                                    <i data-lucide="chevron-up" class="chevron"></i>
+                                </button>
+                                <div class="mode-dropdown" id="mode-dropdown" role="listbox" aria-label="Выбор режима" hidden>
+                                    <button class="mode-option" role="option" aria-selected="true" data-mode="fast" type="button">
+                                        <span class="option-icon"><i data-lucide="zap" width="20" height="20"></i></span>
+                                        <div class="option-info">
+                                            <span class="option-name">Быстрый</span>
+                                            <span class="option-desc">Для легких задач</span>
+                                        </div>
+                                        <i data-lucide="check" class="option-check" id="check-fast"></i>
+                                    </button>
+                                    <button class="mode-option" role="option" aria-selected="false" data-mode="thinking" type="button">
+                                        <span class="option-icon"><i data-lucide="brain-circuit" width="20" height="20"></i></span>
+                                        <div class="option-info">
+                                            <span class="option-name">Думающий</span>
+                                            <span class="option-desc">Для сложных задач</span>
+                                        </div>
+                                        <i data-lucide="check" class="option-check" id="check-thinking" style="display:none"></i>
+                                    </button>
+                                    <div class="mode-option mode-option--disabled">
+                                        <span class="option-icon"><i data-lucide="gem" width="18" height="18"></i></span>
+                                        <div class="option-info">
+                                            <span class="option-name">Pro</span>
+                                            <span class="option-desc">Скоро</span>
+                                        </div>
+                                        <span class="option-soon">Скоро</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <button class="mic-btn" id="mic-btn" type="button" aria-label="Голосовой ввод" title="Голосовой ввод (клик — старт/стоп)">
+                                <svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <rect x="9" y="2" width="6" height="12" rx="3"/>
+                                    <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+                                    <line x1="12" y1="19" x2="12" y2="22"/>
+                                </svg>
+                                <span class="mic-stop-icon" aria-hidden="true">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                                </span>
+                            </button>
+                            <button class="send-btn" id="send-btn" type="button" aria-label="Отправить запрос">
+                                <i data-lucide="arrow-up" width="19" height="19" stroke-width="2.5"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="input-footer">
+                    Мыйзамчы — образовательный инструмент. Перед принятием решений проконсультируйтесь с юристом.
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://unpkg.com/docx@9.6.1/build/index.js"></script>
+    <script src="script.js"></script>
+
+    <!-- ═══ Attachments (file upload with text extraction) ═══ -->
+    <script>
+    (function(){
+      const attachBtn = document.getElementById('attach-btn');
+      const fileInput = document.getElementById('attach-file-input');
+      const inputEl   = document.getElementById('user-input');
+      const sendBtn   = document.getElementById('send-btn');
+      const chipsRow  = document.getElementById('attachments-row');
+      if (!attachBtn || !fileInput || !inputEl || !chipsRow) return;
+
+      let attachments = []; // [{id, name, size, text, dataUrl, isImage, status}]
+      let counter = 0;
+
+      const fmtSize = (n) => n < 1024 ? n + ' B' : n < 1024*1024 ? Math.round(n/1024) + ' КБ' : (n/1024/1024).toFixed(1) + ' МБ';
+
+      const loadScript = (src) => new Promise((res, rej) => {
+        const ex = Array.from(document.scripts).find(s => s.src === src);
+        if (ex) return res();
+        const s = document.createElement('script');
+        s.src = src; s.onload = res; s.onerror = () => rej(new Error('Не удалось загрузить ' + src));
+        document.head.appendChild(s);
+      });
+
+      const extractText = async (file) => {
+        const name = (file.name || '').toLowerCase();
+        if (name.endsWith('.txt') || name.endsWith('.md') || name.endsWith('.rtf')) {
+          return await file.text();
+        }
+        if (name.endsWith('.docx') || name.endsWith('.doc')) {
+          if (!window.mammoth) {
+            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js');
+          }
+          const buffer = await file.arrayBuffer();
+          const res = await window.mammoth.extractRawText({ arrayBuffer: buffer });
+          return (res.value || '').trim();
+        }
+        if (name.endsWith('.pdf')) {
+          if (!window.pdfjsLib) {
+            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          }
+          const buffer = await file.arrayBuffer();
+          const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+          let text = '';
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            text += content.items.map(it => it.str).join(' ') + '\n\n';
+            if (i >= 50) { text += `\n…[Документ обрезан после 50 страниц]\n`; break; }
+          }
+          return text.trim();
+        }
+        // Last resort: try as text
+        return null;
+      };
+
+      const ICON_FILE  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>';
+      const ICON_LOAD  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+      const ICON_WARN  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+      const ICON_X     = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      const escapeHtml = (s) => String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+      const renderChips = () => {
+        if (attachments.length === 0) {
+          chipsRow.hidden = true;
+          chipsRow.innerHTML = '';
+          return;
+        }
+        chipsRow.hidden = false;
+        chipsRow.innerHTML = attachments.map(a => {
+          const visual = a.isImage
+            ? `<img src="${a.dataUrl||''}" alt="" class="chip-thumb">`
+            : `<span class="chip-icon" aria-hidden="true">${a.status==='loading'?ICON_LOAD:a.status==='error'?ICON_WARN:ICON_FILE}</span>`;
+          const meta = a.status === 'loading'
+            ? 'Извлечение…'
+            : a.status === 'error'
+              ? (a.error || 'Ошибка')
+              : (a.isImage
+                  ? fmtSize(a.size)
+                  : fmtSize(a.size) + ' · ' + (a.text ? Math.round(a.text.length/100)/10 + 'k симв.' : '—'));
+          return `
+            <div class="attach-chip" data-id="${a.id}" data-status="${a.status||'ready'}" ${a.isImage?'data-image="1"':''} title="${escapeHtml(a.name)}">
+              ${visual}
+              <div class="chip-info">
+                <span class="chip-name">${escapeHtml(a.name)}</span>
+                <span class="chip-meta">${escapeHtml(meta)}</span>
+              </div>
+              <button class="chip-remove" data-remove="${a.id}" type="button" aria-label="Удалить">${ICON_X}</button>
+            </div>`;
+        }).join('');
+        chipsRow.querySelectorAll('[data-remove]').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id = parseInt(btn.dataset.remove, 10);
+            attachments = attachments.filter(a => a.id !== id);
+            renderChips();
+          });
+        });
+      };
+
+      const processFile = async (file) => {
+        const id = ++counter;
+        const isImage = file.type.startsWith('image/');
+        const att = { id, name: file.name, size: file.size, isImage, status: 'loading' };
+        attachments.push(att);
+        renderChips();
+        try {
+          if (isImage) {
+            // Read as data URL for preview
+            const reader = new FileReader();
+            const dataUrl = await new Promise((res, rej) => {
+              reader.onload = () => res(reader.result);
+              reader.onerror = () => rej(new Error('Ошибка чтения'));
+              reader.readAsDataURL(file);
+            });
+            att.dataUrl = dataUrl;
+            att.status = 'ready';
+          } else {
+            const text = await extractText(file);
+            if (text == null) {
+              att.status = 'error';
+              att.error = 'Формат не поддерживается';
+            } else if (!text.trim()) {
+              att.status = 'error';
+              att.error = 'Пустой текст';
+            } else {
+              att.text = text;
+              att.status = 'ready';
+            }
+          }
+        } catch (e) {
+          console.error('[attach]', e);
+          att.status = 'error';
+          att.error = e.message;
+        }
+        renderChips();
+      };
+
+      attachBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        fileInput.click();
+      });
+
+      fileInput.addEventListener('change', async () => {
+        const files = Array.from(fileInput.files || []);
+        fileInput.value = '';
+        for (const f of files) {
+          // Limit total payload — warn if > 1MB of text
+          if (f.size > 25 * 1024 * 1024) {
+            alert('Файл «' + f.name + '» слишком большой (>25 МБ). Прикрепите файл поменьше.');
+            continue;
+          }
+          processFile(f);
+        }
+      });
+
+      // Build prefix from attachments to inject before user message
+      const buildAttachmentPrefix = () => {
+        const ready = attachments.filter(a => a.status === 'ready');
+        if (ready.length === 0) return '';
+        const parts = [];
+        for (const a of ready) {
+          if (a.isImage) {
+            parts.push(`🖼 Прикреплено изображение: ${a.name} (${fmtSize(a.size)})\n[Изображение не передаётся в AI на текущей версии бэкенда — опишите его сами в запросе.]`);
+          } else if (a.text) {
+            // Limit per-file to 30k chars to avoid blowing up the prompt
+            const MAX = 30000;
+            let body = a.text;
+            if (body.length > MAX) body = body.slice(0, MAX) + `\n…[обрезано, всего ${a.text.length} символов]`;
+            parts.push(`📎 Файл: ${a.name} (${fmtSize(a.size)})\n"""\n${body}\n"""`);
+          }
+        }
+        return parts.join('\n\n') + '\n\n';
+      };
+
+      // Inject attachments INTO textarea right before send dispatches
+      const injectAndClear = () => {
+        const prefix = buildAttachmentPrefix();
+        if (!prefix) return;
+        inputEl.value = prefix + (inputEl.value || '');
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        attachments = [];
+        renderChips();
+      };
+
+      // Capture-phase: runs before script.js handlers
+      if (sendBtn) {
+        sendBtn.addEventListener('click', () => {
+          // Don't send if any attachment still loading
+          const loading = attachments.some(a => a.status === 'loading');
+          if (loading) {
+            // Wait for them — give 100ms grace
+            setTimeout(injectAndClear, 50);
+            return;
+          }
+          injectAndClear();
+        }, true);
+      }
+      inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          if (attachments.some(a => a.status === 'loading')) return; // let it pass naturally
+          injectAndClear();
+        }
+      }, true);
+    })();
+    </script>
+
+    <!-- ═══ Voice Input (Web Speech API, ru-RU, auto-stop on 4.5s silence) ═══ -->
+    <script>
+    (function(){
+      const SILENCE_MS = 4500;
+      const micBtn = document.getElementById('mic-btn');
+      const inputEl = document.getElementById('user-input');
+      if (!micBtn || !inputEl) return;
+
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        micBtn.title = 'Голосовой ввод не поддерживается. Используйте Chrome/Edge.';
+        micBtn.style.opacity = '.4';
+        micBtn.addEventListener('click', () => {
+          alert('Голосовой ввод доступен в Chrome, Edge, Safari. В вашем браузере не поддерживается.');
+        });
+        return;
+      }
+
+      let recog = null;
+      let listening = false;
+      let baseText = '';
+      let lastFinal = '';
+      let silenceTimer = null;
+
+      const setInput = (val) => {
+        inputEl.value = val;
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+
+      const resetSilenceTimer = () => {
+        if (silenceTimer) clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          if (listening) stopListening();
+        }, SILENCE_MS);
+      };
+
+      const startListening = () => {
+        try {
+          recog = new SR();
+          recog.lang = 'ru-RU';
+          recog.continuous = true;
+          recog.interimResults = true;
+          recog.maxAlternatives = 1;
+          baseText = inputEl.value || '';
+          if (baseText && !baseText.endsWith(' ')) baseText += ' ';
+          lastFinal = '';
+          recog.onresult = (ev) => {
+            resetSilenceTimer();
+            let interim = '';
+            for (let i = ev.resultIndex; i < ev.results.length; i++) {
+              const t = ev.results[i][0].transcript;
+              if (ev.results[i].isFinal) lastFinal += t;
+              else interim += t;
+            }
+            setInput(baseText + lastFinal + interim);
+          };
+          recog.onspeechstart = resetSilenceTimer;
+          recog.onerror = (ev) => {
+            console.warn('[voice] error:', ev.error);
+            if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+              alert('Доступ к микрофону запрещён. Разрешите в настройках браузера.');
+            }
+            stopListening();
+          };
+          recog.onend = () => {
+            if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+            listening = false;
+            micBtn.classList.remove('mic-listening');
+          };
+          recog.start();
+          listening = true;
+          micBtn.classList.add('mic-listening');
+          resetSilenceTimer();
+        } catch (e) {
+          console.error('[voice] start failed:', e);
+          listening = false;
+          micBtn.classList.remove('mic-listening');
+        }
+      };
+
+      const stopListening = () => {
+        if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+        if (recog) { try { recog.stop(); } catch (e) {} recog = null; }
+        listening = false;
+        micBtn.classList.remove('mic-listening');
+      };
+
+      micBtn.addEventListener('click', () => {
+        if (listening) stopListening();
+        else startListening();
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && listening) stopListening();
+      });
+    })();
+    </script>
+</body>
+
+</html>
