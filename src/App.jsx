@@ -1334,19 +1334,27 @@ ${selBlock}
   "commands": [
     {"op": "replace", "old_text": "ТОЧНАЯ существующая фраза из документа (посимвольно, как есть)", "new_text": "новый текст"},
     {"op": "insert_after", "anchor": "ТОЧНАЯ фраза-якорь из документа", "text": "новый абзац"},
-    {"op": "insert_end", "text": "текст для добавления в конец документа"}
+    {"op": "insert_end", "text": "текст для добавления в конец документа"},
+    {"op": "comment", "anchor": "ТОЧНАЯ фраза из документа", "text": "Риск: противоречит ст. X ГК КР — ..."},
+    {"op": "format", "anchor": "ТОЧНАЯ фраза из документа", "marks": {"bold": true}}
   ]
 }
 \`\`\`
 
+# КОГДА ЧТО ИСПОЛЬЗОВАТЬ (главное правило)
+- Пользователь просит ИЗМЕНИТЬ/ИСПРАВИТЬ/ЗАМЕНИТЬ (сумму, дату, формулировку) → "op":"replace". Меняем текст.
+- Пользователь просит ПРОАНАЛИЗИРОВАТЬ / НАЙТИ РИСКИ / ПРОВЕРИТЬ НА СООТВЕТСТВИЕ → НЕ переписывай документ! Вешай "op":"comment" на рискованные фрагменты: text = «Риск: противоречит ст. X ГК КР — пояснение». Текст документа остаётся нетронутым.
+- Нужно ВЫДЕЛИТЬ фрагмент (новую сумму жирным, рискованный пункт) → "op":"format", marks: {"bold":true} | {"italic":true} | {"underline":true} | {"highlight":"yellow"} | {"color":"#c00"}.
+
 # ПРАВИЛА КОМАНД (commands)
-1. ИЗМЕНИТЬ существующее (сумму, дату, ФИО, формулировку) → "op":"replace". old_text = ТОЧНАЯ существующая фраза из документа (скопируй буквально, посимвольно, со знаками), new_text = на что заменить. НЕ дублируй — именно replace.
-2. ДОБАВИТЬ новый пункт/абзац → "op":"insert_after" с anchor (фраза, ПОСЛЕ которой вставить) ЛИБО "op":"insert_end" (в конец).
-3. anchor и old_text копируй ДОСЛОВНО из ТЕКУЩЕГО документа — иначе фрагмент не найдётся при поиске.
-4. Можно вернуть НЕСКОЛЬКО команд (например, заменить и сумму, и дату).
-5. При АНАЛИЗЕ (без правки) → "commands": [] (пустой массив), весь ответ в reasoning.
-6. Документ пуст → используй только "insert_end". Не обрывай JSON.
-7. Если упоминаешь номера статей — добавь disclaimer о сверке с cbd.minjust.gov.kg.`;
+1. replace: old_text = ТОЧНАЯ существующая фраза из документа (буквально, посимвольно, со знаками), new_text = на что заменить. НЕ дублируй — именно замена.
+2. insert_after (anchor) / insert_end — добавить новый пункт/абзац.
+3. comment: anchor = ТОЧНАЯ фраза из документа, на которую вешается замечание; text = само замечание. Используй для режима поиска рисков.
+4. format: anchor = ТОЧНАЯ фраза, marks = объект стиля.
+5. anchor и old_text копируй ДОСЛОВНО из ТЕКУЩЕГО документа — иначе фрагмент не найдётся поиском.
+6. Можно вернуть НЕСКОЛЬКО команд (например, comment на 3 рискованных пункта сразу).
+7. Чистый АНАЛИЗ без привязки к фрагментам → "commands": [], весь ответ в reasoning.
+8. Документ пуст → только "insert_end". Не обрывай JSON. Disclaimer о сверке статей с cbd.minjust.gov.kg.`;
   return { prompt, documentContext: docCtx };
 };
 
@@ -1389,6 +1397,14 @@ const parseAgentCommands=(text)=>{
         } else if (op === 'replace_selection') {
           const t = (c.text || c.new_text || '').toString().trim();
           if (t) result.commands.push({ type:'replace_selection', text:t });
+        } else if (op === 'comment') {
+          const anchor = (c.anchor || c.anchor_text || c.target || '').toString().trim();
+          const body = (c.text || c.comment || c.note || '').toString().trim();
+          if (anchor && body) result.commands.push({ type:'comment', anchor, text:body });
+        } else if (op === 'format') {
+          const anchor = (c.anchor || c.anchor_text || c.target || '').toString().trim();
+          const marks = (c.marks && typeof c.marks === 'object') ? c.marks : {};
+          if (anchor && Object.keys(marks).length) result.commands.push({ type:'format', anchor, marks });
         }
       }
     }
@@ -1462,7 +1478,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
   }
   const cmds = window.docEngine.commands || null;
   const text=String(cmd.text||'').trim();
-  if(!text && cmd.type!=='replace_all'){toastFn&&toastFn('warning','Пустой текст команды');return false;}
+  if(!text && cmd.type!=='replace_all' && cmd.type!=='format'){toastFn&&toastFn('warning','Пустой текст команды');return false;}
 
   try{
     const { state } = view;
@@ -1515,6 +1531,80 @@ const applyAgentCommand=(cmd,toastFn)=>{
 
       console.warn('[applyAgentCommand] replace: фрагмент не найден:', oldText.slice(0,80));
       toastFn&&toastFn('warning','Фрагмент не найден: «'+oldText.slice(0,40)+'»');
+      return false;
+    }
+
+    // Мост «поиск → выделение → Document API target». Доки SuperDoc советуют
+    // строить target для comments/format через editor.doc.selection.current().
+    // 1) находим фразу нативным поиском → {from,to}; 2) выделяем её командой
+    // setTextSelection; 3) берём портативный target из selection.current().
+    const selectByText=(anchor)=>{
+      let matches=null;
+      try{ if(window.superdoc && typeof window.superdoc.search==='function') matches=window.superdoc.search(anchor); }catch(e){ console.warn('[applyAgentCommand] search упал:', e); }
+      if(!matches || !matches.length) return null;
+      const m=matches[0];
+      try{
+        if(cmds && typeof cmds.setTextSelection==='function') cmds.setTextSelection({from:m.from,to:m.to});
+        else view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.create(view.state.doc, m.from, m.to)));
+      }catch(e){ console.warn('[applyAgentCommand] setTextSelection упал:', e); }
+      let target=null;
+      try{ const sel=window.docEngine.doc && window.docEngine.doc.selection; if(sel && typeof sel.current==='function') target=sel.current().target; }catch(e){ console.warn('[applyAgentCommand] selection.current упал:', e); }
+      return { target, from:m.from, to:m.to, matches:matches.length };
+    };
+
+    // ═══ COMMENT — повесить замечание на фрагмент (режим поиска рисков) ═══
+    // Агент НЕ переписывает пункт, а аннотирует его: «Риск: противоречит ст. X».
+    if(cmd.type==='comment'){
+      const anchor=String(cmd.anchor||'').trim();
+      const body=text;
+      if(!anchor){toastFn&&toastFn('warning','Не указан фрагмент для комментария (anchor)');return false;}
+      const sel=selectByText(anchor);
+      if(!sel){ console.warn('[applyAgentCommand] comment: фрагмент не найден:', anchor.slice(0,60)); toastFn&&toastFn('warning','Фрагмент не найден: «'+anchor.slice(0,40)+'»'); return false; }
+      const commentsApi=window.docEngine.doc && window.docEngine.doc.comments;
+      console.log('[applyAgentCommand] comment', {anchor:anchor.slice(0,40),from:sel.from,to:sel.to,hasTarget:!!sel.target,bodyLen:body.length});
+      if(commentsApi && typeof commentsApi.create==='function'){
+        const r=commentsApi.create(sel.target ? {target:sel.target, text:body} : {text:body});
+        if(r && typeof r.then==='function') r.then(()=>{}).catch(e=>console.error('[applyAgentCommand] comment async fail:', e));
+        try{ cmds && cmds.focus && cmds.focus(); }catch(_){ }
+        toastFn&&toastFn('check','Комментарий добавлен');
+        return true;
+      }
+      console.error('[applyAgentCommand] doc.comments.create недоступен');
+      toastFn&&toastFn('warning','Комментарии не поддерживаются редактором');
+      return false;
+    }
+
+    // ═══ FORMAT — стиль фрагмента (жирный/курсив/подчёрк/цвет) ═══
+    if(cmd.type==='format'){
+      ensureTrackChanges(window.docEngine);
+      const anchor=String(cmd.anchor||'').trim();
+      const marks=(cmd.marks && typeof cmd.marks==='object')?cmd.marks:{};
+      if(!anchor){toastFn&&toastFn('warning','Не указан фрагмент для форматирования (anchor)');return false;}
+      if(!Object.keys(marks).length){toastFn&&toastFn('warning','Не указан стиль (marks)');return false;}
+      const sel=selectByText(anchor);
+      if(!sel){ console.warn('[applyAgentCommand] format: фрагмент не найден:', anchor.slice(0,60)); toastFn&&toastFn('warning','Фрагмент не найден: «'+anchor.slice(0,40)+'»'); return false; }
+      console.log('[applyAgentCommand] format', {anchor:anchor.slice(0,40),from:sel.from,to:sel.to,marks,hasTarget:!!sel.target});
+      const fmtApi=window.docEngine.doc && window.docEngine.doc.format;
+      // 1) Эталон: Document API format.apply({target, inline})
+      if(sel.target && fmtApi && typeof fmtApi.apply==='function'){
+        const r=fmtApi.apply({target:sel.target, inline:marks});
+        if(r && typeof r.then==='function') r.then(()=>{}).catch(e=>console.error('[applyAgentCommand] format async fail:', e));
+        try{ cmds && cmds.focus && cmds.focus(); }catch(_){ }
+        toastFn&&toastFn('check','Форматирование применено');
+        return true;
+      }
+      // 2) ФОЛБЭК: ProseMirror addMark по {from,to} для марок, что есть в схеме
+      try{
+        const tr=view.state.tr; let applied=false;
+        const markMap={bold:'bold',italic:'italic',underline:'underline',strike:'strike',highlight:'highlight',color:'textStyle'};
+        for(const k of Object.keys(marks)){
+          const markName=markMap[k]||k;
+          const mt=view.state.schema.marks[markName];
+          if(mt){ const attrs=(k==='color')?{color:marks[k]}:(typeof marks[k]==='object'?marks[k]:undefined); tr.addMark(sel.from, sel.to, mt.create(attrs)); applied=true; }
+        }
+        if(applied){ view.dispatch(tr); try{ cmds && cmds.focus && cmds.focus(); }catch(_){ } toastFn&&toastFn('check','Форматирование применено'); return true; }
+      }catch(e){ console.error('[applyAgentCommand] format PM fallback fail:', e); }
+      toastFn&&toastFn('warning','Не удалось применить формат');
       return false;
     }
 
@@ -1621,6 +1711,8 @@ const applyAgentCommand=(cmd,toastFn)=>{
 
 const COMMAND_META={
   replace_smart:{label:'Заменить фрагмент',icon:'sparkles',color:'var(--orange)'},
+  comment:{label:'Комментарий-замечание',icon:'book',color:'var(--accent)'},
+  format:{label:'Форматирование',icon:'sparkles',color:'var(--accent)'},
   insert_smart:{label:'Умная вставка',icon:'sparkles',color:'var(--accent)'},
   insert_after:{label:'Вставить после фрагмента',icon:'plus',color:'var(--accent)'},
   insert_end:{label:'Вставить в конец',icon:'plus',color:'var(--green)'},
@@ -7449,6 +7541,10 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         <div style={{padding:'6px 10px',fontSize:11.5,color:'var(--text)',lineHeight:1.45,background:'var(--bg-editor)',maxHeight:120,overflowY:'auto',whiteSpace:'pre-wrap'}}>
           {cmd.type==='replace_smart' && cmd.oldText
             ? (<span><span style={{textDecoration:'line-through',color:'var(--muted)'}}>{cmd.oldText}</span>{'  →  '}<span style={{color:'var(--green)',fontWeight:600}}>{cmd.text}</span></span>)
+            : cmd.type==='comment'
+            ? (<span><span style={{color:'var(--muted)'}}>На «{String(cmd.anchor||'').slice(0,50)}»:</span>{' '}<span style={{fontStyle:'italic'}}>{cmd.text}</span></span>)
+            : cmd.type==='format'
+            ? (<span><span style={{color:'var(--muted)'}}>«{String(cmd.anchor||'').slice(0,50)}»</span>{' → '}<span style={{fontWeight:600}}>{Object.keys(cmd.marks||{}).join(', ')}</span></span>)
             : cmd.text}
         </div>
         {!applied && !rejected && (
