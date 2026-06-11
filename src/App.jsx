@@ -2471,8 +2471,8 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
       {l:'Закрыть всё',a:()=>onAction('closeAllTabs')}
     ],
     'Правка':[
-      {l:'Отменить',h:'Ctrl+Z',a:()=>{if(window.currentQuill) window.currentQuill.history.undo()}},
-      {l:'Повторить',h:'Ctrl+Y',a:()=>{if(window.currentQuill) window.currentQuill.history.redo()}},
+      {l:'Отменить',h:'Ctrl+Z',a:()=>{try{window.docEngine&&window.docEngine.commands&&window.docEngine.commands.undo&&window.docEngine.commands.undo()}catch(_){}}},
+      {l:'Повторить',h:'Ctrl+Y',a:()=>{try{window.docEngine&&window.docEngine.commands&&window.docEngine.commands.redo&&window.docEngine.commands.redo()}catch(_){}}},
       {s:true},
       {l:'Найти',h:'Ctrl+F',a:()=>onAction('find')}
     ],
@@ -3979,111 +3979,6 @@ class ErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
-
-/* ═══ Document Ruler ═══ */
-const DocumentRuler=({quill})=>{
-  const[indentFirst,setIndentFirst]=useState(0);
-  const[marginLeft,setMarginLeft]=useState(0);
-  const[marginRight,setMarginRight]=useState(0);
-  const[dragType,setDragType]=useState(null);
-  const[guideX,setGuideX]=useState(null);
-  const wrapperRef=useRef(null);
-  const isDragging=useRef(null);
-  const CM_TO_PX=38;
-  const MAX_CM=18;
-
-  useEffect(()=>{
-    if(!quill)return;
-    const h=()=>{
-      const f=quill.getFormat();
-      setIndentFirst(parseFloat(f.indentFirstLine)||0);
-      setMarginLeft(parseFloat(f.marginLeftBlock)||0);
-      setMarginRight(parseFloat(f.marginRightBlock)||0);
-    };
-    quill.on('selection-change',h);
-    return ()=>quill.off('selection-change',h);
-  },[quill]);
-
-  useEffect(()=>{
-    const move=e=>{
-      if(!isDragging.current||!wrapperRef.current)return;
-      const rect=wrapperRef.current.getBoundingClientRect();
-      const type=isDragging.current;
-      
-      let x=e.clientX-rect.left;
-      let cm;
-      if(type==='first'||type==='left'){
-        cm=Math.max(0,Math.min(MAX_CM,x/CM_TO_PX));
-        cm=Math.round(cm*4)/4; // snap 0.25
-        setGuideX(rect.left+cm*CM_TO_PX);
-        if(type==='first')setIndentFirst(cm);
-        else setMarginLeft(cm);
-      }else if(type==='right'){
-        cm=Math.max(0,Math.min(MAX_CM,(rect.right-e.clientX)/CM_TO_PX));
-        cm=Math.round(cm*4)/4;
-        setGuideX(rect.right-cm*CM_TO_PX);
-        setMarginRight(cm);
-      }
-    };
-    const up=()=>{
-      if(!isDragging.current)return;
-      const type=isDragging.current;
-      isDragging.current=null;
-      setDragType(null);
-      setGuideX(null);
-      document.body.style.cursor='';
-      if(quill){
-        if(type==='first')quill.format('indentFirstLine',indentFirst+'cm');
-        if(type==='left')quill.format('marginLeftBlock',marginLeft+'cm');
-        if(type==='right')quill.format('marginRightBlock',marginRight+'cm');
-      }
-    };
-    window.addEventListener('pointermove',move);
-    window.addEventListener('pointerup',up);
-    return()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up)};
-  },[quill,indentFirst,marginLeft,marginRight]);
-
-  const md=type=>e=>{e.preventDefault();isDragging.current=type;setDragType(type);document.body.style.cursor='ew-resize'};
-
-  return(
-    <div style={{height:24,background:'var(--bg-bar)',borderBottom:'1px solid var(--border)',position:'relative',margin:'0 64px',userSelect:'none',overflow:'hidden',zIndex:40}}>
-      {/* Scale background */}
-      <div ref={wrapperRef} style={{position:'absolute',inset:'0 0 0 0',borderLeft:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:'var(--bg-input)'}}>
-        {/* Ticks logic */}
-        {Array.from({length:MAX_CM+1}).map((_,i)=>(
-          <div key={i} style={{position:'absolute',left:i*CM_TO_PX,top:0,bottom:0}}>
-            <div style={{width:1,height:8,background:'var(--border)'}}/>
-            <div style={{fontSize:9,color:'var(--muted)',position:'absolute',top:8,left:2,fontFamily:'var(--font-mono)'}}>{i}</div>
-            {i<MAX_CM && [1,2,3].map(q=><div key={q} style={{position:'absolute',left:q*CM_TO_PX*0.25,top:0,width:1,height:4,background:'var(--border)',opacity:.5}}/>)}
-          </div>
-        ))}
-        {/* Markers */}
-        <div style={{position:'absolute',left:marginLeft*CM_TO_PX,top:12,width:11,height:12,transform:'translateX(-5.5px)',cursor:'ew-resize',zIndex:10}} onPointerDown={md('left')}>
-           <div style={{width:0,height:0,borderLeft:'5.5px solid transparent',borderRight:'5.5px solid transparent',borderBottom:'8px solid var(--accent)'}}/>
-           <div style={{width:11,height:4,background:'var(--accent)'}}/>
-        </div>
-        <div style={{position:'absolute',left:indentFirst*CM_TO_PX,top:0,width:11,height:12,transform:'translateX(-5.5px)',cursor:'ew-resize',zIndex:11}} onPointerDown={md('first')}>
-           <div style={{width:11,height:4,background:'var(--accent)'}}/>
-           <div style={{width:0,height:0,borderLeft:'5.5px solid transparent',borderRight:'5.5px solid transparent',borderTop:'8px solid var(--accent)'}}/>
-        </div>
-        <div style={{position:'absolute',right:marginRight*CM_TO_PX,top:12,width:11,height:12,transform:'translateX(5.5px)',cursor:'ew-resize',zIndex:10}} onPointerDown={md('right')}>
-           <div style={{width:0,height:0,borderLeft:'5.5px solid transparent',borderRight:'5.5px solid transparent',borderBottom:'8px solid var(--text)'}}/>
-           <div style={{width:11,height:4,background:'var(--text)'}}/>
-        </div>
-      </div>
-      {/* Vertical Guide Line */}
-      {dragType && guideX!==null && typeof document!=='undefined' && ReactDOM.createPortal(<div style={{position:'fixed',left:guideX,top:0,bottom:0,width:1,background:'var(--red)',opacity:.6,zIndex:9999,pointerEvents:'none'}}/>,document.body)}
-    </div>
-  );
-};
-
-/* ═══ MiniMap ═══ */
-
-/* ═══════════════════════════════════════════════
-   FEATURE FLAG — переключатель редактора
-   true  → новый TipTap (Phase A migration)
-   false → старый Quill (legacy, удалится в A5)
-   ═══════════════════════════════════════════════ */
 
 /* ═══════════════════════════════════════════════
    DocEngine constants + helpers (ported from docengine.html)

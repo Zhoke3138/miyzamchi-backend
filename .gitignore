@@ -20,6 +20,12 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 package-lock.json.bak
+# Артефакты/бэкапы/черновики (не коммитим)
+*.bak
+server.log
+server.err
+segmentation_errors.json
+scratch/
 
 # ═══════════════════════════════════════════════════════════════════
 # Локальные конфиги / IDE / OS
