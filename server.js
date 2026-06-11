@@ -120,6 +120,9 @@ app.use(helmet({
 const DEFAULT_ALLOWED_ORIGINS = [
     'https://miyzamchy-ceo.com.kg',            // новый prod-домен (CEO)
     'http://miyzamchy-ceo.com.kg',             // тот же домен без TLS — на случай http-захода
+    'https://www.miyzamchy-ceo.com.kg',        // www-вариант prod-домена
+    'http://www.miyzamchy-ceo.com.kg',         // www без TLS
+    'https://miyzamchi-web.onrender.com',      // Render Static — рабочий фронтенд (MPA: ChatMZ + workspace)
     'https://miyzamchy-test.netlify.app',      // текущий prod-домен (Y, не I)
     'https://miyzamchy-test-mvp.netlify.app',  // старый MVP-домен — оставлен для обратной совместимости
     'https://miyzamchi-backend.onrender.com',
