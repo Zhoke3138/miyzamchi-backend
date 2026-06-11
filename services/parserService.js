@@ -19,6 +19,14 @@ const fs = require('fs');
 const path = require('path');
 const pdfParse = require('pdf-parse'); // извлечение текста + счётчик страниц PDF
 const mammoth = require('mammoth');    // извлечение текста DOCX
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleAIFileManager } = require('@google/generative-ai/server'); // File API (Gemini Vision)
+
+// Модель для Vision-парсинга PDF (мультимодальная). Override через env.
+const VISION_MODEL = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Ленивая ротация Gemini-ключей из llmClients (тот же GEMINI_API_KEY).
+function geminiKey() { return require('./llmClients').getNextKey(); }
 
 const SMALL_PAGE_LIMIT = 3;                 // ≤3 страниц = «короткий» документ
 const SMALL_CHAR_LIMIT = 9000;              // ~3 страницы юр-текста (DOCX/TXT)
@@ -36,6 +44,62 @@ function unsupported(msg) {
   return e;
 }
 
+const VISION_PROMPT =
+  'Извлеки ВЕСЬ текст этого документа в Markdown, сохраняя структуру: заголовки (##), ' +
+  'списки, таблицы, нумерацию пунктов и статей. Верни ТОЛЬКО содержимое документа — ' +
+  'без своих комментариев, пояснений и ограждений ```.';
+
+/**
+ * Парсинг тяжёлого/сканированного PDF через Gemini Vision (Google AI File API).
+ * Грузим файл в File API → ждём ACTIVE → просим модель извлечь Markdown →
+ * удаляем файл из File API (ZDR). Ключи — общая ротация getNextKey().
+ * Этап 2 Backend Pivot (заменяет снесённый Docling/Cloud Run для тяжёлых PDF).
+ */
+async function parseViaGemini(filePath, originalName) {
+  const fileManager = new GoogleAIFileManager(geminiKey());
+  let uploaded = null;
+  try {
+    const up = await fileManager.uploadFile(filePath, {
+      mimeType: 'application/pdf',
+      displayName: originalName || 'document.pdf',
+    });
+    uploaded = up.file;
+
+    // File API обрабатывает файл асинхронно: PROCESSING → ACTIVE (для PDF обычно быстро).
+    let info = uploaded;
+    for (let i = 0; i < 15 && info.state === 'PROCESSING'; i++) {
+      await sleep(1500);
+      info = await fileManager.getFile(uploaded.name);
+    }
+    if (info.state !== 'ACTIVE') {
+      throw new Error(`Gemini File API: файл в состоянии ${info.state} (ожидался ACTIVE)`);
+    }
+
+    const genAI = new GoogleGenerativeAI(geminiKey());
+    const model = genAI.getGenerativeModel({ model: VISION_MODEL });
+    const res = await model.generateContent([
+      { fileData: { mimeType: 'application/pdf', fileUri: info.uri } },
+      { text: VISION_PROMPT },
+    ]);
+    const markdown = String((res && res.response && res.response.text && res.response.text()) || '').trim();
+    if (!markdown) throw new Error('Gemini Vision вернул пустой текст');
+
+    console.log(`[parseViaGemini] PDF → Gemini Vision (${VISION_MODEL}), ${markdown.length} симв.`);
+    return {
+      markdown,
+      source: 'gemini-vision',
+      structure_confidence: detectStructureConfidence(markdown),
+      pages: null,
+      needsFragmentation: false,
+    };
+  } finally {
+    // ZDR: удаляем загруженный файл из Gemini File API.
+    if (uploaded && uploaded.name) {
+      fileManager.deleteFile(uploaded.name).catch(() => { /* игнор */ });
+    }
+  }
+}
+
 /**
  * Локальный парсинг файла → { markdown, source, structure_confidence, pages, needsFragmentation }.
  * ZDR: временный файл удаляется в finally.
@@ -45,10 +109,12 @@ async function smartParse(filePath, originalName) {
   try {
     const stat = await fs.promises.stat(filePath).catch(() => ({ size: Infinity }));
 
-    // ── PDF (только текстовый слой, до лимита размера) ──
+    // ── PDF ──
     if (ext === '.pdf') {
+      // Тяжёлый PDF (>8МБ) — не буферим локально (риск OOM на 512MB) → Gemini Vision.
       if (stat.size > MAX_PDF_BYTES) {
-        throw unsupported(`PDF ${Math.round(stat.size / 1024 / 1024)}МБ слишком большой для локального парсинга. Будет доступно после внедрения Gemini Vision (Этап 2). Пока — DOCX/TXT или текстовый PDF до 8 МБ.`);
+        console.log(`[smartParse] PDF ${Math.round(stat.size / 1024 / 1024)}МБ > лимита → Gemini Vision`);
+        return await parseViaGemini(filePath, originalName);
       }
       const buffer = await fs.promises.readFile(filePath);
       let pdf = null;
@@ -56,7 +122,9 @@ async function smartParse(filePath, originalName) {
       const pages = pdf ? pdf.numpages : null;
       const text = pdf ? String(pdf.text || '').trim() : '';
       if (!text) {
-        throw unsupported('PDF без текстового слоя (скан). Распознавание (OCR) будет доступно после Gemini Vision (Этап 2).');
+        // Нет текстового слоя (скан) → OCR через Gemini Vision.
+        console.log(`[smartParse] PDF pages=${pages}, текст пуст (скан) → Gemini Vision (OCR)`);
+        return await parseViaGemini(filePath, originalName);
       }
       console.log(`[smartParse] PDF pages=${pages} → pdf-parse (локально, ${text.length} симв.)`);
       return {
