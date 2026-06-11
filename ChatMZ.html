@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Miyzamchi (Мыйзамчы) — AI Legal Assistant for the Kyrgyz Republic</title>
+    <title>Мыйзамчы — юридический ИИ-ассистент</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/style-ChatMZ.css">
+    <link rel="stylesheet" href="style.css">
     <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.js"></script>
     <!-- DOMPurify: XSS-санитизация HTML после marked.parse (см. safeParseMarkdown в script.js) -->
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
@@ -50,10 +50,10 @@
         </div>
 
         <div class="sidebar-games">
-            <a href="https://miyzamchi-backend.onrender.com/games/swipe/index.html" class="game-link">
+            <a href="games/swipe/index.html" class="game-link">
                 <i data-lucide="hand" width="16" height="16"></i> <span>Свайп правосудия</span>
             </a>
-            <a href="https://miyzamchi-backend.onrender.com/games/millionaire/index.html" class="game-link">
+            <a href="games/millionaire/index.html" class="game-link">
                 <i data-lucide="trophy" width="16" height="16"></i> <span>Стать юристом</span>
             </a>
         </div>
@@ -81,9 +81,9 @@
                 <span class="logo-smile" aria-hidden="true"><img src="/logo/Logo_transparent.png?v=2" alt="Logo"></span>
             </div>
             <div class="header-right">
-                <a href="/workspace.html" class="icon-btn ide-switch-btn" title="Профессиональная среда — Legal Workspace" aria-label="Open Legal Workspace">
+                <a href="ide/MIyzamchy Legal IDE.html" class="icon-btn ide-switch-btn" title="Профессиональная среда" aria-label="Перейти в Legal IDE">
                     <i data-lucide="code" width="16" height="16"></i>
-                    <span class="ide-btn-text">Open Legal Workspace</span>
+                    <span class="ide-btn-text">Legal IDE</span>
                 </a>
                 <button id="theme-toggle" class="icon-btn theme-toggle-btn" title="Сменить тему">
                     <span id="theme-icon"><i data-lucide="moon" width="18" height="18"></i></span>
@@ -97,7 +97,6 @@
                     <span class="welcome-tunduk"><i data-lucide="scale" width="40" height="40"></i></span>
                     <h1 class="welcome-title">Мыйзамчы</h1>
                     <p class="welcome-subtitle">Юридический помощник по законодательству Кыргызстана</p>
-                    <p class="welcome-subtitle">Welcome to Miyzamchi — An AI-powered LegalTech ecosystem and intelligent assistant for the legislation of the Kyrgyz Republic</p>
                     <div class="welcome-hints" aria-label="Как формулировать запрос">
                         <span class="welcome-hint">Укажите город и ведомство</span>
                         <span class="welcome-hint">Добавьте дату и сроки</span>
@@ -199,7 +198,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://unpkg.com/docx@9.6.1/build/index.js"></script>
-    <script src="/script.js"></script>
+    <script src="script.js"></script>
 
     <!-- ═══ Attachments (file upload with text extraction) ═══ -->
     <script>
@@ -1114,11 +1113,10 @@
                 // Initialize WebSocket connection
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 let host = window.location.host;
-                if (!host || window.location.protocol === 'file:' || host.startsWith('localhost') || host.startsWith('127.0.0.1')) {
-                    host = 'localhost:3000';
-                } else if (!host.includes('miyzamchi-backend')) {
-                    // Статик-хостинг (Render Static/Netlify): WebSocket держит только бэкенд
+                if (host.includes('netlify.app')) {
                     host = 'miyzamchi-backend.onrender.com';
+                } else if (!host || window.location.protocol === 'file:') {
+                    host = 'localhost:3000';
                 }
                 const wsUrl = `${protocol}//${host}/api/voice`;
                 
