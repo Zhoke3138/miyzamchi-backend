@@ -1,5 +1,11 @@
 # Miyzamchi 2.0 — Архитектура (Stateful Multi-Agent RAG)
 
+> ⚠️ **УСТАРЕЛО ЧАСТИЧНО (11.06.2026, Этап 1 Backend Pivot):** микросервис парсинга
+> Docling на Cloud Run **СНЕСЁН**. Парсинг теперь локальный в Node
+> (`services/parserService.js`: pdf-parse/mammoth/fs). Разделы ниже про `parser-service/`,
+> Cloud Run, OIDC ID-token, `GCP_SA_KEY_JSON`/`PARSER_SERVICE_URL` — НЕАКТУАЛЬНЫ.
+> Тяжёлые/сканированные PDF — до внедрения Gemini Vision (Этап 2, см. `BACKEND_PIVOT_PLAN.md`).
+
 > Версия пайплайна `/api/analyze-document` после перехода на микросервисную
 > архитектуру (июнь 2026). Документ для новых сессий чата и онбординга.
 > Старый монолитный пайплайн (Selective Reasoning v2.0) описан в `REFACTOR_ROADMAP.md`.
