@@ -7928,163 +7928,11 @@ const StatusBar=({dark,tabCount,unsaved,activeName})=>{
 
 /* ═══ Magic Wand ═══ */
 
-/* ═══ Home Chat — лендинг (главная страница) ═══
-   Базовый чат Miyzamchi как первый экран приложения: модераторы Google For
-   Startups сразу видят работающий продукт. Полноэкранный ассистент поверх
-   /api/chat (streamChat), без редактора и IDE-обвязки. Кнопка
-   "Open Legal Workspace" переключает на профессиональный IDE-режим (App). */
-const HOME_SUGGESTIONS=[
-  'What documents are required to register an LLC in Kyrgyzstan?',
-  'Что говорит Трудовой кодекс КР об увольнении по инициативе работодателя?',
-  'Какие налоги платит индивидуальный предприниматель в КР?'
-];
-const HomeChat=({dark,onToggleTheme,onOpenWorkspace})=>{
-  const[messages,setMessages]=useState([]);
-  const[input,setInput]=useState('');
-  const[busy,setBusy]=useState(false);
-  const[status,setStatus]=useState('');
-  const listRef=useRef(null);
-  const abortRef=useRef(null);
-  useEffect(()=>{const el=listRef.current;if(el)el.scrollTop=el.scrollHeight},[messages,status]);
-  useEffect(()=>()=>{if(abortRef.current)abortRef.current.abort()},[]);
-  const send=useCallback(async(forced)=>{
-    const msg=String(forced!=null?forced:input).trim();
-    if(!msg||busy)return;
-    setInput('');
-    setStatus('');
-    const history=messages.filter(m=>m.text&&!m.error).slice(-10).map(m=>({role:m.role,content:m.text}));
-    setMessages(p=>[...p,{role:'user',text:msg},{role:'assistant',text:'',sources:null,streaming:true}]);
-    setBusy(true);
-    const ac=new AbortController();abortRef.current=ac;
-    const patchLast=(fn)=>setMessages(p=>{const n=p.slice();const i=n.length-1;if(i>=0&&n[i].role==='assistant')n[i]=fn(n[i]);return n});
-    try{
-      await streamChat({
-        message:msg,history,mode:'fast',
-        onStatus:s=>setStatus(s),
-        onText:t=>patchLast(m=>({...m,text:m.text+t})),
-        onSources:srcs=>patchLast(m=>({...m,sources:Array.isArray(srcs)?srcs:null})),
-        signal:ac.signal
-      });
-    }catch(e){
-      if(e&&e.name==='AbortError'){patchLast(m=>({...m,text:m.text||'⏹ Остановлено.'}))}
-      else{console.error('[HomeChat]',e);patchLast(m=>({...m,error:true,text:(m.text?m.text+'\n\n':'')+'⚠️ Не удалось получить ответ от сервера. Попробуйте ещё раз через минуту.'}))}
-    }finally{
-      setBusy(false);setStatus('');abortRef.current=null;
-      patchLast(m=>({...m,streaming:false}));
-    }
-  },[input,busy,messages]);
-  const stop=useCallback(()=>{if(abortRef.current)abortRef.current.abort()},[]);
-  const workspaceBtnStyle={display:'inline-flex',alignItems:'center',gap:8,padding:'9px 16px',border:'none',borderRadius:10,background:'linear-gradient(135deg,var(--accent),var(--accent2))',color:'#fff',fontSize:13.5,fontWeight:700,cursor:'pointer',boxShadow:'0 4px 14px var(--accent-glow)',fontFamily:'inherit',letterSpacing:'-.01em'};
-  return(
-    <div className={(dark?'dk ':'')+'grain'} style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',background:'var(--bg-editor)',color:'var(--text)',overflow:'hidden',fontFamily:"'DM Sans',ui-sans-serif,system-ui,sans-serif",fontSize:14,letterSpacing:'-.01em'}}>
-      {/* Header */}
-      <div style={{flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'10px 18px',borderBottom:'1px solid var(--border)',background:'var(--bg-panel)'}}>
-        <div style={{display:'flex',alignItems:'center',gap:10,minWidth:0}}>
-          <LogoIcon sz={30}/>
-          <div style={{minWidth:0}}>
-            <div style={{fontWeight:700,fontSize:15}}>Miyzamchi</div>
-            <div style={{fontSize:11,color:'var(--muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>AI Legal Assistant · Kyrgyz Republic</div>
-          </div>
-        </div>
-        <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-          <button onClick={onToggleTheme} title={dark?'Light theme':'Dark theme'} aria-label="Toggle theme" style={{width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center',background:'var(--hover)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',color:'var(--text)'}}>
-            <Ico k={dark?'sun':'moon'} sz={15}/>
-          </button>
-          <button onClick={onOpenWorkspace} style={workspaceBtnStyle}>
-            <Ico k="file" sz={15} col="#fff"/><span>Open Legal Workspace</span><span aria-hidden="true">→</span>
-          </button>
-        </div>
-      </div>
-      {/* Messages / Hero */}
-      <div ref={listRef} style={{flex:1,overflowY:'auto',padding:'24px 16px'}}>
-        <div style={{maxWidth:760,margin:'0 auto',display:'flex',flexDirection:'column',gap:14}}>
-          {messages.length===0 && (
-            <div style={{textAlign:'center',padding:'46px 12px 12px'}}>
-              <LogoIcon sz={64} glow/>
-              <h1 style={{fontSize:30,margin:'18px 0 10px',letterSpacing:'-.02em',fontWeight:700}}>Welcome to Miyzamchi</h1>
-              <p style={{fontSize:15.5,lineHeight:1.55,color:'var(--muted)',maxWidth:580,margin:'0 auto'}}>
-                An AI-powered LegalTech ecosystem and intelligent assistant for the legislation of the Kyrgyz Republic.
-              </p>
-              <p style={{fontSize:13,lineHeight:1.5,color:'var(--muted)',maxWidth:540,margin:'10px auto 0'}}>
-                Задайте вопрос по законодательству КР — ассистент ответит со ссылками на нормы. Ask a legal question below to try it live.
-              </p>
-              <div style={{display:'flex',flexWrap:'wrap',gap:8,justifyContent:'center',marginTop:24}}>
-                {HOME_SUGGESTIONS.map(s=>(
-                  <button key={s} onClick={()=>send(s)} style={{padding:'8px 14px',borderRadius:999,border:'1px solid var(--border)',background:'var(--bg-panel)',color:'var(--text)',fontSize:12.5,cursor:'pointer',fontFamily:'inherit',maxWidth:'100%'}}>{s}</button>
-                ))}
-              </div>
-              <div style={{marginTop:28}}>
-                <button onClick={onOpenWorkspace} style={workspaceBtnStyle}>
-                  <Ico k="file" sz={15} col="#fff"/><span>Open Legal Workspace</span><span aria-hidden="true">→</span>
-                </button>
-                <div style={{fontSize:11.5,color:'var(--muted)',marginTop:8}}>Professional document editor · contract audit · NLA library</div>
-              </div>
-            </div>
-          )}
-          {messages.map((m,i)=>m.role==='user'?(
-            <div key={i} style={{alignSelf:'flex-end',maxWidth:'85%',background:'var(--accent-dim)',border:'1px solid var(--accent)',borderRadius:'14px 14px 4px 14px',padding:'10px 14px',whiteSpace:'pre-wrap',fontSize:14,lineHeight:1.5}}>{m.text}</div>
-          ):(
-            <div key={i} style={{display:'flex',gap:10}}>
-              <div style={{flexShrink:0,marginTop:2}}><LogoIcon sz={22}/></div>
-              <div style={{minWidth:0,flex:1}}>
-                {m.text
-                  ? <div style={{fontSize:14.5,lineHeight:1.6,overflowWrap:'break-word'}} dangerouslySetInnerHTML={{__html:renderMarkdown(m.text)}}/>
-                  : <div style={{color:'var(--muted)',fontSize:13}}>{m.streaming?(status||'Мыйзамчы думает…'):''}</div>}
-                {Array.isArray(m.sources)&&m.sources.length>0&&(
-                  <div style={{marginTop:8,padding:'8px 12px',background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:8,fontSize:12,color:'var(--muted)'}}>
-                    <div style={{fontWeight:600,marginBottom:4}}>Источники</div>
-                    {m.sources.slice(0,8).map((s,j)=>(
-                      <div key={j} style={{margin:'2px 0'}}>{typeof s==='string'?s:(s&&(s.npa_title||s.article_title)?[s.npa_title,s.article_title].filter(Boolean).join(' — '):'')}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-      {/* Input */}
-      <div style={{flexShrink:0,padding:'12px 16px 14px',borderTop:'1px solid var(--border)',background:'var(--bg-panel)'}}>
-        <div style={{maxWidth:760,margin:'0 auto'}}>
-          <div style={{display:'flex',gap:8,alignItems:'flex-end',background:'var(--bg-editor)',border:'1px solid var(--border)',borderRadius:12,padding:'8px 10px'}}>
-            <textarea
-              value={input}
-              onChange={e=>setInput(e.target.value)}
-              onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}
-              rows={Math.min(6,Math.max(1,input.split('\n').length))}
-              placeholder="Ваш вопрос по законодательству КР… / Ask about Kyrgyz law…"
-              style={{flex:1,border:'none',outline:'none',background:'transparent',resize:'none',fontSize:14,lineHeight:1.5,color:'var(--text)',fontFamily:'inherit',padding:'4px 2px'}}
-            />
-            {busy?(
-              <button onClick={stop} title="Остановить" style={{width:36,height:36,flexShrink:0,border:'1px solid var(--border)',borderRadius:9,background:'var(--hover)',color:'var(--text)',cursor:'pointer',fontSize:13}}>■</button>
-            ):(
-              <button onClick={()=>send()} disabled={!input.trim()} title="Отправить" style={{width:36,height:36,flexShrink:0,border:'none',borderRadius:9,background:input.trim()?'linear-gradient(135deg,var(--accent),var(--accent2))':'var(--hover)',color:input.trim()?'#fff':'var(--muted)',cursor:input.trim()?'pointer':'default',fontSize:15}}>➤</button>
-            )}
-          </div>
-          <div style={{fontSize:10.5,color:'var(--muted)',textAlign:'center',marginTop:6}}>
-            Miyzamchi AI can make mistakes — verify answers against official sources of Kyrgyz legislation. · ИИ может ошибаться, сверяйтесь с официальными источниками.
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 /* ═══ App ═══ */
 let _tabIdCounter=10;
 const App=()=>{
   const[dark,setDark]=useState(()=>localStorage.getItem('myz-dk')==='1');
   const[tt,setTt]=useState(false);
-  // ── Лендинг-флоу (Google For Startups): по умолчанию открыт базовый чат
-  // (HomeChat), '#workspace' в URL → профессиональный IDE-режим. Hash даёт
-  // deep-link на воркспейс и рабочую кнопку «Назад» в браузере.
-  const[view,setView]=useState(()=>window.location.hash==='#workspace'?'workspace':'home');
-  useEffect(()=>{
-    const onHash=()=>setView(window.location.hash==='#workspace'?'workspace':'home');
-    window.addEventListener('hashchange',onHash);
-    return()=>window.removeEventListener('hashchange',onHash);
-  },[]);
-  const openWorkspace=useCallback(()=>{try{window.location.hash='workspace'}catch(e){}setView('workspace')},[]);
   const[leftW,setLeftW]=useState(238);const[rightW,setRightW]=useState(560);const[rightSplit,setRightSplit]=useState(35);
   const[npaCollapsed,setNpaCollapsed]=useState(true);const[chatCollapsed,setChatCollapsed]=useState(false);
   const[leftOpen,setLeftOpen]=useState(false);const[rightOpen,setRightOpen]=useState(true);const[splitActive,setSplitActive]=useState(false);
@@ -8168,8 +8016,7 @@ const App=()=>{
   // Каждое изменение rightW не должно пересоздавать observer — это вызывало
   // дёрганье при перетаскивании Handle.
   useEffect(() => {
-    // На лендинге (#rp нет в DOM) не запускаем rAF-петлю поиска элемента.
-    if (!rightOpen || view !== 'workspace') return;
+    if (!rightOpen) return;
     let raf = 0;
     let debounceId = 0;
     let lastApplied = null;
@@ -8209,7 +8056,7 @@ const App=()=>{
     };
     raf = requestAnimationFrame(init);
     return () => { cancelAnimationFrame(raf); cleanup(); };
-  }, [rightOpen, view]);
+  }, [rightOpen]);
 
   // ── Недавно открытые файлы (persist в localStorage) ──
   const [recentFiles, setRecentFiles] = useState(() => {
@@ -8327,9 +8174,6 @@ const App=()=>{
   const unsavedCount=tabs.filter(t=>t.mod).length;
 
   useEffect(() => {
-    // deps [view]: при старте на лендинге #superdoc-wrapper ещё нет в DOM —
-    // переподключаем observer, когда пользователь открывает воркспейс.
-    if (view !== 'workspace') return;
     const el = document.getElementById('superdoc-wrapper');
     if (!el) return;
     let timeoutId = null;
@@ -8347,35 +8191,7 @@ const App=()=>{
       observer.disconnect();
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [view]);
-
-  // SuperDoc-редактор. ВАЖНО: useMemo обязан вызываться при КАЖДОМ рендере
-  // (в т.ч. когда показан лендинг-чат) — раньше он стоял инлайном в JSX ниже,
-  // но условный return для view==='home' сломал бы порядок хуков React.
-  const editorArea = useMemo(() => {
-    const currentTab = tabs.find(t => t.id === activeTab);
-    const isValidDocx = currentTab?.buffer && currentTab.buffer instanceof ArrayBuffer;
-    const docFile = isValidDocx ? new Blob([currentTab.buffer]) : null;
-    return (
-      <>
-      <SuperDocEditor
-        key={`${activeTab}_${currentTab?.buffer?.byteLength || 0}`}
-        document={docFile}
-        documentMode="editing"
-        fonts={{ assetBaseUrl: '/superdoc-fonts/' }}
-        toolbar={{ groups: ['history', 'text', 'paragraph', 'insert', 'list', 'indent', 'font-controls', 'table', 'tools'], fonts: [{ label: 'Times New Roman', key: 'Times New Roman, serif' }] }}
-        onReady={(e) => { window.superdoc = e.superdoc; }}
-        onEditorCreate={(e) => { window.docEngine = e.editor; }}
-        onEditorUpdate={() => { if (window.__shadowTrigger) window.__shadowTrigger(); }}
-      />
-    </>
-    );
-  }, [activeTab, tabs.find(t => t.id === activeTab)?.buffer]);
-
-  // ── Лендинг: базовый чат как главная страница ──
-  if(view==='home'){
-    return <HomeChat dark={dark} onToggleTheme={toggleTheme} onOpenWorkspace={openWorkspace}/>;
-  }
+  }, []);
 
   return(
     <div className={(dark?'dk ':'')+(tt?'tt ':'')+'grain'} style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',background:'var(--bg-editor)',color:'var(--text)',overflow:'hidden',fontFamily:"'DM Sans',ui-sans-serif,system-ui,sans-serif",fontSize:13.5,letterSpacing:'-.01em'}}>
@@ -8562,7 +8378,25 @@ const App=()=>{
         {leftOpen && !isMobile && <Handle onMD={startDrag('l')}/>}
         {/* EDITOR — always full width on mobile */}
         <div id="superdoc-wrapper" className="superdoc-workspace-wrapper" style={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-          {editorArea}
+          {useMemo(() => {
+            const currentTab = tabs.find(t => t.id === activeTab);
+            const isValidDocx = currentTab?.buffer && currentTab.buffer instanceof ArrayBuffer;
+            const docFile = isValidDocx ? new Blob([currentTab.buffer]) : null;
+            return (
+              <>
+              <SuperDocEditor 
+                key={`${activeTab}_${currentTab?.buffer?.byteLength || 0}`}
+                document={docFile} 
+                documentMode="editing" 
+                fonts={{ assetBaseUrl: '/superdoc-fonts/' }}
+                toolbar={{ groups: ['history', 'text', 'paragraph', 'insert', 'list', 'indent', 'font-controls', 'table', 'tools'], fonts: [{ label: 'Times New Roman', key: 'Times New Roman, serif' }] }}
+                onReady={(e) => { window.superdoc = e.superdoc; }}
+                onEditorCreate={(e) => { window.docEngine = e.editor; }}
+                onEditorUpdate={() => { if (window.__shadowTrigger) window.__shadowTrigger(); }}
+              />
+            </>
+            );
+          }, [activeTab, tabs.find(t => t.id === activeTab)?.buffer])}
         </div>
         {rightOpen && !isMobile && <Handle onMD={startDrag('r')}/>}
         {/* RIGHT PANEL — desktop: inline-flex; mobile: fixed overlay */}
