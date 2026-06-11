@@ -366,12 +366,78 @@ async function judge({ graph, effort }) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// ФАЗА 2.0 — TRIAGE: правовой фрагмент vs технический (Backend Pivot Этап 3)
+// ═══════════════════════════════════════════════════════════════════════
+// LEGAL     → полный путь expandQuery → pineconeSearch → validate (RAG/Pinecone).
+// TECHNICAL → лёгкий spellCheck без поиска по базе (экономим векторные запросы
+//             и токены, технический шум не засоряет RAG-отчёт).
+
+// Быстрая regex-эвристика (0 токенов). 'LEGAL' | 'TECHNICAL' | null (→ LLM).
+const LEGAL_MARKERS = /(ст\.?\s*\d|стать[яеи]|закон|кодекс|конституц|постановлени|указ|договор|обязан|вправе|ответственн|неустойк|штраф|пеня|санкци|части?\s+\d|пункт\s+\d|в\s+соответствии|согласно|настоящ|сторон[аы]|истец|ответчик|потерпевш|обвиня|\bУК\b|\bГК\b|\bТК\b|\bУПК\b|\bГПК\b|\bНК\b|КоАП)/i;
+function quickTriage(text) {
+  const t = String(text || '').trim();
+  if (!t) return 'TECHNICAL';
+  if (LEGAL_MARKERS.test(t)) return 'LEGAL';
+  if (t.length < 60) return 'TECHNICAL';   // короткий структурный фрагмент без правовых маркеров
+  return null;                              // неясно → решит LLM
+}
+
+const TRIAGE_SYS = `Ты — сортировщик фрагментов юридического документа (Кыргызстан).
+Определи тип фрагмента:
+- "LEGAL" — содержит правовую норму, ссылку на закон/статью, обязательство, условие договора или правовую квалификацию (то, что нужно сверять с законодательством).
+- "TECHNICAL" — служебное/не-правовое: шапка, адресат, дата, номер, реквизиты, подпись, заголовок, форматирование, бытовой текст без правового смысла.
+Ответ СТРОГО JSON: {"type":"LEGAL"} или {"type":"TECHNICAL"}.`;
+
+async function triageChunk(chunkText) {
+  const quick = quickTriage(chunkText);
+  if (quick) return quick;
+  try {
+    const raw = await clients.geminiJson({
+      systemPrompt: TRIAGE_SYS,
+      userPrompt: `ФРАГМЕНТ:\n${String(chunkText).slice(0, 1500)}\n\nФормат: {"type":"LEGAL"} | {"type":"TECHNICAL"}`,
+      model: 'gemini-3.1-flash-lite', maxOutputTokens: 64, timeoutMs: 10000,
+    });
+    const parsed = safeJson(raw, null);
+    return (parsed && parsed.type === 'TECHNICAL') ? 'TECHNICAL' : 'LEGAL';
+  } catch (_) {
+    return 'LEGAL';   // fail-safe: лучше лишний RAG, чем пропущенная правовая норма
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SPELL-CHECKER — лёгкая проверка технических фрагментов БЕЗ Pinecone
+// ═══════════════════════════════════════════════════════════════════════
+const SPELLCHECK_SYS = `Ты — корректор юридических документов (русский язык, Кыргызстан).
+Проверь фрагмент ТОЛЬКО на: орфографию, грамматику, пунктуацию, опечатки, явные
+ошибки в числах/датах/реквизитах и форматировании. НЕ оценивай правовое содержание.
+Ответ СТРОГО JSON:
+{"status":"correct"} — если ошибок нет;
+{"status":"error","detail":"<что исправить, кратко>"} — если есть опечатки/ошибки.`;
+
+async function spellCheck(chunkText) {
+  const ok = { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
+  try {
+    const raw = await clients.geminiJson({
+      systemPrompt: SPELLCHECK_SYS,
+      userPrompt: `ФРАГМЕНТ:\n${String(chunkText).slice(0, 2000)}`,
+      model: 'gemini-3.1-flash-lite', maxOutputTokens: 256, timeoutMs: 12000,
+    });
+    const parsed = safeJson(raw, null);
+    if (!parsed || parsed.status !== 'error' || !parsed.detail) return ok;
+    // status 'grammar' — отдельная категория: видна в таблице, НЕ идёт в отчёт Судьи.
+    return { status: 'grammar', marker: '✏️ Опечатка/оформление', detail: String(parsed.detail).slice(0, 200), cited_articles: [] };
+  } catch (_) {
+    return ok;   // graceful: при сбое не плодим ложных ошибок
+  }
+}
+
 function createDefaultDeps() {
-  return { extractGlossary, fragmentDocument, expandQuery, pineconeSearch, validate, judge };
+  return { extractGlossary, fragmentDocument, expandQuery, pineconeSearch, validate, judge, triageChunk, spellCheck };
 }
 
 module.exports = {
   createDefaultDeps,
-  extractGlossary, fragmentDocument, expandQuery, pineconeSearch, validate, judge,
-  _internals: { safeJson, renderArticles, groupByNpa },
+  extractGlossary, fragmentDocument, expandQuery, pineconeSearch, validate, judge, triageChunk, spellCheck,
+  _internals: { safeJson, renderArticles, groupByNpa, quickTriage },
 };

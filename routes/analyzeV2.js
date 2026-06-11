@@ -122,6 +122,22 @@ function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
  * Вердикт-словарь: 'correct' (✅) | 'error' (🔴) | 'unverified' (⚠️ Слепая зона).
  */
 async function validateChunk(chunkText, index, state, deps) {
+  // ── ФАЗА 2.0 — TRIAGE (Backend Pivot Этап 3) ──
+  // Технические фрагменты (шапка, дата, реквизиты, опечатки) НЕ дёргают
+  // Pinecone/RAG — уходят к лёгкому spell-checker'у. Экономия векторных
+  // запросов + токенов; статус 'grammar' виден в таблице, но не в отчёте Судьи.
+  const triageType = (await deps.triageChunk?.(chunkText)) || 'LEGAL';
+  if (triageType === 'TECHNICAL') {
+    const sc = (await deps.spellCheck?.(chunkText)) ||
+      { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
+    return {
+      index, npa: null, article: null,
+      status: sc.status, marker: sc.marker, detail: sc.detail || '',
+      cited_articles: [], blind_spot: false, triageType: 'TECHNICAL',
+      thesis: String(chunkText || '').slice(0, 200),
+    };
+  }
+
   const ctx = buildInjectedContext(chunkText, state);
 
   // Agent 1: НПА + статья + синонимы.
@@ -155,6 +171,7 @@ async function validateChunk(chunkText, index, state, deps) {
     cited_articles: Array.isArray(v.cited_articles) ? v.cited_articles : [],
     // Слепая зона ИЛИ международный акт «вне базы» → в блок ручной проверки.
     blind_spot: v.status === 'unverified' || v.status === 'out_of_base',
+    triageType: 'LEGAL',
     // Краткая формулировка сути фрагмента (для секции «✅ Подтверждённые», когда нет статьи).
     thesis: String((queries && queries[0]) || '').slice(0, 200),
   };
@@ -196,14 +213,14 @@ function computeMetrics(graph, N) {
 // Шаг thinking-box: correct→success, unverified→warning, error→error.
 function toStepStatus(status) {
   if (status === 'error') return 'error';
-  if (status === 'unverified' || status === 'out_of_base') return 'warning';
+  if (status === 'unverified' || status === 'out_of_base' || status === 'grammar') return 'warning';
   return 'success';
 }
 
 // Строка таблицы результатов. Статус UI: error→critical, unverified/out_of_base→warning, correct→ok.
 function verdictToRow(v) {
   const uiStatus = v.status === 'error' ? 'critical'
-    : (v.status === 'unverified' || v.status === 'out_of_base') ? 'warning' : 'ok';
+    : (v.status === 'unverified' || v.status === 'out_of_base' || v.status === 'grammar') ? 'warning' : 'ok';
   const ref = [v.npa, v.article ? `ст.${v.article}` : ''].filter(Boolean).join(', ');
   return {
     item_number: ref ? `Фрагмент ${v.index + 1} (${ref})` : `Фрагмент ${v.index + 1}`,
