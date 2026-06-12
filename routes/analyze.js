@@ -1404,20 +1404,24 @@ ${schemaBlock}`;
         const isHardCase = critical.length >= JUDGE_HARD_CRITICALS || totalRisks >= JUDGE_HARD_TOTAL_RISKS;
         const useSupreme = isLongDoc || isHardCase;
 
-        let judgeModel, judgeReasoning, judgeUserId, pathLabel;
+        // 2026-06-12 HOTFIX (latency): reasoning ЖЁСТКО на минимуме у ОБОИХ судей
+        // ('low' + thinking disabled в вызове ниже). Судья — чистый синтезатор
+        // готовых вердиктов, цепочка мыслей ему не нужна, а с thinking enabled
+        // DeepSeek молча думал десятки секунд и текст приходил почти разом.
+        // Развилка моделей (standard/supreme) сохранена.
+        let judgeModel, judgeUserId, pathLabel;
+        const judgeReasoning = 'low';
         if (useSupreme) {
-            judgeModel     = DEEPSEEK_JUDGE_DEEP_MODEL;   // Верховный: deepseek-v4-pro
-            judgeReasoning = 'medium';                    // принудительно снижено (latency)
-            judgeUserId    = KVCACHE_JUDGE_DEEP_ID;
-            pathLabel      = `supreme/${isLongDoc ? 'long-doc' : 'collisions'}`;
+            judgeModel  = DEEPSEEK_JUDGE_DEEP_MODEL;   // Верховный: deepseek-v4-pro
+            judgeUserId = KVCACHE_JUDGE_DEEP_ID;
+            pathLabel   = `supreme/${isLongDoc ? 'long-doc' : 'collisions'}`;
         } else {
-            judgeModel     = DEEPSEEK_JUDGE_FAST_MODEL;   // Стандартный: deepseek-v4-flash
-            if (critical.length > 0) judgeReasoning = 'high';
-            else if (totalRisks >= 3) judgeReasoning = 'medium';
-            else judgeReasoning = 'low';
-            judgeUserId    = KVCACHE_JUDGE_FAST_ID;
-            pathLabel      = `standard/${judgeReasoning}`;
+            judgeModel  = DEEPSEEK_JUDGE_FAST_MODEL;   // Стандартный: deepseek-v4-flash
+            judgeUserId = KVCACHE_JUDGE_FAST_ID;
+            pathLabel   = `standard/${judgeReasoning}`;
         }
+        // Человекочитаемое имя сработавшего судьи — для отображения на фронте
+        const judgeDisplayName = useSupreme ? 'DeepSeek v4 Pro' : 'DeepSeek v4 Flash';
 
         const riskReports = sortedRisks.map(r =>
             `[${(r.status || '').toUpperCase()} ${r.confidence || '?'}%] ${r.item_number}: ${r.short_verdict}\nДетали: ${r.legal_rationale}`
@@ -1583,9 +1587,20 @@ ${riskReports}
                     return originalWrite.call(res, chunk, encoding, callback);
                 };
             }
+            // ── Имя сработавшего судьи → фронтенд ──
+            // 1) protocolStatus — уже отображается статус-строкой над сообщением
+            //    (известное SSE-событие контракта, ничего не ломает);
+            // 2) judge — новое машиночитаемое поле payload: неизвестные ключи
+            //    SSE-парсеры фронта молча игнорируют, так что обратная
+            //    совместимость сохранена, а UI может показать бейдж модели.
+            if (!res.writableEnded) {
+                res.write(`data: ${JSON.stringify({ judge: { name: judgeDisplayName, model: judgeModel, path: pathLabel } })}\n\n`);
+                res.write(`data: ${JSON.stringify({ protocolStatus: `⚖️ Финальный судья: ${judgeDisplayName}` })}\n\n`);
+            }
             await streamDeepSeekResponse(systemPrompt, userPrompt, res, {
                 temperature: 0.2,
-                reasoning_effort: judgeReasoning,
+                reasoning_effort: judgeReasoning,       // минимум — мгновенный старт генерации
+                thinking: { type: 'disabled' },          // ЖЁСТКО без цепочки мыслей (latency fix)
                 model: judgeModel,
                 user_id: judgeUserId,
                 label: `judge-${pathLabel}`

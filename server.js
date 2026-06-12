@@ -1629,7 +1629,13 @@ async function streamDeepSeekResponse(systemInstruction, userPrompt, res, opts =
         reasoning_effort = 'high',
         model = DEEPSEEK_MODEL,
         user_id = null,
-        label = 'judge-stream'
+        label = 'judge-stream',
+        // 2026-06-12: thinking настраиваемый. Дефолт прежний ('enabled') — чтобы
+        // не менять поведение других вызовов (compare.js). Final Judge передаёт
+        // {type:'disabled'}: без цепочки мыслей первый токен уходит мгновенно,
+        // и SSE-стрим виден пользователю сразу (раньше DeepSeek молча генерил
+        // reasoning_content, а текст «вываливался» в конце почти разом).
+        thinking = { type: 'enabled' }
     } = opts;
     if (!DEEPSEEK_ENABLED) {
         console.log('[Judge:stream] DeepSeek disabled → Gemini fallback');
@@ -1649,7 +1655,7 @@ async function streamDeepSeekResponse(systemInstruction, userPrompt, res, opts =
             ],
             temperature,
             reasoning_effort,
-            thinking: { type: 'enabled' },
+            thinking,
             stream: true,
             stream_options: { include_usage: true }
         };
