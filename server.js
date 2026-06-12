@@ -168,21 +168,23 @@ app.use((req, res, next) => {
     next();
 });
 
-// Workspace (React/SuperDoc) существует ТОЛЬКО в Vite-сборке на статик-фронте.
-// В репозитории workspace.html — сырой исходник со ссылкой на /src/main.jsx:
-// если отдать его отсюда, браузер блокирует module-script с MIME text/jsx
-// (белый экран). Поэтому с домена бэкенда отправляем на собранный фронт.
+// Премиум-лендинг (index.html → /src/landing-main.jsx) и Workspace
+// (workspace.html → /src/main.jsx) существуют ТОЛЬКО в Vite-сборке на
+// статик-фронте. В репозитории это сырые исходники со ссылкой на .jsx —
+// если отдать их с домена бэкенда (он раздаёт сырой репозиторий), браузер
+// заблокирует module-script с MIME text/jsx (белый экран). Поэтому:
+//   • /workspace.html → 302 на собранный статик-фронт;
+//   • / и /index.html → рабочий базовый чат chat.html (чистый HTML+script.js,
+//     открывается без сборки; даёт 2xx, безопасно для health-check Render).
+// Эти роуты СТОЯТ ДО express.static, иначе статика отдала бы сырой index.html.
 const STATIC_FRONTEND_URL = (process.env.STATIC_FRONTEND_URL || 'https://miyzamchi-web.onrender.com').replace(/\/+$/, '');
 app.get('/workspace.html', (req, res) => res.redirect(302, STATIC_FRONTEND_URL + '/workspace.html'));
+app.get(['/', '/index.html'], (req, res) => res.sendFile(path.join(__dirname, 'chat.html')));
 
 // dotfiles: 'deny' — express вернёт 403 на .env, .git и любые dotfiles,
 // даже если кто-то обойдёт regex выше через ../ или хитрые URL.
 app.use(express.static(path.join(__dirname, 'public'), { dotfiles: 'deny' }));
 app.use(express.static(__dirname, { dotfiles: 'deny' }));
-
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
 
 // (Удалён легаси-роут /ide — старый одностраничный TipTap-IDE снесён вместе с
 //  папкой ide/. Активный фронт деплоится отдельно на Netlify из src/.)

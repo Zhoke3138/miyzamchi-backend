@@ -4,14 +4,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Мыйзамчы — юридический ИИ-ассистент</title>
+    <title>Miyzamchi (Мыйзамчы) — AI Legal Assistant for the Kyrgyz Republic</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="/style-ChatMZ.css">
     <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.js"></script>
     <!-- DOMPurify: XSS-санитизация HTML после marked.parse (см. safeParseMarkdown в script.js) -->
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+    <style>
+      /* ═══ Переключатель языков KY | RU | EN (эстетика glass из style-ChatMZ) ═══ */
+      .lang-switch { display:inline-flex; align-items:center; gap:2px; padding:3px; border-radius:999px; background:var(--glass-bg); border:1px solid var(--glass-border); }
+      .lang-switch-btn { border:none; background:transparent; color:var(--text-secondary); font-family:inherit; font-size:11px; font-weight:700; letter-spacing:.5px; padding:4px 9px; border-radius:999px; cursor:pointer; transition:all 200ms var(--ease-out); }
+      .lang-switch-btn:hover { color:var(--text-primary); }
+      .lang-switch-btn.active { background:var(--mode-accent, #3366ff); color:#fff; }
+      @media (max-width:768px){ .lang-switch-btn{ padding:4px 7px; font-size:10px; } }
+    </style>
 </head>
 
 <body>
@@ -41,7 +49,7 @@
         <button id="close-btn" class="icon-btn close-btn"><i data-lucide="x" width="18" height="18"></i></button>
         <div class="sidebar-header">
             <div class="brand-title">
-                <span class="brand-logo"><i data-lucide="bot" width="20" height="20"></i></span>
+                <span class="brand-logo"><img src="/logo/Logo_transparent.png?v=2" alt="Logo"></span>
                 <div class="brand-name-wrapper">
                     <h2 class="brand-name"><span class="brand-m">M</span>iyzamchy</h2>
                 </div>
@@ -50,17 +58,17 @@
         </div>
 
         <div class="sidebar-games">
-            <a href="games/swipe/index.html" class="game-link">
-                <i data-lucide="hand" width="16" height="16"></i> <span>Свайп правосудия</span>
+            <a href="https://miyzamchi-backend.onrender.com/games/swipe/index.html" class="game-link">
+                <i data-lucide="hand" width="16" height="16"></i> <span data-i18n="game_swipe">Свайп правосудия</span>
             </a>
-            <a href="games/millionaire/index.html" class="game-link">
-                <i data-lucide="trophy" width="16" height="16"></i> <span>Стать юристом</span>
+            <a href="https://miyzamchi-backend.onrender.com/games/millionaire/index.html" class="game-link">
+                <i data-lucide="trophy" width="16" height="16"></i> <span data-i18n="game_lawyer">Стать юристом</span>
             </a>
         </div>
 
-        <button class="new-chat-btn" id="new-chat-btn"><i data-lucide="plus" width="16" height="16"></i> Новый чат</button>
+        <button class="new-chat-btn" id="new-chat-btn"><i data-lucide="plus" width="16" height="16"></i> <span data-i18n="new_chat">Новый чат</span></button>
         <div class="chat-history">
-            <h3>Недавние дела</h3>
+            <h3 data-i18n="recent_cases">Недавние дела</h3>
             <div class="history-container">
                 <ul id="history-list"></ul>
             </div>
@@ -78,12 +86,17 @@
             </div>
             <div class="header-logo">
                 <span class="logo-text" data-text="Мыйзамчы">Мыйзамчы</span>
-                <span class="logo-smile" aria-hidden="true"><i data-lucide="bot" width="18" height="18"></i></span>
+                <span class="logo-smile" aria-hidden="true"><img src="/logo/Logo_transparent.png?v=2" alt="Logo"></span>
             </div>
             <div class="header-right">
-                <a href="ide/MIyzamchy Legal IDE.html" class="icon-btn ide-switch-btn" title="Профессиональная среда" aria-label="Перейти в Legal IDE">
+                <div class="lang-switch" id="lang-switch" role="group" aria-label="Тил / Язык / Language">
+                    <button class="lang-switch-btn" data-lang="ky" type="button">KY</button>
+                    <button class="lang-switch-btn" data-lang="ru" type="button">RU</button>
+                    <button class="lang-switch-btn" data-lang="en" type="button">EN</button>
+                </div>
+                <a href="/workspace.html" class="icon-btn ide-switch-btn" title="Профессиональная среда — Legal Workspace" aria-label="Open Legal Workspace">
                     <i data-lucide="code" width="16" height="16"></i>
-                    <span class="ide-btn-text">Legal IDE</span>
+                    <span class="ide-btn-text" data-i18n="open_workspace">Open Legal Workspace</span>
                 </a>
                 <button id="theme-toggle" class="icon-btn theme-toggle-btn" title="Сменить тему">
                     <span id="theme-icon"><i data-lucide="moon" width="18" height="18"></i></span>
@@ -96,29 +109,30 @@
                 <div class="welcome-logo">
                     <span class="welcome-tunduk"><i data-lucide="scale" width="40" height="40"></i></span>
                     <h1 class="welcome-title">Мыйзамчы</h1>
-                    <p class="welcome-subtitle">Юридический помощник по законодательству Кыргызстана</p>
+                    <p class="welcome-subtitle" data-i18n="chat_subtitle">Юридический помощник по законодательству Кыргызстана</p>
+                    <p class="welcome-subtitle" data-i18n="welcome_tagline">Welcome to Miyzamchi — An AI-powered LegalTech ecosystem and intelligent assistant for the legislation of the Kyrgyz Republic</p>
                     <div class="welcome-hints" aria-label="Как формулировать запрос">
-                        <span class="welcome-hint">Укажите город и ведомство</span>
-                        <span class="welcome-hint">Добавьте дату и сроки</span>
-                        <span class="welcome-hint">Опишите сторону спора</span>
+                        <span class="welcome-hint" data-i18n="hint_city">Укажите город и ведомство</span>
+                        <span class="welcome-hint" data-i18n="hint_date">Добавьте дату и сроки</span>
+                        <span class="welcome-hint" data-i18n="hint_party">Опишите сторону спора</span>
                     </div>
                 </div>
                 <div class="welcome-cards">
-                    <button class="welcome-card" data-prompt="Как подать исковое заявление в суд?">
+                    <button class="welcome-card" data-prompt="Как подать исковое заявление в суд?" data-i18n-prompt="card_court_prompt">
                         <span class="welcome-card-icon"><i data-lucide="scale" width="24" height="24"></i></span>
-                        <span class="welcome-card-text">Как подать иск в суд?</span>
+                        <span class="welcome-card-text" data-i18n="card_court">Как подать иск в суд?</span>
                     </button>
-                    <button class="welcome-card" data-prompt="Какие у меня трудовые права при увольнении?">
+                    <button class="welcome-card" data-prompt="Какие у меня трудовые права при увольнении?" data-i18n-prompt="card_dismissal_prompt">
                         <span class="welcome-card-icon"><i data-lucide="briefcase" width="24" height="24"></i></span>
-                        <span class="welcome-card-text">Мои права при увольнении</span>
+                        <span class="welcome-card-text" data-i18n="card_dismissal">Мои права при увольнении</span>
                     </button>
-                    <button class="welcome-card" data-prompt="Составь жалобу на действия работодателя">
+                    <button class="welcome-card" data-prompt="Составь жалобу на действия работодателя" data-i18n-prompt="card_complaint_prompt">
                         <span class="welcome-card-icon"><i data-lucide="file-text" width="24" height="24"></i></span>
-                        <span class="welcome-card-text">Составить жалобу</span>
+                        <span class="welcome-card-text" data-i18n="card_complaint">Составить жалобу</span>
                     </button>
-                    <button class="welcome-card" data-prompt="Объясни что такое исковая давность простыми словами">
+                    <button class="welcome-card" data-prompt="Объясни что такое исковая давность простыми словами" data-i18n-prompt="card_limitation_prompt">
                         <span class="welcome-card-icon"><i data-lucide="search" width="24" height="24"></i></span>
-                        <span class="welcome-card-text">Что такое исковая давность?</span>
+                        <span class="welcome-card-text" data-i18n="card_limitation">Что такое исковая давность?</span>
                     </button>
                 </div>
             </div>
@@ -128,7 +142,7 @@
             <div class="input-wrapper">
                 <div class="input-box" id="input-box">
                     <div class="attachments-row" id="attachments-row" hidden></div>
-                    <textarea id="user-input" class="chat-input" placeholder="Введите юридический запрос..." rows="1"></textarea>
+                    <textarea id="user-input" class="chat-input" data-i18n-placeholder="input_placeholder" placeholder="Введите юридический запрос..." rows="1"></textarea>
                     <input type="file" id="attach-file-input" multiple accept=".pdf,.docx,.doc,.txt,.md,.rtf,image/*" style="display:none">
                     <div class="input-controls">
                         <div class="input-controls-left">
@@ -137,7 +151,7 @@
                             </button>
                         </div>
                         <div class="input-controls-right">
-                            <div class="mode-selector-compact" id="mode-selector-compact">
+                            <div class="mode-selector-compact" id="mode-selector-compact" style="display: none !important;">
                                 <button class="mode-trigger fast" id="mode-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="mode-dropdown">
                                     <span id="mode-trigger-icon"><i data-lucide="zap" width="16" height="16"></i></span>
                                     <span id="mode-trigger-label">Быстрый</span>
@@ -170,6 +184,9 @@
                                     </div>
                                 </div>
                             </div>
+                            <button class="icon-btn live-voice-btn" id="startVoiceSessionBtn" type="button" aria-label="Мыйзамчы Live" title="Мыйзамчы Live (Голосовой режим реального времени)">
+                                <i data-lucide="audio-lines" width="19" height="19" stroke-width="2.5"></i>
+                            </button>
                             <button class="mic-btn" id="mic-btn" type="button" aria-label="Голосовой ввод" title="Голосовой ввод (клик — старт/стоп)">
                                 <svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <rect x="9" y="2" width="6" height="12" rx="3"/>
@@ -186,7 +203,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="input-footer">
+                <div class="input-footer" data-i18n="footer_disclaimer">
                     Мыйзамчы — образовательный инструмент. Перед принятием решений проконсультируйтесь с юристом.
                 </div>
             </div>
@@ -195,7 +212,8 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://unpkg.com/docx@9.6.1/build/index.js"></script>
-    <script src="script.js"></script>
+    <script src="/script.js"></script>
+    <script type="module" src="/src/i18n-chat.js"></script>
 
     <!-- ═══ Attachments (file upload with text extraction) ═══ -->
     <script>
@@ -501,6 +519,1030 @@
         if (e.key === 'Escape' && listening) stopListening();
       });
     })();
+    </script>
+
+    <!-- ═══ Voice Modal Overlay (Мыйзамчы Live) ═══ -->
+    <div class="voice-modal" id="voice-modal" hidden>
+        <div class="voice-modal-backdrop"></div>
+        <div class="voice-modal-container">
+            <div class="voice-modal-header">
+                <h3 class="voice-modal-title">
+                    <span class="live-indicator"><span class="live-dot"></span>LIVE</span>
+                    Мыйзамчы Live
+                </h3>
+                <button class="voice-close-btn" id="voice-close-btn" aria-label="Закрыть голосовой режим">
+                    <i data-lucide="x" width="20" height="20"></i>
+                </button>
+            </div>
+            <div class="voice-modal-body">
+                <div class="voice-visualizer-container" id="voice-visualizer-container">
+                    <!-- Glowing Volumetric SVG Wave Blobs -->
+                    <svg class="voice-blobs-svg" id="voice-blobs-svg" viewBox="0 0 500 220" preserveAspectRatio="none">
+                        <defs>
+                            <linearGradient id="blobGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#ec4899" />
+                                <stop offset="50%" stop-color="#8b5cf6" />
+                                <stop offset="100%" stop-color="#3366ff" />
+                            </linearGradient>
+                            <linearGradient id="blobGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#eab308" />
+                                <stop offset="50%" stop-color="#f97316" />
+                                <stop offset="100%" stop-color="#ff4a4a" />
+                            </linearGradient>
+                            <filter id="glow1" x="-50%" y="-50%" width="200%" height="200%">
+                                <feGaussianBlur stdDeviation="6" result="blur" />
+                                <feMerge>
+                                    <feMergeNode in="blur" />
+                                    <feMergeNode in="SourceGraphic" />
+                                </feMerge>
+                            </filter>
+                            <filter id="glow2" x="-50%" y="-50%" width="200%" height="200%">
+                                <feGaussianBlur stdDeviation="6" result="blur" />
+                                <feMerge>
+                                    <feMergeNode in="blur" />
+                                    <feMergeNode in="SourceGraphic" />
+                                </feMerge>
+                            </filter>
+                        </defs>
+                        <!-- Left Wave Blob -->
+                        <path id="voice-svg-blob-1" fill="url(#blobGrad1)" filter="url(#glow1)" opacity="0.95" style="mix-blend-mode: screen;" />
+                        <!-- Right Wave Blob -->
+                        <path id="voice-svg-blob-2" fill="url(#blobGrad2)" filter="url(#glow2)" opacity="0.95" style="mix-blend-mode: screen;" />
+                    </svg>
+                    
+                    <div class="voice-avatar core-capsule-avatar">
+                        <div class="voice-core-capsule"></div>
+                    </div>
+                    <canvas id="voice-canvas" class="voice-canvas" style="display: none;"></canvas>
+                </div>
+                
+                <div class="voice-status" id="voice-status">ПОДКЛЮЧЕНИЕ...</div>
+                <div class="voice-sub-status" id="voice-sub-status">Ваш юрист на связи... Ожидайте соединения</div>
+                <div class="voice-transcript" id="voice-transcript">Мыйзамчы готов вас выслушать. Говорите прямо сейчас.</div>
+            </div>
+            <div class="voice-modal-footer">
+                <button class="voice-btn voice-mute-btn" id="voice-mute-btn" title="Выключить микрофон">
+                    <i data-lucide="mic" width="20" height="20"></i>
+                </button>
+                <button class="voice-btn voice-end-btn" id="voice-end-btn" title="Завершить сеанс">
+                    <i data-lucide="power" width="20" height="20"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ Styles for Voice Modal ═══ -->
+    <style>
+    .voice-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: modal-fade-in 300ms var(--ease-out);
+    }
+    
+    .voice-modal.active {
+      display: flex;
+    }
+
+    .voice-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(8, 11, 20, 0.76);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .voice-modal-container {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+      background: rgba(20, 24, 33, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 32px;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(255, 255, 255, 0.02);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      transform: translateY(0);
+      animation: container-slide-up 350ms var(--ease-out);
+    }
+
+    body.light-mode .voice-modal-container {
+      background: rgba(245, 247, 252, 0.88);
+      border-color: rgba(0, 0, 0, 0.06);
+      box-shadow: 0 24px 60px rgba(13, 20, 40, 0.12), inset 0 0 20px rgba(255, 255, 255, 0.5);
+    }
+
+    @keyframes modal-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes container-slide-up {
+      from { opacity: 0; transform: translateY(20px) scale(0.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .voice-modal-header {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .voice-modal-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .live-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 800;
+      color: #ff4a4a;
+      background: rgba(255, 74, 74, 0.1);
+      padding: 3px 8px;
+      border-radius: 999px;
+      letter-spacing: 0.5px;
+    }
+
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      background: #ff4a4a;
+      border-radius: 999px;
+      animation: pulse-red 1.2s infinite;
+    }
+
+    @keyframes pulse-red {
+      0% { transform: scale(0.9); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.5; }
+      100% { transform: scale(0.9); opacity: 1; }
+    }
+
+    .voice-close-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .voice-close-btn:hover {
+      background: rgba(255, 74, 74, 0.1);
+      border-color: rgba(255, 74, 74, 0.3);
+      color: #ff4a4a;
+      transform: rotate(90deg);
+    }
+
+    body.light-mode .voice-close-btn {
+      background: rgba(0, 0, 0, 0.05);
+      border-color: rgba(0, 0, 0, 0.08);
+    }
+
+    body.light-mode .voice-close-btn:hover {
+      background: rgba(255, 74, 74, 0.08);
+      border-color: rgba(255, 74, 74, 0.2);
+      color: #ff4a4a;
+    }
+
+    .voice-modal-body {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 28px;
+    }
+
+    .voice-visualizer-container {
+      position: relative;
+      width: 100%;
+      height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+
+    .core-capsule-avatar {
+      width: 70px;
+      height: 110px;
+      border-radius: 35px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      box-shadow: 0 0 30px rgba(107, 142, 255, 0.12), inset 0 0 15px rgba(255, 255, 255, 0.02);
+      overflow: hidden;
+      z-index: 2;
+    }
+    
+    body.light-mode .core-capsule-avatar {
+      background: rgba(0, 0, 0, 0.02);
+      border-color: rgba(0, 0, 0, 0.06);
+      box-shadow: 0 0 30px rgba(51, 102, 255, 0.08), inset 0 0 15px rgba(0, 0, 0, 0.02);
+    }
+
+    .voice-core-capsule {
+      width: 22px;
+      height: 76px;
+      border-radius: 11px;
+      background: linear-gradient(180deg, #ff4a4a 0%, #3366ff 33%, #2ecc71 66%, #f1c40f 100%);
+      background-size: 100% 300%;
+      animation: flow-gradient 6s ease infinite, capsule-pulse 2s ease-in-out infinite;
+      box-shadow: 0 0 25px rgba(51, 102, 255, 0.5), inset 0 0 10px rgba(255, 255, 255, 0.4);
+    }
+    
+    @keyframes flow-gradient {
+      0% { background-position: 50% 0%; }
+      50% { background-position: 50% 100%; }
+      100% { background-position: 50% 0%; }
+    }
+
+    @keyframes capsule-pulse {
+      0%, 100% {
+        transform: scale(0.96);
+        filter: brightness(0.95) drop-shadow(0 0 10px rgba(51, 102, 255, 0.4));
+      }
+      50% {
+        transform: scale(1.04);
+        filter: brightness(1.2) drop-shadow(0 0 20px rgba(46, 204, 113, 0.6));
+      }
+    }
+
+    .voice-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* ═════ Glowing SVG Wave Blobs (Yandex "Моя волна" & Siri Morphing) ═════ */
+    .voice-blobs-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    body.light-mode .voice-blobs-svg path {
+      mix-blend-mode: multiply !important;
+      opacity: 0.75 !important;
+    }
+
+    .voice-status {
+      font-size: 15px;
+      font-weight: 800;
+      color: #3366ff; /* Bold blue for connection status */
+      margin-bottom: 4px;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-shadow: 0 0 10px rgba(51, 102, 255, 0.15);
+    }
+    
+    body.light-mode .voice-status {
+      color: #1a4cd2;
+    }
+
+    .voice-sub-status {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+      text-align: center;
+      opacity: 0.8;
+      letter-spacing: 0.2px;
+      animation: soft-pulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes soft-pulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 0.95; }
+    }
+
+    .voice-transcript {
+      font-size: 13.5px;
+      color: var(--text-secondary);
+      text-align: center;
+      max-width: 320px;
+      line-height: 1.5;
+      height: 40px;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      text-overflow: ellipsis;
+      opacity: 0.85;
+    }
+
+    .voice-modal-footer {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+    }
+
+    .voice-btn {
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      border: 1px solid var(--glass-border);
+      background: var(--glass-bg);
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 250ms var(--ease-out);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+
+    .voice-btn i {
+      width: 22px;
+      height: 22px;
+    }
+
+    .voice-btn:hover {
+      transform: translateY(-2px);
+      background: var(--glass-bg-hover);
+      border-color: var(--glass-border-hover);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.25);
+    }
+
+    .voice-btn:active {
+      transform: translateY(0);
+    }
+
+    .voice-mute-btn.muted {
+      background: rgba(255, 74, 74, 0.15);
+      border-color: rgba(255, 74, 74, 0.3);
+      color: #ff4a4a;
+    }
+
+    .voice-mute-btn.muted:hover {
+      background: rgba(255, 74, 74, 0.25);
+    }
+
+    .voice-end-btn {
+      background: rgba(255, 74, 74, 0.85);
+      border-color: transparent;
+      color: white;
+    }
+
+    .voice-end-btn:hover {
+      background: #ff3333;
+      box-shadow: 0 8px 24px rgba(255, 74, 74, 0.4);
+    }
+
+    /* ═══ Media Queries for Mobile Responsive (Сценарий Б) ═══ */
+    @media (max-width: 768px) {
+      .voice-modal {
+        padding: 0;
+      }
+      
+      .voice-modal-container {
+        width: 100%;
+        height: 100vh;
+        max-width: 100%;
+        border-radius: 0;
+        border: none;
+        background: rgba(10, 12, 18, 0.97);
+        padding: 24px 20px 48px 20px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      
+      body.light-mode .voice-modal-container {
+        background: rgba(245, 247, 252, 0.98);
+      }
+      
+      .voice-modal-header {
+        margin-bottom: 0;
+      }
+      
+      .voice-modal-body {
+        flex-grow: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        margin-bottom: 0;
+        padding: 20px 0;
+      }
+
+      .voice-visualizer-container {
+        height: 200px;
+        margin-bottom: 24px;
+      }
+      
+      .voice-canvas {
+        height: 100%;
+      }
+      
+      .voice-status {
+        font-size: 20px;
+        margin-bottom: 6px;
+      }
+      
+      .voice-sub-status {
+        font-size: 14px;
+        margin-bottom: 20px;
+      }
+      
+      .voice-transcript {
+        font-size: 15px;
+        max-width: 90%;
+        height: 48px;
+        -webkit-line-clamp: 2;
+      }
+      
+      .voice-modal-footer {
+        gap: 40px;
+        padding-bottom: 10px;
+      }
+      
+      .voice-btn {
+        width: 76px;
+        height: 76px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.12);
+      }
+      
+      body.light-mode .voice-btn {
+        background: rgba(0, 0, 0, 0.05);
+        border-color: rgba(0, 0, 0, 0.08);
+      }
+
+      .voice-btn i {
+        width: 28px;
+        height: 28px;
+      }
+      
+      .voice-end-btn {
+        background: rgba(255, 74, 74, 0.9);
+        box-shadow: 0 10px 30px rgba(255, 74, 74, 0.4);
+      }
+      
+      .voice-end-btn:hover {
+        background: #ff3333;
+      }
+    }
+    </style>
+
+    <!-- ═══ Javascript Client logic for Voice Mode (Мыйзамчы Live) ═══ -->
+    <script>
+    class MiyzamchyLiveVoice {
+        constructor() {
+            this.ws = null;
+            this.audioContext = null;
+            this.micStream = null;
+            this.processorNode = null;
+            this.nextPlayTime = 0;
+            this.playQueue = [];
+            this.isMuted = false;
+            
+            // Analysers for canvas visualizer
+            this.micAnalyser = null;
+            this.aiAnalyser = null;
+            this.dataArrayMic = null;
+            this.dataArrayAi = null;
+            this.isUserSpeaking = false;
+            this.isAiSpeaking = false;
+            this.smoothVolume = 0;
+            
+            // DOM Elements
+            this.modal = document.getElementById('voice-modal');
+            this.closeBtn = document.getElementById('voice-close-btn');
+            this.muteBtn = document.getElementById('voice-mute-btn');
+            this.endBtn = document.getElementById('voice-end-btn');
+            this.statusEl = document.getElementById('voice-status');
+            this.subStatusEl = document.getElementById('voice-sub-status');
+            this.transcriptEl = document.getElementById('voice-transcript');
+            this.container = document.getElementById('voice-visualizer-container');
+            this.canvas = document.getElementById('voice-canvas');
+            this.ctx = this.canvas.getContext('2d');
+            this.blob1 = document.getElementById('voice-svg-blob-1');
+            this.blob2 = document.getElementById('voice-svg-blob-2');
+            
+            this.isActive = false;
+            
+            // Event Listeners
+            this.closeBtn.addEventListener('click', () => this.stop());
+            this.endBtn.addEventListener('click', () => this.stop());
+            this.muteBtn.addEventListener('click', () => this.toggleMute());
+            
+            // Esc key listener
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && this.isActive) {
+                    this.stop();
+                }
+            });
+            
+            // Initial canvas size
+            this.canvas.width = 340;
+            this.canvas.height = 160;
+        }
+
+        updateStatus(status, subStatus = '') {
+            if (this.statusEl) {
+                this.statusEl.textContent = status;
+            }
+            if (this.subStatusEl) {
+                if (subStatus) {
+                    this.subStatusEl.textContent = subStatus;
+                } else {
+                    // Auto status map helper
+                    const upper = status.toUpperCase();
+                    if (upper.includes('ПОДКЛЮЧЕНИЕ')) {
+                        this.subStatusEl.textContent = 'Ваш юрист на связи... Ожидайте соединения';
+                    } else if (upper.includes('СЛУШАЮ') || upper.includes('ГОВОРИТЕ')) {
+                        this.subStatusEl.textContent = 'На связи... Говорите, мы вас слушаем';
+                    } else if (upper.includes('МИКРОФОН ВЫКЛЮЧЕН') || upper.includes('ВЫКЛЮЧЕН')) {
+                        this.subStatusEl.textContent = 'Нажмите кнопку микрофона, чтобы продолжить';
+                    } else {
+                        this.subStatusEl.textContent = 'На связи... Ждем вашего вопроса';
+                    }
+                }
+            }
+        }
+
+        resizeCanvas() {
+            const rect = this.canvas.getBoundingClientRect();
+            const targetWidth = rect.width || 340;
+            const targetHeight = rect.height || 160;
+            
+            if (this.canvas.width !== targetWidth || this.canvas.height !== targetHeight) {
+                this.canvas.width = targetWidth;
+                this.canvas.height = targetHeight;
+            }
+        }
+
+        async start() {
+            if (this.isActive) return;
+            this.isActive = true;
+            this.isMuted = false;
+            this.nextPlayTime = 0;
+            this.playQueue = [];
+            this.smoothVolume = 0;
+            
+            this.modal.classList.add('active');
+            this.modal.removeAttribute('hidden');
+            this.updateStatus('ПОДКЛЮЧЕНИЕ...', 'Ваш юрист на связи... Ожидайте соединения');
+            this.transcriptEl.textContent = 'Инициализация звука...';
+            
+            try {
+                // Initialize Web Audio Context
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    await this.audioContext.resume();
+                }
+                
+                // Initialize WebSocket connection
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                let host = window.location.host;
+                if (!host || window.location.protocol === 'file:' || host.startsWith('localhost') || host.startsWith('127.0.0.1')) {
+                    host = 'localhost:3000';
+                } else if (!host.includes('miyzamchi-backend')) {
+                    // Статик-хостинг (Render Static/Netlify): WebSocket держит только бэкенд
+                    host = 'miyzamchi-backend.onrender.com';
+                }
+                const wsUrl = `${protocol}//${host}/api/voice`;
+                
+                this.ws = new WebSocket(wsUrl);
+                this.ws.binaryType = 'arraybuffer';
+                
+                this.ws.onopen = async () => {
+                    if (this.audioContext && this.audioContext.state === 'suspended') {
+                        await this.audioContext.resume();
+                    }
+                    this.updateStatus('Мыйзамчы Live', 'Подключено. Запрос доступа к микрофону...');
+                    this.transcriptEl.textContent = 'Запрос доступа к микрофону...';
+                    this.startMicrophone();
+                };
+                
+                this.ws.onmessage = (event) => {
+                    if (typeof event.data === 'string') {
+                        try {
+                            const msg = JSON.parse(event.data);
+                            if (msg.type === 'status') {
+                                this.updateStatus(msg.text);
+                            } else if (msg.type === 'transcript') {
+                                this.transcriptEl.textContent = msg.text;
+                            } else if (msg.type === 'interrupted') {
+                                console.log('[VoiceClient] ИИ прерван пользователем!');
+                                this.clearPlaybackQueue();
+                            }
+                        } catch (err) {
+                            console.error('[VoiceClient] Ошибка разбора JSON:', err);
+                        }
+                    } else if (event.data instanceof ArrayBuffer) {
+                        this.playAudioChunk(event.data);
+                    }
+                };
+                
+                this.ws.onclose = (event) => {
+                    console.warn(`[VoiceClient] WebSocket соединение закрыто. Код: ${event.code}, Причина: ${event.reason || 'не указана'}`);
+                    if (event.code !== 1000) {
+                        alert(`Голосовой режим прерван.\nКод закрытия: ${event.code}\nПричина: ${event.reason || 'Внутренняя ошибка сервера или превышен лимит ключей'}`);
+                    }
+                    this.stop();
+                };
+                
+                this.ws.onerror = (err) => {
+                    console.error('[VoiceClient] Ошибка WebSocket:', err);
+                    this.stop();
+                };
+                
+                // Set Analysers
+                this.micAnalyser = this.audioContext.createAnalyser();
+                this.aiAnalyser = this.audioContext.createAnalyser();
+                this.micAnalyser.fftSize = 64;
+                this.aiAnalyser.fftSize = 64;
+                this.dataArrayMic = new Uint8Array(this.micAnalyser.frequencyBinCount);
+                this.dataArrayAi = new Uint8Array(this.aiAnalyser.frequencyBinCount);
+                
+                // Trigger animation loop
+                this.drawVisualizer();
+                
+            } catch (err) {
+                console.error('[VoiceClient] Ошибка старта голосового режима:', err);
+                alert('Не удалось запустить голосовой режим: ' + err.message);
+                this.stop();
+            }
+        }
+
+        async startMicrophone() {
+            try {
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    await this.audioContext.resume();
+                }
+                this.micStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+                // Safety check: if user closed session or connection dropped while microphone permission prompt was pending
+                if (!this.isActive || !this.audioContext) {
+                    if (this.micStream) {
+                        this.micStream.getTracks().forEach(t => t.stop());
+                        this.micStream = null;
+                    }
+                    return;
+                }
+                
+                const sourceNode = this.audioContext.createMediaStreamSource(this.micStream);
+                sourceNode.connect(this.micAnalyser);
+                
+                this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+                
+                const inputSampleRate = this.audioContext.sampleRate;
+                const outputSampleRate = 16000;
+                
+                this.processorNode.onaudioprocess = (event) => {
+                    if (this.isMuted || !this.isActive) return;
+                    const inputBuffer = event.inputBuffer.getChannelData(0);
+                    const downsampled = this.downsample(inputBuffer, inputSampleRate, outputSampleRate);
+                    const pcmBuffer = this.floatTo16BitPCM(downsampled);
+                    
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.send(pcmBuffer);
+                    }
+                };
+                
+                sourceNode.connect(this.processorNode);
+                this.processorNode.connect(this.audioContext.destination);
+                
+                this.updateStatus('СЛУШАЮ ВАС...', 'На связи... Говорите, мы вас слушаем');
+                this.transcriptEl.textContent = 'Соединение установлено. Говорите...';
+                
+            } catch (err) {
+                console.error('[VoiceClient] Ошибка захвата микрофона:', err);
+                this.updateStatus('ОШИБКА МИКРОФОНА', 'Ошибка: нет доступа к микрофону');
+                this.transcriptEl.textContent = 'Ошибка: нет доступа к микрофону';
+                alert('Пожалуйста, разрешите доступ к микрофону для голосового диалога.');
+                this.stop();
+            }
+        }
+
+        stop() {
+            if (!this.isActive) return;
+            this.isActive = false;
+            
+            console.log('[VoiceClient] Завершение голосового сеанса...');
+            
+            // Stop mic capture
+            if (this.micStream) {
+                this.micStream.getTracks().forEach(t => t.stop());
+                this.micStream = null;
+            }
+            if (this.processorNode) {
+                this.processorNode.disconnect();
+                this.processorNode = null;
+            }
+            
+            // Close socket
+            if (this.ws) {
+                try {
+                    this.ws.close();
+                } catch(e) {}
+                this.ws = null;
+            }
+            
+            // Clear scheduled audio
+            this.clearPlaybackQueue();
+            
+            // Close Audio Context
+            if (this.audioContext) {
+                try {
+                    this.audioContext.close();
+                } catch(e) {}
+                this.audioContext = null;
+            }
+            
+            // Hide modal
+            this.modal.classList.remove('active');
+            this.modal.setAttribute('hidden', 'true');
+            this.muteBtn.classList.remove('muted');
+            this.isMuted = false;
+        }
+
+        toggleMute() {
+            this.isMuted = !this.isMuted;
+            if (this.isMuted) {
+                this.muteBtn.classList.add('muted');
+                this.updateStatus('МИКРОФОН ВЫКЛЮЧЕН', 'Нажмите кнопку микрофона, чтобы продолжить');
+            } else {
+                this.muteBtn.classList.remove('muted');
+                this.updateStatus('СЛУШАЮ ВАС...', 'На связи... Говорите, мы вас слушаем');
+            }
+        }
+
+        downsample(buffer, inputRate, outputRate) {
+            if (outputRate === inputRate) return buffer;
+            const sampleRateRatio = inputRate / outputRate;
+            const newLength = Math.round(buffer.length / sampleRateRatio);
+            const result = new Float32Array(newLength);
+            let offsetResult = 0;
+            let offsetInput = 0;
+            while (offsetResult < result.length) {
+                const nextOffsetInput = Math.round((offsetResult + 1) * sampleRateRatio);
+                let accum = 0;
+                let count = 0;
+                for (let i = offsetInput; i < nextOffsetInput && i < buffer.length; i++) {
+                    accum += buffer[i];
+                    count++;
+                }
+                result[offsetResult] = count > 0 ? accum / count : 0;
+                offsetResult++;
+                offsetInput = nextOffsetInput;
+            }
+            return result;
+        }
+
+        floatTo16BitPCM(float32Array) {
+            const buffer = new ArrayBuffer(float32Array.length * 2);
+            const view = new DataView(buffer);
+            let offset = 0;
+            for (let i = 0; i < float32Array.length; i++, offset += 2) {
+                let s = Math.max(-1, Math.min(1, float32Array[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return buffer;
+        }
+
+        playAudioChunk(arrayBuffer) {
+            if (!this.audioContext || !this.isActive) return;
+            
+            const int16Array = new Int16Array(arrayBuffer);
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / 32768;
+            }
+            
+            const buffer = this.audioContext.createBuffer(1, float32Array.length, 24000);
+            buffer.copyToChannel(float32Array, 0);
+            
+            const sourceNode = this.audioContext.createBufferSource();
+            sourceNode.buffer = buffer;
+            
+            sourceNode.connect(this.audioContext.destination);
+            sourceNode.connect(this.aiAnalyser);
+            
+            const now = this.audioContext.currentTime;
+            if (this.nextPlayTime < now) {
+                this.nextPlayTime = now;
+            }
+            
+            sourceNode.start(this.nextPlayTime);
+            this.playQueue.push(sourceNode);
+            
+            sourceNode.onended = () => {
+                const idx = this.playQueue.indexOf(sourceNode);
+                if (idx !== -1) {
+                    this.playQueue.splice(idx, 1);
+                }
+            };
+            
+            this.nextPlayTime += buffer.duration;
+        }
+
+        clearPlaybackQueue() {
+            this.playQueue.forEach(source => {
+                try {
+                    source.stop();
+                } catch (e) {}
+            });
+            this.playQueue = [];
+            this.nextPlayTime = 0;
+        }
+
+        getWavyBlobPath(cx, cy, baseRadius, time, volume, isUser, isAi, index) {
+            const points = [];
+            const numPoints = 80; // 80 points is perfect for silky smooth borders
+            
+            // Modulation parameters based on state
+            let numWaves = 4;
+            let waveAmp = 6;
+            let speed = 1.2;
+            
+            if (isAi) {
+                // Large flowing majestic waves
+                numWaves = 4 + (index === 0 ? 1 : -1); // different waves for left/right
+                waveAmp = 10 + volume * 35; 
+                speed = 2.2;
+            } else if (isUser) {
+                // Energetic, high-frequency wavy ripples
+                numWaves = 6 + (index === 0 ? 2 : 0);
+                waveAmp = 5 + volume * 25;
+                speed = 4.5;
+            } else {
+                // Quiet slow organic breathing
+                numWaves = 3;
+                waveAmp = 4 + Math.sin(time * 2 + index) * 3;
+                speed = 1.0;
+            }
+            
+            for (let i = 0; i < numPoints; i++) {
+                const theta = (i / numPoints) * 2 * Math.PI;
+                
+                // Polar coordinate modulation formula for complex wavy contours
+                const primaryWave = Math.sin(theta * numWaves + time * speed) * waveAmp;
+                const secondaryWave = Math.sin(theta * (numWaves * 2) - time * speed * 1.4) * (waveAmp * 0.35);
+                const tertiaryWave = Math.cos(theta * 2 + time * 0.4) * (waveAmp * 0.4); // Oval breathe
+                
+                const r = baseRadius + primaryWave + secondaryWave + tertiaryWave;
+                
+                const x = cx + Math.cos(theta) * r;
+                const y = cy + Math.sin(theta) * r;
+                
+                points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+            }
+            
+            return `M ${points.join(' L ')} Z`;
+        }
+
+        drawVisualizer() {
+            if (!this.isActive) return;
+            requestAnimationFrame(() => this.drawVisualizer());
+            
+            // 1. Calculate sound levels from Analysers
+            let levelMic = 0;
+            let levelAi = 0;
+            
+            if (this.micAnalyser && !this.isMuted) {
+                this.micAnalyser.getByteFrequencyData(this.dataArrayMic);
+                const sum = this.dataArrayMic.reduce((a, b) => a + b, 0);
+                levelMic = sum / this.dataArrayMic.length;
+            }
+            
+            if (this.aiAnalyser) {
+                this.aiAnalyser.getByteFrequencyData(this.dataArrayAi);
+                const sum = this.dataArrayAi.reduce((a, b) => a + b, 0);
+                levelAi = sum / this.dataArrayAi.length;
+            }
+            
+            this.isUserSpeaking = levelMic > 3;
+            this.isAiSpeaking = levelAi > 3;
+            
+            let targetVolume = 0;
+            if (this.isAiSpeaking) {
+                targetVolume = levelAi / 128;
+                this.container.classList.add('speaking');
+                this.container.classList.remove('listening');
+            } else if (this.isUserSpeaking) {
+                targetVolume = levelMic / 128;
+                this.container.classList.add('listening');
+                this.container.classList.remove('speaking');
+            } else {
+                this.container.classList.remove('listening');
+                this.container.classList.remove('speaking');
+            }
+            
+            // Smooth volume easing
+            this.smoothVolume += (targetVolume - this.smoothVolume) * 0.15;
+            
+            // 2. Animate liquid blobs (100% GPU accelerated!)
+            const time = Date.now() / 1000;
+            
+            // Base slow orbital rotation offsets
+            const orbitRadius = 15;
+            const x1 = Math.sin(time * 1.5) * orbitRadius;
+            const y1 = Math.cos(time * 1.2) * orbitRadius;
+            const x2 = Math.sin(time * -1.3 + 1.2) * orbitRadius;
+            const y2 = Math.cos(time * -1.6 + 1.8) * orbitRadius;
+            
+            let tx1 = x1;
+            let ty1 = y1;
+            let tx2 = x2;
+            let ty2 = y2;
+            
+            let baseRadius1 = 70;
+            let baseRadius2 = 70;
+            
+            if (this.isAiSpeaking) {
+                // Large breathing base radius
+                baseRadius1 = 70 + this.smoothVolume * 30;
+                baseRadius2 = 70 + this.smoothVolume * 25;
+                // Move closer to center to merge their glow elegantly
+                tx1 = x1 * 0.3 + 45;
+                tx2 = x2 * 0.3 - 45;
+            } else if (this.isUserSpeaking) {
+                // High-frequency speech base radius pulsing
+                baseRadius1 = 70 + this.smoothVolume * 20;
+                baseRadius2 = 70 + this.smoothVolume * 20;
+                // Actively float outwards
+                tx1 = x1 - 10;
+                tx2 = x2 + 10;
+            } else {
+                // Slow organic breathing scale when idle
+                const breathe = Math.sin(time * 2.0) * 4;
+                baseRadius1 = 70 + breathe;
+                baseRadius2 = 68 + breathe;
+            }
+            
+            // Center coordinates in viewBox (500 x 220)
+            const cx1 = 165 + tx1;
+            const cy1 = 110 + ty1;
+            
+            const cx2 = 335 + tx2;
+            const cy2 = 110 + ty2;
+            
+            if (this.blob1) {
+                const path1 = this.getWavyBlobPath(cx1, cy1, baseRadius1, time, this.smoothVolume, this.isUserSpeaking, this.isAiSpeaking, 0);
+                this.blob1.setAttribute('d', path1);
+            }
+            
+            if (this.blob2) {
+                const path2 = this.getWavyBlobPath(cx2, cy2, baseRadius2, time, this.smoothVolume, this.isUserSpeaking, this.isAiSpeaking, 1);
+                this.blob2.setAttribute('d', path2);
+            }
+        }
+    }
+
+    // Initialize Voice Assistant Button trigger
+    document.addEventListener('DOMContentLoaded', () => {
+        const startBtn = document.getElementById('startVoiceSessionBtn');
+        if (startBtn) {
+            const voiceAssistant = new MiyzamchyLiveVoice();
+            startBtn.addEventListener('click', () => {
+                voiceAssistant.start();
+            });
+            if (window.lucide) {
+                window.lucide.createIcons();
+            }
+        }
+    });
     </script>
 </body>
 

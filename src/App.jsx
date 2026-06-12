@@ -2560,7 +2560,7 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
             </button>
           ))}
         </div>
-        {!isMobile && <a href="/" className="btn" style={{display:'flex',alignItems:'center',gap:6,padding:'4px 10px',background:'transparent',border:'1px solid var(--border)',borderRadius:'8px',cursor:'pointer',color:'var(--muted)',fontSize:11.5,fontFamily:'inherit',textDecoration:'none'}}
+        {!isMobile && <a href="/chat.html" className="btn" style={{display:'flex',alignItems:'center',gap:6,padding:'4px 10px',background:'transparent',border:'1px solid var(--border)',borderRadius:'8px',cursor:'pointer',color:'var(--muted)',fontSize:11.5,fontFamily:'inherit',textDecoration:'none'}}
           onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--text)'}}
           onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>
           <span style={{fontSize:13}}>💬</span><span>{tr('to_chat')}</span>

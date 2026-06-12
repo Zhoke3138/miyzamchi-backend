@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Premium landing styles (Aceternity UI / Magic UI inspired).
+
+   ⚠️ ИЗОЛЯЦИЯ: этот файл (вместе с Tailwind preflight) импортируется ТОЛЬКО
+   в src/landing-main.jsx → попадает в бандл страницы index.html (премиум-лендинг).
+   Базовый чат (/chat.html → style-ChatMZ.css) и Workspace (/workspace.html →
+   ide-styles.css) — отдельные MPA-входы, Tailwind в их CSS НЕ подмешивается.
+   Поэтому reset Tailwind не конфликтует с «чистым» CSS чата.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root { color-scheme: dark; }
+
+/* ── Aurora / Spotlight движущийся свет ── */
+@keyframes aurora-drift {
+  0%   { transform: translate(-10%, -10%) rotate(-6deg) scale(1.1); }
+  50%  { transform: translate(10%, 8%) rotate(6deg) scale(1.25); }
+  100% { transform: translate(-10%, -10%) rotate(-6deg) scale(1.1); }
+}
+.aurora-blob { animation: aurora-drift 18s ease-in-out infinite; will-change: transform; }
+.aurora-blob-2 { animation-duration: 24s; animation-direction: reverse; }
+
+/* ── Shimmer Button (Magic UI) ── */
+@keyframes shimmer-slide {
+  0%   { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
+}
+.shimmer-streak { animation: shimmer-slide 2.6s linear infinite; }
+
+/* ── Bento glass-карточки: мягкий блик при наведении ── */
+@keyframes card-glow {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.7; }
+}
+
+/* Плавная прокрутка лендинга */
+html { scroll-behavior: smooth; }

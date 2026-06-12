@@ -1,17 +1,23 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
 import { copyFileSync } from 'fs';
 
-// ── MPA: два HTML-входа ─────────────────────────────────────────────────────
-//  • index.html      — лендинг: оригинальный чат ChatMZ (верстка + style-ChatMZ.css
-//                      + легаси script.js). Главная страница по умолчанию.
+// ── MPA: три HTML-входа ─────────────────────────────────────────────────────
+//  • index.html      — ПРЕМИУМ-ЛЕНДИНГ (React + Tailwind + framer-motion,
+//                      src/landing-main.jsx). Главная страница по умолчанию.
+//  • chat.html       — базовый чат ChatMZ (верстка + style-ChatMZ.css + легаси
+//                      script.js). Кнопка-портал лендинга ведёт сюда.
 //  • workspace.html  — профессиональный Legal Workspace (React/SuperDoc, src/App.jsx).
 //
-// Лендинг ссылается на /script.js и /style-ChatMZ.css как на ОБЫЧНЫЕ статические
-// файлы: script.js — классический (не модуль) легаси-скрипт чата, Vite его
-// сознательно НЕ бандлит (менять его исполнение нельзя, см. CLAUDE.md).
-// Файлы живут в корне (single source of truth) — плагин кладёт их в dist/ как есть.
+// ИЗОЛЯЦИЯ TAILWIND: @tailwindcss/vite раскрывает preflight ТОЛЬКО там, где CSS
+// делает `@import "tailwindcss"` — это лишь src/landing.css (бандл лендинга).
+// chat.html и workspace.html — отдельные входы со своими CSS, Tailwind в них не
+// подмешивается. Поэтому reset Tailwind не конфликтует с «чистым» CSS чата.
+//
+// script.js — классический (не модуль) легаси-скрипт чата, Vite его не бандлит;
+// вместе со style-ChatMZ.css он копируется в dist как есть.
 const copyChatAssets = () => ({
   name: 'copy-chat-assets',
   closeBundle() {
@@ -21,14 +27,15 @@ const copyChatAssets = () => ({
 });
 
 export default defineConfig({
-  plugins: [react(), copyChatAssets()],
+  plugins: [react(), tailwindcss(), copyChatAssets()],
   optimizeDeps: {
-    entries: ['workspace.html']
+    entries: ['index.html', 'workspace.html']
   },
   build: {
     rollupOptions: {
       input: {
         home: resolve(__dirname, 'index.html'),
+        chat: resolve(__dirname, 'chat.html'),
         workspace: resolve(__dirname, 'workspace.html')
       }
     }
