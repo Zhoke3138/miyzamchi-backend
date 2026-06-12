@@ -74,7 +74,19 @@ export const TRANSLATIONS = {
     ws_ph_selection: '✨ Улучшить выделенный текст...',
     ws_ph_doc: 'Спросить о документе…',
     ws_ph_legal: 'Задать юридический вопрос…',
-    pane_npa: 'Просмотр НПА', pane_chat: 'ИИ Чат'
+    pane_npa: 'Просмотр НПА', pane_chat: 'ИИ Чат',
+    // ── Премиум-лендинг (/) ──
+    lp_badge: 'AI-экосистема LegalTech · Кыргызская Республика',
+    lp_title: 'Miyzamchi. Искусственный интеллект для законодательства Кыргызской Республики',
+    lp_subtitle: 'AI-экосистема LegalTech и интеллектуальный ассистент по законодательству КР. Анализ документов, поиск противоречий с НПА и профессиональный редактор — в одном месте.',
+    lp_cta: 'Открыть ИИ-ассистента',
+    lp_signin: 'Войти',
+    lp_section_title: 'Единая экосистема',
+    lp_section_subtitle: 'Три инструмента, которые закрывают весь цикл работы юриста.',
+    lp_card1_desc: 'Профессиональный редактор юридических документов на SuperDoc: правки в режиме рецензирования, экспорт в Word и PDF, AI-агент прямо в тексте.',
+    lp_card2_desc: 'Мультиагентная RAG-система по законодательству КР: поиск противоречий с НПА, цитаты со ссылками на статьи, аудит договоров и исков.',
+    lp_card3_desc: 'Автоматизация работы с клиентами: приём заявок, выставление счетов и напоминания прямо в WhatsApp — без ручной рутины.',
+    lp_footer: 'Юридический ИИ-ассистент Кыргызской Республики'
   },
   ky: {
     // ── Лендинг-чат (/) ──
@@ -116,7 +128,19 @@ export const TRANSLATIONS = {
     ws_ph_selection: '✨ Белгиленген текстти жакшыртуу...',
     ws_ph_doc: 'Документ жөнүндө суроо…',
     ws_ph_legal: 'Юридикалык суроо берүү…',
-    pane_npa: 'ЧУА көрүү', pane_chat: 'AI маек'
+    pane_npa: 'ЧУА көрүү', pane_chat: 'AI маек',
+    // ── Премиум-лендинг (/) ──
+    lp_badge: 'AI LegalTech экосистемасы · Кыргыз Республикасы',
+    lp_title: 'Miyzamchi. Кыргыз Республикасынын мыйзамдары үчүн жасалма интеллект',
+    lp_subtitle: 'КР мыйзамдары боюнча AI LegalTech экосистемасы жана акылдуу жардамчы. Документтерди талдоо, ЧУА менен карама-каршылыктарды издөө жана кесипкөй редактор — бир жерде.',
+    lp_cta: 'ИИ-жардамчыны ачуу',
+    lp_signin: 'Кирүү',
+    lp_section_title: 'Бирдиктүү экосистема',
+    lp_section_subtitle: 'Юристтин бардык иш циклин камтыган үч курал.',
+    lp_card1_desc: 'SuperDoc негизинде юридикалык документтердин кесипкөй редактору: рецензиялоо режиминде оңдоолор, Word жана PDF форматына экспорт, текстте AI-агент.',
+    lp_card2_desc: 'КР мыйзамдары боюнча көп агенттик RAG-система: ЧУА менен карама-каршылыктарды издөө, беренелерге шилтемелер менен цитаталар, келишимдерди жана доолорду текшерүү.',
+    lp_card3_desc: 'Кардарлар менен иштөөнү автоматташтыруу: арыздарды кабыл алуу, эсеп коюу жана эскертүүлөр түз эле WhatsApp\'та — кол менен иштебестен.',
+    lp_footer: 'Кыргыз Республикасынын юридикалык ИИ-жардамчысы'
   },
   en: {
     // ── Landing chat (/) ──
@@ -158,7 +182,19 @@ export const TRANSLATIONS = {
     ws_ph_selection: '✨ Improve the selected text...',
     ws_ph_doc: 'Ask about the document…',
     ws_ph_legal: 'Ask a legal question…',
-    pane_npa: 'NLA viewer', pane_chat: 'AI Chat'
+    pane_npa: 'NLA viewer', pane_chat: 'AI Chat',
+    // ── Premium landing (/) ──
+    lp_badge: 'AI-powered LegalTech ecosystem · Kyrgyz Republic',
+    lp_title: 'Miyzamchi. Artificial intelligence for the legislation of the Kyrgyz Republic',
+    lp_subtitle: 'An AI-powered LegalTech ecosystem and intelligent assistant for the legislation of the Kyrgyz Republic. Document analysis, contradiction detection against laws, and a professional editor — all in one place.',
+    lp_cta: 'Open the AI assistant',
+    lp_signin: 'Sign in',
+    lp_section_title: 'A unified ecosystem',
+    lp_section_subtitle: "Three tools that cover a lawyer's entire workflow.",
+    lp_card1_desc: 'A professional legal document editor built on SuperDoc: track-changes editing, export to Word and PDF, and an AI agent right inside the text.',
+    lp_card2_desc: 'A multi-agent RAG system for Kyrgyz law: detects contradictions with regulations, cites articles with references, audits contracts and claims.',
+    lp_card3_desc: 'Client workflow automation: intake requests, issue invoices, and send reminders right in WhatsApp — no manual routine.',
+    lp_footer: 'AI legal assistant for the Kyrgyz Republic'
   }
 };
 

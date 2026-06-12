@@ -40,10 +40,12 @@ function BentoCard({ item, index, className }) {
   );
 }
 
+// Названия и теги — продуктовые/технические, остаются на английском во всех
+// языках. Переводятся описания (descKey берётся из общего словаря).
 const FEATURES = [
   {
     title: 'Smart Legal Workspace',
-    desc: 'Профессиональный редактор юридических документов на SuperDoc: правки в режиме рецензирования, экспорт в Word и PDF, AI-агент прямо в тексте.',
+    descKey: 'lp_card1_desc',
     tag: 'SuperDoc Editor',
     icon: '📝',
     glow: 'radial-gradient(circle, rgba(92,102,222,0.55), transparent 70%)',
@@ -51,7 +53,7 @@ const FEATURES = [
   },
   {
     title: 'AI Law Navigator',
-    desc: 'Мультиагентная RAG-система по законодательству КР: поиск противоречий с НПА, цитаты со ссылками на статьи, аудит договоров и исков.',
+    descKey: 'lp_card2_desc',
     tag: 'Multi-agent RAG',
     icon: '⚖️',
     glow: 'radial-gradient(circle, rgba(139,92,246,0.55), transparent 70%)',
@@ -59,7 +61,7 @@ const FEATURES = [
   },
   {
     title: 'WhatsApp Billing CRM',
-    desc: 'Автоматизация работы с клиентами: приём заявок, выставление счетов и напоминания прямо в WhatsApp — без ручной рутины.',
+    descKey: 'lp_card3_desc',
     tag: 'CRM & Automation',
     icon: '💬',
     glow: 'radial-gradient(circle, rgba(46,204,113,0.5), transparent 70%)',
@@ -67,14 +69,14 @@ const FEATURES = [
   }
 ];
 
-export function BentoGrid() {
+export function BentoGrid({ tr }) {
   return (
     <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
       {/* Первая карточка крупнее на десктопе для «бенто»-ритма */}
       {FEATURES.map((item, i) => (
         <BentoCard
           key={item.title}
-          item={item}
+          item={{ ...item, desc: tr(item.descKey) }}
           index={i}
           className={i === 0 ? 'md:col-span-2 lg:col-span-1' : ''}
         />
