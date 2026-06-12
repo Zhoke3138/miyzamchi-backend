@@ -239,8 +239,16 @@ const KVCACHE_JUDGE_DEEP_ID = 'miyzamchi-judge-deep-v1';
 // Модели
 const DEEPSEEK_TRIAGE_MODEL     = 'deepseek-v4-flash';
 const DEEPSEEK_AGENT_MODEL      = 'deepseek-v4-flash';
-const DEEPSEEK_JUDGE_FAST_MODEL = 'deepseek-v4-flash';
-const DEEPSEEK_JUDGE_DEEP_MODEL = 'deepseek-v4-flash';
+const DEEPSEEK_JUDGE_FAST_MODEL = 'deepseek-v4-flash'; // Стандартный Судья (дефолт)
+const DEEPSEEK_JUDGE_DEEP_MODEL = 'deepseek-v4-pro';   // Верховный Судья (только эскалация)
+
+// ── 2026-06-12: Пороги эскалации Final Judge на Верховного Судью (v4-pro) ──
+// Эскалируем ТОЛЬКО если документ очень длинный ИЛИ агенты нашли сложные
+// коллизии. Всё остальное — Стандартный Судья (v4-flash): дешевле и быстрее.
+const JUDGE_LONG_DOC_CHARS    = 30000; // ~15+ страниц сплошного текста
+const JUDGE_LONG_DOC_SEGMENTS = 40;    // столько проверенных пунктов = большой документ
+const JUDGE_HARD_CRITICALS    = 2;     // ≥2 critical = сложные разногласия/коллизии
+const JUDGE_HARD_TOTAL_RISKS  = 6;     // ≥6 рисков суммарно = тяжёлый кейс
 
 // ── Семафор контролируемой параллельности ───────────────────────────
 async function runWithConcurrency(items, concurrency, taskFn, opts = {}) {
@@ -1371,28 +1379,45 @@ ${schemaBlock}`;
             confidence: r.confidence || 50
         }));
 
-        // ── 2026-06-02 Final Judge как pure-synthesizer ──
-        // Раньше: heavy/fast split (Pro/Flash) + reasoning medium/high.
-        // Проблема: на простых случаях Flash + medium reasoning давал hedging
-        // ("номера могли измениться") и вкусовщину ("добавьте конкретные даты").
-        // Это галлюцинации-перестраховки самой модели, не риски документа.
-        //
-        // Решение: ВСЕГДА DEEPSEEK_JUDGE_DEEP_MODEL (deepseek-v4-pro). Reasoning
-        // динамически — от 'low' для простого синтеза до 'high' для тяжёлых
-        // кейсов с критическими нарушениями. Один KVCache-ID — повышает
-        // hit rate на повторных проверках того же документа.
-        //
+        // ── 2026-06-12 Динамическая развилка Судьи: Standard vs Верховный ──
+        // СТАНДАРТНЫЙ Судья (deepseek-v4-flash) — дефолт для лёгких/средних
+        // документов: дешёвый и быстрый синтез. Reasoning по прежней шкале:
         //   0 critical, 0-2 warning  → 'low'    (быстрый синтез одной-двух фраз)
         //   0 critical, 3-5 warning  → 'medium' (сбалансированный)
-        //   ≥1 critical OR ≥6 risks  → 'high'   (тяжёлый кейс — нужно подумать)
-        const judgeModel = DEEPSEEK_JUDGE_DEEP_MODEL;
+        //   1 critical (до порога)   → 'high'
+        //
+        // ВЕРХОВНЫЙ Судья (deepseek-v4-pro) — вызывается ТОЛЬКО при эскалации:
+        //   • очень длинный документ (>JUDGE_LONG_DOC_CHARS символов или
+        //     >JUDGE_LONG_DOC_SEGMENTS проверенных пунктов), ИЛИ
+        //   • сложные коллизии (≥JUDGE_HARD_CRITICALS critical или
+        //     ≥JUDGE_HARD_TOTAL_RISKS рисков суммарно от базовых агентов).
+        //
+        // ⚡ ANTI-LATENCY (критическое требование): у v4-pro reasoning_effort
+        // ПРИНУДИТЕЛЬНО снижен до 'medium' — 'high' на Pro даёт многоминутные
+        // раздумья, а Судья лишь синтезирует готовые вердикты агентов, ему
+        // не нужно "думать заново". Базовые агенты (Gemini) не тронуты.
+        //
+        // KVCache-ID раздельные (fast/deep) — у каждой модели свой кеш-контур.
         const totalRisks = critical.length + warning.length;
-        let judgeReasoning;
-        if (critical.length > 0 || totalRisks >= 6) judgeReasoning = 'high';
-        else if (totalRisks >= 3) judgeReasoning = 'medium';
-        else judgeReasoning = 'low';
-        const judgeUserId = KVCACHE_JUDGE_DEEP_ID;
-        const pathLabel = `pro/${judgeReasoning}`;
+        const docChars = String(documentText || '').length;
+        const isLongDoc  = docChars > JUDGE_LONG_DOC_CHARS || total > JUDGE_LONG_DOC_SEGMENTS;
+        const isHardCase = critical.length >= JUDGE_HARD_CRITICALS || totalRisks >= JUDGE_HARD_TOTAL_RISKS;
+        const useSupreme = isLongDoc || isHardCase;
+
+        let judgeModel, judgeReasoning, judgeUserId, pathLabel;
+        if (useSupreme) {
+            judgeModel     = DEEPSEEK_JUDGE_DEEP_MODEL;   // Верховный: deepseek-v4-pro
+            judgeReasoning = 'medium';                    // принудительно снижено (latency)
+            judgeUserId    = KVCACHE_JUDGE_DEEP_ID;
+            pathLabel      = `supreme/${isLongDoc ? 'long-doc' : 'collisions'}`;
+        } else {
+            judgeModel     = DEEPSEEK_JUDGE_FAST_MODEL;   // Стандартный: deepseek-v4-flash
+            if (critical.length > 0) judgeReasoning = 'high';
+            else if (totalRisks >= 3) judgeReasoning = 'medium';
+            else judgeReasoning = 'low';
+            judgeUserId    = KVCACHE_JUDGE_FAST_ID;
+            pathLabel      = `standard/${judgeReasoning}`;
+        }
 
         const riskReports = sortedRisks.map(r =>
             `[${(r.status || '').toUpperCase()} ${r.confidence || '?'}%] ${r.item_number}: ${r.short_verdict}\nДетали: ${r.legal_rationale}`
