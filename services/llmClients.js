@@ -119,8 +119,19 @@ const _deepseek = DEEPSEEK_ENABLED
 // Примечание (Node openai SDK): в Python это extra_body={...}. В Node SDK неизвестные
 // поля кладутся ПРЯМО в тело запроса (проверено в server.js), поэтому thinking и
 // reasoning_effort передаём верхним уровнем — они доходят до DeepSeek as-is.
-async function deepseekReason({ systemPrompt, userPrompt, reasoning_effort = 'high' }) {
+// 2026-06-12 STREAMING FIX: раньше вызов шёл БЕЗ stream:true — DeepSeek сначала
+// целиком думал (thinking enabled, effort=high, до 32k токенов), и только потом
+// возвращал полный ответ → фронт получал текст одним куском в самом конце.
+// Теперь stream:true + onDelta-колбэк: по официальной доке DeepSeek
+// (api-docs.deepseek.com/guides/thinking_mode) при стриминге сначала идут
+// дельты delta.reasoning_content (цепочка мыслей), затем delta.content (ответ).
+// Вызывающий код (analyzeV2) стримит reasoning в UI в тегах <think>…</think>.
+//   onDelta({ reasoning }) — чанк цепочки рассуждений;
+//   onDelta({ text })      — чанк основного ответа.
+// Без onDelta поведение прежнее: ждём всё и возвращаем { text, model }.
+async function deepseekReason({ systemPrompt, userPrompt, reasoning_effort = 'high', onDelta = null }) {
   const effort = reasoning_effort === 'max' ? 'max' : 'high';   // допустимы только high|max
+  const emit = (d) => { if (onDelta) { try { onDelta(d); } catch (_) {} } };
 
   if (!_deepseek) {
     // Прозрачный fallback на Gemini 2.5 Flash, если DEEPSEEK_API_KEY не задан.
@@ -128,26 +139,39 @@ async function deepseekReason({ systemPrompt, userPrompt, reasoning_effort = 'hi
       systemPrompt, userPrompt, model: 'gemini-2.5-flash',
       maxOutputTokens: 8192, timeoutMs: 45000,
     });
+    emit({ text });   // консистентность: стрим-потребитель получит текст тем же каналом
     return { text, model: 'gemini-2.5-flash(fallback)' };
   }
 
-  const completion = await _deepseek.chat.completions.create({
+  const stream = await _deepseek.chat.completions.create({
     model: 'deepseek-v4-pro',
     reasoning_effort: effort,
     max_tokens: 32000,
     thinking: { type: 'enabled' },   // Node-эквивалент Python extra_body
+    stream: true,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
   });
 
-  const msg = (completion.choices && completion.choices[0] && completion.choices[0].message) || {};
-  // Лог цепочки рассуждений (если модель вернула reasoning_content).
-  if (msg.reasoning_content) {
-    console.log('[DeepSeek DEBUG] reasoning_content:', String(msg.reasoning_content).slice(0, 1500));
+  let text = '';
+  let reasoning = '';
+  for await (const chunk of stream) {
+    const delta = (chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta) || {};
+    if (delta.reasoning_content) {
+      reasoning += delta.reasoning_content;
+      emit({ reasoning: delta.reasoning_content });
+    }
+    if (delta.content) {
+      text += delta.content;
+      emit({ text: delta.content });
+    }
   }
-  return { text: msg.content || '', model: 'deepseek-v4-pro' };
+  if (reasoning) {
+    console.log(`[DeepSeek DEBUG] reasoning_content: ${reasoning.length}ch (streamed) | head: ${reasoning.slice(0, 300)}`);
+  }
+  return { text, model: 'deepseek-v4-pro', reasoning };
 }
 
 module.exports = {

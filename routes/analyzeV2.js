@@ -251,15 +251,25 @@ function createAnalyzeV2Router(deps = {}) {
   const resolvedDeps = { ...createDefaultDeps(), ...deps };
 
   router.post('/analyze-document', upload.single('file'), async (req, res) => {
-    // SSE-заголовки
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    // SSE-заголовки. 2026-06-12 анти-буферизация:
+    //   no-transform     — запрет прокси сжимать/перепаковывать поток;
+    //   X-Accel-Buffering — отключает буферизацию Nginx (реверс-прокси Render);
+    //   flushHeaders     — заголовки уходят клиенту сразу, до первого чанка.
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
     // SSE-эмиттеры в ТОЧНОМ формате прод-контракта (routes/analyze.js / script.js):
     //   { step:{id,status,text,reason?} } | { tableRow:{...} } | { purityIndex:int }
     //   { text:"markdown" } | { executive_summary:{...} } | [DONE] (литерал, НЕ JSON)
-    const sse = (obj) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+    // res.flush() существует только под модулем compression — вызываем с guard'ом.
+    const sse = (obj) => {
+      if (res.writableEnded) return;
+      res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      if (typeof res.flush === 'function') { try { res.flush(); } catch (_) {} }
+    };
     const step = (s) => sse({ step: s });
     const done = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
 
@@ -335,11 +345,35 @@ function createAnalyzeV2Router(deps = {}) {
       sse({ purityIndex });
 
       step({ id: 'judge', status: 'loading', text: `🧠 Финальный судья (DeepSeek-v4-pro, effort=${effort})` });
-      const report = (await resolvedDeps.judge?.({ graph, effort, state })) || { summary: '', risks: graph };
+
+      // ── 2026-06-12 LIVE-СТРИМ СУДЬИ ──
+      // deepseekReason теперь стримит дельты: сначала reasoning_content
+      // (цепочка мыслей), затем content (итоговый отчёт). Reasoning оборачиваем
+      // в стандартные теги <think>…</think> — Lobe Chat и совместимые UI рендерят
+      // их как аккордеон Chain of Thought. Пользователь видит буквы с первой
+      // секунды, а не пустой экран до конца раздумий.
+      let thinkOpen = false;   // тег <think> открыт
+      let sawContent = false;  // пошёл основной текст (его дубль ниже не шлём)
+      const onJudgeDelta = (d) => {
+        if (!d) return;
+        if (d.reasoning) {
+          if (!thinkOpen && !sawContent) { sse({ text: '<think>\n' }); thinkOpen = true; }
+          if (thinkOpen) sse({ text: d.reasoning });
+        }
+        if (d.text) {
+          if (thinkOpen) { sse({ text: '\n</think>\n\n' }); thinkOpen = false; }
+          sawContent = true;
+          sse({ text: d.text });
+        }
+      };
+      const report = (await resolvedDeps.judge?.({ graph, effort, state, onDelta: onJudgeDelta })) || { summary: '', risks: graph };
+      if (thinkOpen) { sse({ text: '\n</think>\n\n' }); thinkOpen = false; }
       step({ id: 'judge', status: 'success', text: 'Итоговый отчёт готов' });
 
-      // Текст судьи (markdown, 2 секции) — фронт рендерит как основной отчёт.
-      if (report.summary) sse({ text: report.summary });
+      // Текст судьи (markdown, 2 секции). Если content уже ушёл дельтами выше —
+      // НЕ дублируем. Фоллбэк одним куском остаётся для skip-пути (пустой граф),
+      // Gemini-fallback без стрима и ошибок до первого content-чанка.
+      if (report.summary && !sawContent) sse({ text: report.summary });
 
       // Executive Summary card (ошибки + слепые зоны).
       const risks = graph.filter((g) => g.status === 'error' || g.blind_spot);

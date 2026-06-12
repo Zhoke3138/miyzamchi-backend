@@ -343,7 +343,7 @@ function groupByNpa(graph) {
   return { groups, blind_spots, confirmed };
 }
 
-async function judge({ graph, effort }) {
+async function judge({ graph, effort, onDelta = null }) {
   const { groups, blind_spots, confirmed } = groupByNpa(graph);
 
   // Совсем пустой граф — без вызова LLM (экономия).
@@ -358,7 +358,7 @@ async function judge({ graph, effort }) {
 
   try {
     const { text, model } = await clients.deepseekReason({
-      systemPrompt: JUDGE_SYS, userPrompt, reasoning_effort: effort,
+      systemPrompt: JUDGE_SYS, userPrompt, reasoning_effort: effort, onDelta,
     });
     return { summary: text, model, groups, blind_spots, confirmed };
   } catch (err) {

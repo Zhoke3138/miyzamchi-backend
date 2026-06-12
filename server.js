@@ -1677,6 +1677,8 @@ async function streamDeepSeekResponse(systemInstruction, userPrompt, res, opts =
                 firstChunkSent = true;
                 if (!res.writableEnded) {
                     res.write(`data: ${JSON.stringify({ text: delta.content })}\n\n`);
+                    // Анти-буферизация: res.flush() есть только под compression — guard
+                    if (typeof res.flush === 'function') { try { res.flush(); } catch (_) {} }
                 }
             }
             if (chunk?.usage) lastUsage = chunk.usage;
