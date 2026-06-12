@@ -168,6 +168,13 @@ app.use((req, res, next) => {
     next();
 });
 
+// Workspace (React/SuperDoc) существует ТОЛЬКО в Vite-сборке на статик-фронте.
+// В репозитории workspace.html — сырой исходник со ссылкой на /src/main.jsx:
+// если отдать его отсюда, браузер блокирует module-script с MIME text/jsx
+// (белый экран). Поэтому с домена бэкенда отправляем на собранный фронт.
+const STATIC_FRONTEND_URL = (process.env.STATIC_FRONTEND_URL || 'https://miyzamchi-web.onrender.com').replace(/\/+$/, '');
+app.get('/workspace.html', (req, res) => res.redirect(302, STATIC_FRONTEND_URL + '/workspace.html'));
+
 // dotfiles: 'deny' — express вернёт 403 на .env, .git и любые dotfiles,
 // даже если кто-то обойдёт regex выше через ../ или хитрые URL.
 app.use(express.static(path.join(__dirname, 'public'), { dotfiles: 'deny' }));
