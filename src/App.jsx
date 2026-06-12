@@ -5,6 +5,7 @@ import * as ReactDOM from 'react-dom/client';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { diff_match_patch } from 'diff-match-patch';
+import { LANGS, t as i18nT, getAppLang, setAppLang, subscribeLang } from './translations.js';
 import './ide-styles.css';
 
 window.React = React;
@@ -43,6 +44,14 @@ const BACKEND_URL = (() => {
 const _ensureBackend = () => BACKEND_URL && BACKEND_URL.length ? BACKEND_URL : RENDER_BACKEND_URL;
 
 const safeJson=(v,fallback)=>{try{return JSON.parse(v)}catch(e){return fallback}};
+
+// ═══ i18n: единый язык KY|RU|EN с лендингом (localStorage 'app_language') ═══
+// Любой компонент вызывает useI18n() и реактивно перерисовывается при смене
+// языка (useSyncExternalStore на pub/sub из translations.js).
+const useI18n=()=>{
+  const lang=React.useSyncExternalStore(subscribeLang,getAppLang);
+  return { lang, tr:(k)=>i18nT(k,lang), setLang:setAppLang };
+};
 
 // PRIVACY: автоматическое удаление чатов старше N дней.
 // Чаты юриста могут содержать ФИО клиентов и детали дел — не храним вечно.
@@ -2448,6 +2457,7 @@ const Palette=({onClose,dark,onAction})=>{
 
 /* ═══ Menu Bar ═══ */
 const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOpen,onToggleRight,isMobile,unsavedCount=0,hasActiveDoc=false,analysing=false})=>{
+  const{lang,tr,setLang}=useI18n();
   const[hov,setHov]=useState(null);
   const[open,setOpen]=useState(null);
   
@@ -2459,36 +2469,38 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
 
   const menus={
     'Файл':[
-      {l:'Новый документ',h:'Ctrl+N',a:()=>onAction('newDoc')},
-      {l:'Открыть файл...',h:'Ctrl+O',a:()=>onAction('openFromDisk')},
-      {l:'Открыть папку...',a:()=>onAction('openFolder')},
+      {l:tr('mi_new_doc'),h:'Ctrl+N',a:()=>onAction('newDoc')},
+      {l:tr('mi_open_file'),h:'Ctrl+O',a:()=>onAction('openFromDisk')},
+      {l:tr('mi_open_folder'),a:()=>onAction('openFolder')},
       {s:true},
-      {l:'Сохранить',h:'Ctrl+S',a:()=>onAction('save')},
-      {l:'Экспорт в PDF',a:()=>onAction('exportPdf')},
-      {l:'Экспорт в Word (.docx)',a:()=>onAction('exportWord')},
+      {l:tr('mi_save'),h:'Ctrl+S',a:()=>onAction('save')},
+      {l:tr('mi_export_pdf'),a:()=>onAction('exportPdf')},
+      {l:tr('mi_export_word'),a:()=>onAction('exportWord')},
       {s:true},
-      {l:'Закрыть редактор',h:'Ctrl+W',a:()=>onAction('closeTab')},
-      {l:'Закрыть всё',a:()=>onAction('closeAllTabs')}
+      {l:tr('mi_close_editor'),h:'Ctrl+W',a:()=>onAction('closeTab')},
+      {l:tr('mi_close_all'),a:()=>onAction('closeAllTabs')}
     ],
     'Правка':[
-      {l:'Отменить',h:'Ctrl+Z',a:()=>{try{window.docEngine&&window.docEngine.commands&&window.docEngine.commands.undo&&window.docEngine.commands.undo()}catch(_){}}},
-      {l:'Повторить',h:'Ctrl+Y',a:()=>{try{window.docEngine&&window.docEngine.commands&&window.docEngine.commands.redo&&window.docEngine.commands.redo()}catch(_){}}},
+      {l:tr('mi_undo'),h:'Ctrl+Z',a:()=>{try{window.docEngine&&window.docEngine.commands&&window.docEngine.commands.undo&&window.docEngine.commands.undo()}catch(_){}}},
+      {l:tr('mi_redo'),h:'Ctrl+Y',a:()=>{try{window.docEngine&&window.docEngine.commands&&window.docEngine.commands.redo&&window.docEngine.commands.redo()}catch(_){}}},
       {s:true},
-      {l:'Найти',h:'Ctrl+F',a:()=>onAction('find')}
+      {l:tr('mi_find'),h:'Ctrl+F',a:()=>onAction('find')}
     ],
     'Вид':[
-      {l:'Левая панель',h:'Ctrl+B',a:()=>onAction('toggleLeft')},
-      {l:'Панель ИИ',h:'Ctrl+J',a:()=>onAction('toggleRight')},
+      {l:tr('mi_left_panel'),h:'Ctrl+B',a:()=>onAction('toggleLeft')},
+      {l:tr('mi_ai_panel'),h:'Ctrl+J',a:()=>onAction('toggleRight')},
       {s:true},
-      {l:'Разделить редактор',h:'Ctrl+\\',a:()=>onAction('splitEditor')},
+      {l:tr('mi_split_editor'),h:'Ctrl+\\',a:()=>onAction('splitEditor')},
       {s:true},
-      {l:'Сменить тему',a:()=>onAction('toggleTheme')}
+      {l:tr('mi_theme'),a:()=>onAction('toggleTheme')}
     ],
     'Перейти':[
-      {l:'Палитра команд',h:'Ctrl+P',a:onPalette},
-      {l:'Структура',a:()=>onAction('outline')}
+      {l:tr('mi_palette'),h:'Ctrl+P',a:onPalette},
+      {l:tr('mi_outline'),a:()=>onAction('outline')}
     ]
   };
+  // Внутренние ключи menus остаются русскими (стабильные id), наружу — перевод
+  const MENU_LABELS={'Файл':tr('menu_file'),'Правка':tr('menu_edit'),'Вид':tr('menu_view'),'Перейти':tr('menu_go'),'Черновик':tr('menu_draft'),'Право':tr('menu_law'),'Справка':tr('menu_help')};
 
   return(
     <div style={{height:48,flexShrink:0,background:'var(--bg-bar)',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',paddingLeft:'var(--s-1h)',paddingRight:'var(--s-2h)',userSelect:'none'}}>
@@ -2499,7 +2511,7 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
         </div>
         {!isMobile && ['Файл','Правка','Вид','Перейти','Черновик','Право','Справка'].map(m=>(
           <div key={m} style={{position:'relative'}}>
-            <button type="button" className="btn" aria-haspopup="menu" aria-expanded={open===m?'true':'false'} onClick={(e)=>{e.stopPropagation();setOpen(open===m?null:m)}} style={{padding:'var(--s-1) var(--s-2h)',borderRadius:'var(--radius-sm)',border:'none',cursor:'pointer',fontSize:'var(--text-sm)',color:'var(--text)',background:hov===m||open===m?'var(--hover)':'transparent',fontFamily:'var(--font-sans)',letterSpacing:'-.005em'}} onMouseEnter={()=>setHov(m)} onMouseLeave={()=>setHov(null)}>{m}</button>
+            <button type="button" className="btn" aria-haspopup="menu" aria-expanded={open===m?'true':'false'} onClick={(e)=>{e.stopPropagation();setOpen(open===m?null:m)}} style={{padding:'var(--s-1) var(--s-2h)',borderRadius:'var(--radius-sm)',border:'none',cursor:'pointer',fontSize:'var(--text-sm)',color:'var(--text)',background:hov===m||open===m?'var(--hover)':'transparent',fontFamily:'var(--font-sans)',letterSpacing:'-.005em'}} onMouseEnter={()=>setHov(m)} onMouseLeave={()=>setHov(null)}>{MENU_LABELS[m]||m}</button>
             {open===m && menus[m] && (
               <div onClick={e=>e.stopPropagation()} style={{position:'absolute',top:'100%',left:0,marginTop:'var(--s-half)',background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-lg)',zIndex:2000,minWidth:190,padding:'var(--s-1h) 0',animation:'fadeInScale .1s ease',fontFamily:'var(--font-sans)'}}>
                 {menus[m].map((it,i)=>it.s?<div key={'s'+i} style={{height:1,background:'var(--border)',margin:'var(--s-1) 0'}}/> : (
@@ -2519,29 +2531,39 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
           <div style={{display:'flex',alignItems:'center',gap:'var(--s-1h)',marginRight:'var(--s-1h)',fontFamily:'var(--font-sans)'}}>
             {unsavedCount === 0 ? (
               <span title="Все вкладки сохранены" style={{display:'inline-flex',alignItems:'center',gap:'var(--s-1)',padding:'var(--s-half) var(--s-2)',borderRadius:'var(--radius-pill)',background:'var(--green-soft)',color:'var(--green-ink, var(--green))',fontSize:'var(--text-xs)',fontWeight:600,letterSpacing:'-.005em'}}>
-                <Glyph type="check" sz={11}/>Сохранено
+                <Glyph type="check" sz={11}/>{tr('pill_saved')}
               </span>
             ) : (
               <span title={`Несохранённых вкладок: ${unsavedCount}`} style={{display:'inline-flex',alignItems:'center',gap:'var(--s-1)',padding:'var(--s-half) var(--s-2)',borderRadius:'var(--radius-pill)',background:'var(--orange-soft)',color:'var(--orange-ink, var(--orange))',fontSize:'var(--text-xs)',fontWeight:600,letterSpacing:'-.005em'}}>
-                <Glyph type="warn" sz={11}/>Несохранено{unsavedCount > 1 ? ` · ${unsavedCount}` : ''}
+                <Glyph type="warn" sz={11}/>{tr('pill_unsaved')}{unsavedCount > 1 ? ` · ${unsavedCount}` : ''}
               </span>
             )}
             {analysing ? (
               <span style={{display:'inline-flex',alignItems:'center',gap:'var(--s-1)',padding:'var(--s-half) var(--s-2)',borderRadius:'var(--radius-pill)',background:'var(--accent-soft)',color:'var(--accent-strong)',fontSize:'var(--text-xs)',fontWeight:600,letterSpacing:'-.005em'}}>
                 <svg width="11" height="11" viewBox="0 0 24 24" style={{animation:'spin 0.9s linear infinite'}}><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeOpacity=".22"/><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/></svg>
-                Анализ…
+                {tr('pill_analyzing')}
               </span>
             ) : (
               <span title="Можно запустить AI-проверку" style={{display:'inline-flex',alignItems:'center',gap:'var(--s-1)',padding:'var(--s-half) var(--s-2)',borderRadius:'var(--radius-pill)',background:'var(--info-soft)',color:'var(--info-ink, var(--info))',fontSize:'var(--text-xs)',fontWeight:600,letterSpacing:'-.005em'}}>
-                <Glyph type="scale" sz={11}/>Готово к анализу
+                <Glyph type="scale" sz={11}/>{tr('pill_ready')}
               </span>
             )}
           </div>
         )}
+        <div role="group" aria-label="Тил / Язык / Language" style={{display:'flex',alignItems:'center',gap:2,padding:2,border:'1px solid var(--border)',borderRadius:8,marginRight:'var(--s-1)'}}>
+          {LANGS.map(l=>(
+            <button key={l} type="button" onClick={()=>setLang(l)} className="btn"
+              style={{padding:'3px 7px',border:'none',borderRadius:6,cursor:'pointer',fontSize:10.5,fontWeight:700,letterSpacing:'.04em',fontFamily:'inherit',background:lang===l?'var(--accent-dim)':'transparent',color:lang===l?'var(--accent)':'var(--muted)',transition:'all .15s'}}
+              onMouseEnter={e=>{if(lang!==l)e.currentTarget.style.color='var(--text)'}}
+              onMouseLeave={e=>{if(lang!==l)e.currentTarget.style.color='var(--muted)'}}>
+              {l.toUpperCase()}
+            </button>
+          ))}
+        </div>
         {!isMobile && <a href="/" className="btn" style={{display:'flex',alignItems:'center',gap:6,padding:'4px 10px',background:'transparent',border:'1px solid var(--border)',borderRadius:'8px',cursor:'pointer',color:'var(--muted)',fontSize:11.5,fontFamily:'inherit',textDecoration:'none'}}
           onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--text)'}}
           onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>
-          <span style={{fontSize:13}}>💬</span><span>В чат</span>
+          <span style={{fontSize:13}}>💬</span><span>{tr('to_chat')}</span>
         </a>}
         {!isMobile && <button onClick={onPalette} className="btn" style={{display:'flex',alignItems:'center',gap:5,padding:'4px 9px',background:'var(--hover)',border:'1px solid var(--border)',borderRadius:'6px',cursor:'pointer',color:'var(--muted)',fontSize:11.5,fontFamily:'inherit'}} onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.color='var(--text)'}} onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.color='var(--muted)'}}>
           <Ico k="cmd" sz={12}/><span>Ctrl+P</span>
@@ -6324,6 +6346,7 @@ const anonymizeText = (t) => {
     .replace(/[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+/g, '[ФИО СКРЫТО]');
 };
 const AIChat=({onToast,onOpenArticle,onCollapse})=>{
+  const {tr} = useI18n();
   const [incognito, setIncognito] = useState(false);
   const [deepModalOpen, setDeepModalOpen] = useState(false);
 
@@ -7511,12 +7534,12 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             <button
               onClick={()=>handleApplyCmd(msgId,idx,cmd)}
               style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'5px 8px',fontSize:11,fontWeight:600,color:'#fff',background:'var(--accent)',border:'none',borderRadius:5,cursor:'pointer'}}>
-              <Ico k="check" sz={11} col="#fff"/> Применить
+              <Ico k="check" sz={11} col="#fff"/> {tr('apply')}
             </button>
             <button
               onClick={()=>handleRejectCmd(msgId,idx)}
               style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'5px 10px',fontSize:11,fontWeight:600,color:'var(--muted)',background:'transparent',border:'1px solid var(--border)',borderRadius:5,cursor:'pointer'}}>
-              Отклонить
+              {tr('reject')}
             </button>
           </div>
         )}
@@ -7837,7 +7860,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             onChange={e=>{setInp(e.target.value);e.target.style.height='auto';e.target.style.height=Math.min(160,e.target.scrollHeight)+'px'}}
             rows={1}
             onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}
-            placeholder={agent ? ((getDocSnapshot() && getDocSnapshot().selection) ? '✨ Улучшить выделенный текст...' : 'Спросить о документе…') : 'Задать юридический вопрос…'}
+            placeholder={agent ? ((getDocSnapshot() && getDocSnapshot().selection) ? tr('ws_ph_selection') : tr('ws_ph_doc')) : tr('ws_ph_legal')}
             style={{flex:1,minHeight:24,maxHeight:140,background:'transparent',border:'none',outline:'none',resize:'none',color:'var(--text-main)',fontSize:'var(--text-base)',fontFamily:'var(--font-sans)',lineHeight:'var(--lh-normal)',padding:'var(--s-1) var(--s-1)',display:'block',overflowY:'auto'}}
           />
           <button
@@ -7931,6 +7954,7 @@ const StatusBar=({dark,tabCount,unsaved,activeName})=>{
 /* ═══ App ═══ */
 let _tabIdCounter=10;
 const App=()=>{
+  const {tr} = useI18n();
   const[dark,setDark]=useState(()=>localStorage.getItem('myz-dk')==='1');
   const[tt,setTt]=useState(false);
   const[leftW,setLeftW]=useState(238);const[rightW,setRightW]=useState(560);const[rightSplit,setRightSplit]=useState(35);
@@ -8411,7 +8435,7 @@ const App=()=>{
                 <button type="button" className="myz-pane-tab" onClick={()=>setNpaCollapsed(false)}
                   title="Развернуть НПА" aria-label="Развернуть НПА">
                   <Ico k="book" sz={12} col="var(--primary)"/>
-                  <span>Просмотр НПА</span>
+                  <span>{tr('pane_npa')}</span>
                   <span className="myz-pane-tab-chev">▾</span>
                 </button>
               )}
@@ -8452,7 +8476,7 @@ const App=()=>{
                 <button type="button" className="myz-pane-tab" onClick={()=>setChatCollapsed(false)}
                   title="Развернуть ИИ-чат" aria-label="Развернуть ИИ-чат">
                   <Ico k="sparkles" sz={12} col="var(--accent)"/>
-                  <span>ИИ Чат</span>
+                  <span>{tr('pane_chat')}</span>
                   <span className="myz-pane-tab-chev">▴</span>
                 </button>
               )}

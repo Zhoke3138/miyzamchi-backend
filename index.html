@@ -12,6 +12,14 @@
     <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.js"></script>
     <!-- DOMPurify: XSS-санитизация HTML после marked.parse (см. safeParseMarkdown в script.js) -->
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+    <style>
+      /* ═══ Переключатель языков KY | RU | EN (эстетика glass из style-ChatMZ) ═══ */
+      .lang-switch { display:inline-flex; align-items:center; gap:2px; padding:3px; border-radius:999px; background:var(--glass-bg); border:1px solid var(--glass-border); }
+      .lang-switch-btn { border:none; background:transparent; color:var(--text-secondary); font-family:inherit; font-size:11px; font-weight:700; letter-spacing:.5px; padding:4px 9px; border-radius:999px; cursor:pointer; transition:all 200ms var(--ease-out); }
+      .lang-switch-btn:hover { color:var(--text-primary); }
+      .lang-switch-btn.active { background:var(--mode-accent, #3366ff); color:#fff; }
+      @media (max-width:768px){ .lang-switch-btn{ padding:4px 7px; font-size:10px; } }
+    </style>
 </head>
 
 <body>
@@ -51,16 +59,16 @@
 
         <div class="sidebar-games">
             <a href="https://miyzamchi-backend.onrender.com/games/swipe/index.html" class="game-link">
-                <i data-lucide="hand" width="16" height="16"></i> <span>Свайп правосудия</span>
+                <i data-lucide="hand" width="16" height="16"></i> <span data-i18n="game_swipe">Свайп правосудия</span>
             </a>
             <a href="https://miyzamchi-backend.onrender.com/games/millionaire/index.html" class="game-link">
-                <i data-lucide="trophy" width="16" height="16"></i> <span>Стать юристом</span>
+                <i data-lucide="trophy" width="16" height="16"></i> <span data-i18n="game_lawyer">Стать юристом</span>
             </a>
         </div>
 
-        <button class="new-chat-btn" id="new-chat-btn"><i data-lucide="plus" width="16" height="16"></i> Новый чат</button>
+        <button class="new-chat-btn" id="new-chat-btn"><i data-lucide="plus" width="16" height="16"></i> <span data-i18n="new_chat">Новый чат</span></button>
         <div class="chat-history">
-            <h3>Недавние дела</h3>
+            <h3 data-i18n="recent_cases">Недавние дела</h3>
             <div class="history-container">
                 <ul id="history-list"></ul>
             </div>
@@ -81,9 +89,14 @@
                 <span class="logo-smile" aria-hidden="true"><img src="/logo/Logo_transparent.png?v=2" alt="Logo"></span>
             </div>
             <div class="header-right">
+                <div class="lang-switch" id="lang-switch" role="group" aria-label="Тил / Язык / Language">
+                    <button class="lang-switch-btn" data-lang="ky" type="button">KY</button>
+                    <button class="lang-switch-btn" data-lang="ru" type="button">RU</button>
+                    <button class="lang-switch-btn" data-lang="en" type="button">EN</button>
+                </div>
                 <a href="/workspace.html" class="icon-btn ide-switch-btn" title="Профессиональная среда — Legal Workspace" aria-label="Open Legal Workspace">
                     <i data-lucide="code" width="16" height="16"></i>
-                    <span class="ide-btn-text">Open Legal Workspace</span>
+                    <span class="ide-btn-text" data-i18n="open_workspace">Open Legal Workspace</span>
                 </a>
                 <button id="theme-toggle" class="icon-btn theme-toggle-btn" title="Сменить тему">
                     <span id="theme-icon"><i data-lucide="moon" width="18" height="18"></i></span>
@@ -96,30 +109,30 @@
                 <div class="welcome-logo">
                     <span class="welcome-tunduk"><i data-lucide="scale" width="40" height="40"></i></span>
                     <h1 class="welcome-title">Мыйзамчы</h1>
-                    <p class="welcome-subtitle">Юридический помощник по законодательству Кыргызстана</p>
-                    <p class="welcome-subtitle">Welcome to Miyzamchi — An AI-powered LegalTech ecosystem and intelligent assistant for the legislation of the Kyrgyz Republic</p>
+                    <p class="welcome-subtitle" data-i18n="chat_subtitle">Юридический помощник по законодательству Кыргызстана</p>
+                    <p class="welcome-subtitle" data-i18n="welcome_tagline">Welcome to Miyzamchi — An AI-powered LegalTech ecosystem and intelligent assistant for the legislation of the Kyrgyz Republic</p>
                     <div class="welcome-hints" aria-label="Как формулировать запрос">
-                        <span class="welcome-hint">Укажите город и ведомство</span>
-                        <span class="welcome-hint">Добавьте дату и сроки</span>
-                        <span class="welcome-hint">Опишите сторону спора</span>
+                        <span class="welcome-hint" data-i18n="hint_city">Укажите город и ведомство</span>
+                        <span class="welcome-hint" data-i18n="hint_date">Добавьте дату и сроки</span>
+                        <span class="welcome-hint" data-i18n="hint_party">Опишите сторону спора</span>
                     </div>
                 </div>
                 <div class="welcome-cards">
-                    <button class="welcome-card" data-prompt="Как подать исковое заявление в суд?">
+                    <button class="welcome-card" data-prompt="Как подать исковое заявление в суд?" data-i18n-prompt="card_court_prompt">
                         <span class="welcome-card-icon"><i data-lucide="scale" width="24" height="24"></i></span>
-                        <span class="welcome-card-text">Как подать иск в суд?</span>
+                        <span class="welcome-card-text" data-i18n="card_court">Как подать иск в суд?</span>
                     </button>
-                    <button class="welcome-card" data-prompt="Какие у меня трудовые права при увольнении?">
+                    <button class="welcome-card" data-prompt="Какие у меня трудовые права при увольнении?" data-i18n-prompt="card_dismissal_prompt">
                         <span class="welcome-card-icon"><i data-lucide="briefcase" width="24" height="24"></i></span>
-                        <span class="welcome-card-text">Мои права при увольнении</span>
+                        <span class="welcome-card-text" data-i18n="card_dismissal">Мои права при увольнении</span>
                     </button>
-                    <button class="welcome-card" data-prompt="Составь жалобу на действия работодателя">
+                    <button class="welcome-card" data-prompt="Составь жалобу на действия работодателя" data-i18n-prompt="card_complaint_prompt">
                         <span class="welcome-card-icon"><i data-lucide="file-text" width="24" height="24"></i></span>
-                        <span class="welcome-card-text">Составить жалобу</span>
+                        <span class="welcome-card-text" data-i18n="card_complaint">Составить жалобу</span>
                     </button>
-                    <button class="welcome-card" data-prompt="Объясни что такое исковая давность простыми словами">
+                    <button class="welcome-card" data-prompt="Объясни что такое исковая давность простыми словами" data-i18n-prompt="card_limitation_prompt">
                         <span class="welcome-card-icon"><i data-lucide="search" width="24" height="24"></i></span>
-                        <span class="welcome-card-text">Что такое исковая давность?</span>
+                        <span class="welcome-card-text" data-i18n="card_limitation">Что такое исковая давность?</span>
                     </button>
                 </div>
             </div>
@@ -129,7 +142,7 @@
             <div class="input-wrapper">
                 <div class="input-box" id="input-box">
                     <div class="attachments-row" id="attachments-row" hidden></div>
-                    <textarea id="user-input" class="chat-input" placeholder="Введите юридический запрос..." rows="1"></textarea>
+                    <textarea id="user-input" class="chat-input" data-i18n-placeholder="input_placeholder" placeholder="Введите юридический запрос..." rows="1"></textarea>
                     <input type="file" id="attach-file-input" multiple accept=".pdf,.docx,.doc,.txt,.md,.rtf,image/*" style="display:none">
                     <div class="input-controls">
                         <div class="input-controls-left">
@@ -190,7 +203,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="input-footer">
+                <div class="input-footer" data-i18n="footer_disclaimer">
                     Мыйзамчы — образовательный инструмент. Перед принятием решений проконсультируйтесь с юристом.
                 </div>
             </div>
@@ -200,6 +213,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://unpkg.com/docx@9.6.1/build/index.js"></script>
     <script src="/script.js"></script>
+    <script type="module" src="/src/i18n-chat.js"></script>
 
     <!-- ═══ Attachments (file upload with text extraction) ═══ -->
     <script>
