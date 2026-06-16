@@ -237,6 +237,10 @@ function renderArticles(articles) {
 
 async function validate({ chunkText, ctx, articles, npa, article }) {
   const ctxBlock = [
+    // Super Doc sticky local context (раздел + активный НПА блока) — первым,
+    // чтобы Checker приоритезировал нужный кодекс и отсекал false-positive из
+    // соседних НПА (Orphan Chunks). Пусто, если контекст не прокинут.
+    ctx?.localContextBlock ? ctx.localContextBlock : '',
     ctx?.header ? `ШАПКА: ${ctx.header}` : '',
     ctx?.relevantTerms?.length ? `ТЕРМИНЫ: ${ctx.relevantTerms.map((t) => `${t.term}=${t.def || ''}`).join('; ')}` : '',
     ctx?.crossRefs?.length ? `ССЫЛКИ: ${ctx.crossRefs.join('; ')}` : '',
