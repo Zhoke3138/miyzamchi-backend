@@ -347,7 +347,10 @@ function groupByNpa(graph) {
   return { groups, blind_spots, confirmed };
 }
 
-async function judge({ graph, effort, onDelta = null }) {
+// model + thinking приходят от роутера analyzeV2 (pickJudgeRoute):
+//   лёгкий док → deepseek-v4-flash / 'low' / thinking 'disabled';
+//   тяжёлый    → deepseek-v4-pro  / 'high'|'max' / thinking 'enabled'.
+async function judge({ graph, effort, model = 'deepseek-v4-pro', thinking = 'enabled', onDelta = null }) {
   const { groups, blind_spots, confirmed } = groupByNpa(graph);
 
   // Совсем пустой граф — без вызова LLM (экономия).
@@ -361,10 +364,10 @@ async function judge({ graph, effort, onDelta = null }) {
   const userPrompt = `СТРУКТУРИРОВАННЫЙ ОТЧЁТ (errors сгруппированы по НПА, плюс blind_spots и confirmed):\n${JSON.stringify({ groups, blind_spots, confirmed }, null, 2)}\n\nСформируй финальный отчёт по формату: ошибки по НПА, ручная проверка, и секция подтверждённых норм.`;
 
   try {
-    const { text, model } = await clients.deepseekReason({
-      systemPrompt: JUDGE_SYS, userPrompt, reasoning_effort: effort, onDelta,
+    const { text, model: usedModel } = await clients.deepseekReason({
+      systemPrompt: JUDGE_SYS, userPrompt, reasoning_effort: effort, model, thinking, onDelta,
     });
-    return { summary: text, model, groups, blind_spots, confirmed };
+    return { summary: text, model: usedModel, groups, blind_spots, confirmed };
   } catch (err) {
     return { summary: `Не удалось сформировать итог: ${err.message}`, model: 'error', groups, blind_spots, confirmed };
   }

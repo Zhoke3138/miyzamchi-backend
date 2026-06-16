@@ -129,8 +129,25 @@ const _deepseek = DEEPSEEK_ENABLED
 //   onDelta({ reasoning }) — чанк цепочки рассуждений;
 //   onDelta({ text })      — чанк основного ответа.
 // Без onDelta поведение прежнее: ждём всё и возвращаем { text, model }.
-async function deepseekReason({ systemPrompt, userPrompt, reasoning_effort = 'high', onDelta = null }) {
-  const effort = reasoning_effort === 'max' ? 'max' : 'high';   // допустимы только high|max
+// 2026-06-16 ДИНАМИЧЕСКИЙ СУДЬЯ: model + thinking теперь параметры (роутер
+// в analyzeV2 выбирает их по тяжести документа):
+//   • лёгкий документ → deepseek-v4-flash, effort 'low', thinking 'disabled'
+//     (быстро, мгновенный стрим, без CoT);
+//   • тяжёлый → deepseek-v4-pro, effort 'high'→'max', thinking 'enabled'.
+// Ограничения API: v4-pro принимает только high|max; v4-flash — low|medium|high.
+async function deepseekReason({
+  systemPrompt, userPrompt,
+  reasoning_effort = 'high',
+  model = 'deepseek-v4-pro',
+  thinking = 'enabled',
+  onDelta = null,
+}) {
+  const isPro = /pro/i.test(model);
+  // effort клампится под возможности модели.
+  const effort = isPro
+    ? (reasoning_effort === 'max' ? 'max' : 'high')
+    : (['low', 'medium', 'high'].includes(reasoning_effort) ? reasoning_effort : 'low');
+  const thinkingType = thinking === 'disabled' ? 'disabled' : 'enabled';
   const emit = (d) => { if (onDelta) { try { onDelta(d); } catch (_) {} } };
 
   if (!_deepseek) {
@@ -144,10 +161,10 @@ async function deepseekReason({ systemPrompt, userPrompt, reasoning_effort = 'hi
   }
 
   const stream = await _deepseek.chat.completions.create({
-    model: 'deepseek-v4-pro',
+    model,
     reasoning_effort: effort,
     max_tokens: 32000,
-    thinking: { type: 'enabled' },   // Node-эквивалент Python extra_body
+    thinking: { type: thinkingType },   // Node-эквивалент Python extra_body
     stream: true,
     messages: [
       { role: 'system', content: systemPrompt },
@@ -169,9 +186,9 @@ async function deepseekReason({ systemPrompt, userPrompt, reasoning_effort = 'hi
     }
   }
   if (reasoning) {
-    console.log(`[DeepSeek DEBUG] reasoning_content: ${reasoning.length}ch (streamed) | head: ${reasoning.slice(0, 300)}`);
+    console.log(`[DeepSeek DEBUG] ${model} reasoning_content: ${reasoning.length}ch (streamed)`);
   }
-  return { text, model: 'deepseek-v4-pro', reasoning };
+  return { text, model, reasoning };
 }
 
 module.exports = {

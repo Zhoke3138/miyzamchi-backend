@@ -261,6 +261,24 @@ function pickReasoningEffort({ errorCount = 0, blindSpotCount = 0, distinctNpaCo
   return 'high';
 }
 
+// ── 2026-06-16 Динамический роутер Судьи (по идее пользователя) ─────────────
+// Лёгкий документ (мало замечаний, ≤1 НПА, небольшой объём) → СТАНДАРТНЫЙ
+// судья DeepSeek v4-flash, минимальное рассуждение ('low'), thinking ВЫКЛ —
+// быстро и без CoT-задержки. Тяжёлый → ВЕРХОВНЫЙ судья v4-pro, рассуждение
+// от минимума ('high') к максимуму ('max'), thinking ВКЛ.
+//   model: 'deepseek-v4-flash' | 'deepseek-v4-pro'
+//   reasoning_effort: 'low' (flash) | 'high'|'max' (pro)
+//   thinking: 'disabled' (flash) | 'enabled' (pro)
+function pickJudgeRoute({ errorCount = 0, blindSpotCount = 0, distinctNpaCount = 0, totalBlocks = 0 }) {
+  const issues = errorCount + blindSpotCount;
+  const light = issues <= 2 && distinctNpaCount <= 1 && totalBlocks <= 25;
+  if (light) {
+    return { tier: 'standard', model: 'deepseek-v4-flash', reasoning_effort: 'low', thinking: 'disabled', name: 'DeepSeek v4 Flash' };
+  }
+  const severe = issues > 3 || distinctNpaCount > 2 || totalBlocks > 60;
+  return { tier: 'supreme', model: 'deepseek-v4-pro', reasoning_effort: severe ? 'max' : 'high', thinking: 'enabled', name: 'DeepSeek v4 Pro' };
+}
+
 /** Метрики: confidenceScore = 1 - Слепые/N; purityIndex = 1 - Ошибки/N. */
 function computeMetrics(graph, N) {
   const blind = graph.filter((g) => g.blind_spot).length;
@@ -430,13 +448,17 @@ function createAnalyzeV2Router(deps = {}) {
       const distinctNpaCount = new Set(
         graph.filter((g) => g.status === 'error' && g.npa).map((g) => normalizeNpaName(g.npa)),
       ).size;
-      const effort = pickReasoningEffort({ errorCount, blindSpotCount, distinctNpaCount });
+      // Динамическая развилка: лёгкий док → Flash/low, тяжёлый → Pro/high-max.
+      const route = pickJudgeRoute({ errorCount, blindSpotCount, distinctNpaCount, totalBlocks: state.N });
+      console.log(`[V2 Judge] route=${route.tier} | model=${route.model} | effort=${route.reasoning_effort} | thinking=${route.thinking} | issues=${errorCount + blindSpotCount} npa=${distinctNpaCount} blocks=${state.N}`);
 
       // purityIndex: доля пунктов без ошибок цитирования, 0-100.
       const purityIndex = state.N ? Math.round(((state.N - errorCount) / state.N) * 100) : 100;
       sse({ purityIndex });
+      // Имя сработавшего судьи на фронт (машиночитаемое; неизвестный ключ фронт игнорит).
+      sse({ judge: { name: route.name, model: route.model, effort: route.reasoning_effort, tier: route.tier } });
 
-      step({ id: 'judge', status: 'loading', text: `🧠 Финальный судья (DeepSeek-v4-pro, effort=${effort})` });
+      step({ id: 'judge', status: 'loading', text: `🧠 Финальный судья: ${route.name} (effort=${route.reasoning_effort})` });
 
       // ── 2026-06-16 FIX: НЕ стримим reasoning_content в UI ──
       // Раньше цепочку мыслей слали в тегах <think>…</think> в расчёте на
@@ -453,7 +475,7 @@ function createAnalyzeV2Router(deps = {}) {
         if (d.text) { sawContent = true; sse({ text: d.text }); }
         // d.reasoning НЕ выводим в UI — это служебная цепочка мыслей.
       };
-      const report = (await resolvedDeps.judge?.({ graph, effort, state, onDelta: onJudgeDelta })) || { summary: '', risks: graph };
+      const report = (await resolvedDeps.judge?.({ graph, effort: route.reasoning_effort, model: route.model, thinking: route.thinking, state, onDelta: onJudgeDelta })) || { summary: '', risks: graph };
       step({ id: 'judge', status: 'success', text: 'Итоговый отчёт готов' });
 
       // Текст судьи (markdown, 2 секции). Если content уже ушёл дельтами выше —
@@ -492,7 +514,7 @@ module.exports = {
   // экспорт чистых функций для smoke-тестов
   _internals: {
     buildInjectedContext, twoStagePineconeFilter,
-    pickReasoningEffort, computeMetrics,
+    pickReasoningEffort, pickJudgeRoute, computeMetrics,
     toStepStatus, verdictToRow,
   },
 };
