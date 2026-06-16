@@ -438,28 +438,22 @@ function createAnalyzeV2Router(deps = {}) {
 
       step({ id: 'judge', status: 'loading', text: `🧠 Финальный судья (DeepSeek-v4-pro, effort=${effort})` });
 
-      // ── 2026-06-12 LIVE-СТРИМ СУДЬИ ──
-      // deepseekReason теперь стримит дельты: сначала reasoning_content
-      // (цепочка мыслей), затем content (итоговый отчёт). Reasoning оборачиваем
-      // в стандартные теги <think>…</think> — Lobe Chat и совместимые UI рендерят
-      // их как аккордеон Chain of Thought. Пользователь видит буквы с первой
-      // секунды, а не пустой экран до конца раздумий.
-      let thinkOpen = false;   // тег <think> открыт
+      // ── 2026-06-16 FIX: НЕ стримим reasoning_content в UI ──
+      // Раньше цепочку мыслей слали в тегах <think>…</think> в расчёте на
+      // Lobe Chat (аккордеон Chain of Thought). Но наш фронт (ChatMZ /
+      // React-воркспейс) теги <think> не понимает и рендерит их содержимое как
+      // обычный текст → весь внутренний монолог Судьи («We need to produce a
+      // final report…») вываливался юристу вместо чистого отчёта.
+      // Теперь стримим ТОЛЬКО итоговый content (живой токен-за-токеном),
+      // reasoning игнорируем в UI (он пишется в server-лог внутри deepseekReason).
+      // На время раздумий виден loading-шаг «🧠 Финальный судья…».
       let sawContent = false;  // пошёл основной текст (его дубль ниже не шлём)
       const onJudgeDelta = (d) => {
         if (!d) return;
-        if (d.reasoning) {
-          if (!thinkOpen && !sawContent) { sse({ text: '<think>\n' }); thinkOpen = true; }
-          if (thinkOpen) sse({ text: d.reasoning });
-        }
-        if (d.text) {
-          if (thinkOpen) { sse({ text: '\n</think>\n\n' }); thinkOpen = false; }
-          sawContent = true;
-          sse({ text: d.text });
-        }
+        if (d.text) { sawContent = true; sse({ text: d.text }); }
+        // d.reasoning НЕ выводим в UI — это служебная цепочка мыслей.
       };
       const report = (await resolvedDeps.judge?.({ graph, effort, state, onDelta: onJudgeDelta })) || { summary: '', risks: graph };
-      if (thinkOpen) { sse({ text: '\n</think>\n\n' }); thinkOpen = false; }
       step({ id: 'judge', status: 'success', text: 'Итоговый отчёт готов' });
 
       // Текст судьи (markdown, 2 секции). Если content уже ушёл дельтами выше —
