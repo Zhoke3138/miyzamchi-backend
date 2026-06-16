@@ -24,6 +24,7 @@ const { normalizeNpaName } = require('../lib/npaAliases');
 const { createHybridSegmenter } = require('../lib/hybridSegmenter');
 const { createLightLLMCascade } = require('../lib/llmCascade');
 const { buildChunkContexts, buildLocalContextBlock } = require('../lib/localContext');
+const { buildSuperDocBlocks } = require('../lib/superDocBlocks');
 const clients = require('../services/llmClients');
 
 // Загрузка во ВРЕМЕННЫЙ файл с уникальным именем (ZDR-friendly: parserService удалит).
@@ -52,15 +53,18 @@ function makeUpload(multer) {
 //     quality-gate'ом ТОЛЬКО на проблемных зонах (GIANT/TOO_MANY_SMALL/...).
 // На выходе — string[] (raw текст, lossless) + параллельный chunkContexts[]
 // (sticky «раздел + активный НПА» на каждый блок) против Orphan Chunks в RAG.
-let _hybridSegmenter = null;
-function getHybridSegmenter() {
-  if (_hybridSegmenter) return _hybridSegmenter;
-  let cascade = null;
+// Общий Flash-Lite каскад: один на нарезку (Layer B) И на block-classifier
+// (Шаг 2). Ленивый синглтон, чтобы не пересобирать на каждый запрос.
+let _cascade = null;
+let _cascadeBuilt = false;
+function getCascade() {
+  if (_cascadeBuilt) return _cascade;
+  _cascadeBuilt = true;
   try {
     const deepseekKey = process.env.DEEPSEEK_API_KEY;
     // Tier 3 (DeepSeek) — крайний фолбэк каскада; конструктор требует функцию
-    // даже если DeepSeek выключен. Для нарезки почти всегда хватает Tier 1
-    // (Flash-Lite). Node 18+ имеет глобальный fetch (как в llmClients.js).
+    // даже если DeepSeek выключен. Почти всегда хватает Tier 1 (Flash-Lite).
+    // Node 18+ имеет глобальный fetch (как в llmClients.js).
     const deepseekJsonCall = deepseekKey
       ? async ({ systemPrompt, userPrompt, model }) => {
           const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -78,18 +82,24 @@ function getHybridSegmenter() {
           return data?.choices?.[0]?.message?.content || '';
         }
       : async () => { throw new Error('DEEPSEEK_API_KEY not set'); };
-    cascade = createLightLLMCascade({
+    _cascade = createLightLLMCascade({
       getNextKey: clients.getNextKey,
       deepseekJsonCall,
       deepseekEnabled: !!deepseekKey,
       logger: console,
     });
   } catch (e) {
-    // Каскад не собрался → Layer A работает и без него (graceful degradation).
-    console.warn('[SuperDoc] cascade init failed, Layer A only:', e.message);
-    cascade = null;
+    // Каскад не собрался → Layer A и эвристический классификатор работают без него.
+    console.warn('[SuperDoc] cascade init failed, degraded mode:', e.message);
+    _cascade = null;
   }
-  _hybridSegmenter = createHybridSegmenter({ cascade, logger: console, layerBEnabled: true });
+  return _cascade;
+}
+
+let _hybridSegmenter = null;
+function getHybridSegmenter() {
+  if (_hybridSegmenter) return _hybridSegmenter;
+  _hybridSegmenter = createHybridSegmenter({ cascade: getCascade(), logger: console, layerBEnabled: true });
   return _hybridSegmenter;
 }
 
@@ -153,7 +163,7 @@ function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
  *
  * Вердикт-словарь: 'correct' (✅) | 'error' (🔴) | 'unverified' (⚠️ Слепая зона).
  */
-async function validateChunk(chunkText, index, state, deps, localCtx = null) {
+async function validateChunk(chunkText, index, state, deps, meta = null) {
   // ── ФАЗА 2.0 — TRIAGE (Backend Pivot Этап 3) ──
   // Технические фрагменты (шапка, дата, реквизиты, опечатки) НЕ дёргают
   // Pinecone/RAG — уходят к лёгкому spell-checker'у. Экономия векторных
@@ -174,17 +184,25 @@ async function validateChunk(chunkText, index, state, deps, localCtx = null) {
   // Super Doc: sticky local context (текущий раздел + активный НПА) от
   // hybridSegmenter. Прокидываем блок в Агента-валидатора — он приоритезирует
   // статьи нужного кодекса и режет false-positive из соседних НПА.
-  if (localCtx) ctx.localContextBlock = buildLocalContextBlock(localCtx);
+  if (meta) ctx.localContextBlock = buildLocalContextBlock(meta);
 
-  // Agent 1: НПА + статья + синонимы.
-  const ex = (await deps.expandQuery?.(chunkText)) || { npa: null, article: null, queries: [chunkText] };
+  // Шаг 3 — семантический lead-in: если блок помечен continues_prev, агент
+  // получает последнее предложение предыдущего блока как КОНТЕКСТ. Кладём в
+  // agentText (для expandQuery + Агента-валидатора). raw chunkText для
+  // triage/отображения/вердикта НЕ трогаем — lossless и чистый display.
+  const leadIn = (meta && meta.leadIn) ? String(meta.leadIn) : '';
+  const agentText = leadIn ? `[Контекст предыдущего блока: ${leadIn}]\n${chunkText}` : chunkText;
+
+  // Agent 1: НПА + статья + синонимы (по обогащённому тексту — lead-in помогает
+  // распознать кодекс в блоке-продолжении).
+  const ex = (await deps.expandQuery?.(agentText)) || { npa: null, article: null, queries: [chunkText] };
   const queries = (Array.isArray(ex.queries) && ex.queries.length) ? ex.queries : [chunkText];
 
   // Привязка к НПА для поиска: если Агент-1 не распознал НПА в «голом» блоке
   // (Orphan Chunk — кодекс остался в предыдущем блоке), берём sticky-НПА из
   // контекста раздела. Только для retrieval-фильтра Pinecone — в отображаемый
   // вердикт sticky-НПА НЕ тащим (показываем лишь то, что блок реально цитирует).
-  const searchNpa = ex.npa || (localCtx && localCtx.npa) || null;
+  const searchNpa = ex.npa || (meta && meta.npa) || null;
 
   // Поиск с привязкой к НПА (фильтр внутри pineconeSearch) + двухступенчатый score-фильтр.
   const hits = (await deps.pineconeSearch?.(queries, searchNpa)) || [];
@@ -198,8 +216,8 @@ async function validateChunk(chunkText, index, state, deps, localCtx = null) {
     // Ни ссылки, ни эталона — проверять нечего.
     v = { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
   } else {
-    // Agent 2: нормоконтроль по эталону.
-    v = (await deps.validate?.({ chunkText, ctx, articles, npa: ex.npa, article: ex.article })) ||
+    // Agent 2: нормоконтроль по эталону (получает agentText с lead-in).
+    v = (await deps.validate?.({ chunkText: agentText, ctx, articles, npa: ex.npa, article: ex.article })) ||
         { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
   }
 
@@ -363,6 +381,24 @@ function createAnalyzeV2Router(deps = {}) {
         console.log(`[SuperDoc] segment: ${chunks.length} блоков | layers=${(seg.layers || ['A']).join('+')}` +
           (seg.layerB && seg.layerB.called ? ` | LayerB success=${seg.layerB.success} fallback=${seg.layerB.fallback}` : ''));
       }
+      // ── Шаги 2+3: типизация блоков (Flash-Lite) + атомарные таблицы +
+      //    семантический lead-in. Дробление таблиц может изменить число блоков,
+      //    поэтому пересобираем chunks ПЕРЕД buildGlobalState. blockMeta[i]
+      //    параллелен новому chunks[i]: { section, npa, type, continues_prev, leadIn }.
+      const sdBlocks = await buildSuperDocBlocks(chunks, chunkContexts, { cascade: getCascade(), logger: console });
+      chunks = sdBlocks.map((b) => b.text);
+      const blockMeta = sdBlocks.map((b) => ({
+        section: b.context ? b.context.section : null,
+        npa: b.context ? b.context.npa : null,
+        type: b.type,
+        continues_prev: b.continues_prev,
+        leadIn: b.leadIn || null,
+        tablePart: b.tablePart || null,
+      }));
+      const typeCounts = sdBlocks.reduce((acc, b) => { acc[b.type] = (acc[b.type] || 0) + 1; return acc; }, {});
+      const leadInCount = blockMeta.filter((m) => m.leadIn).length;
+      console.log(`[SuperDoc] blocks: ${sdBlocks.length} | types=${JSON.stringify(typeCounts)} | lead-in=${leadInCount}`);
+
       const state = await buildGlobalState(markdown, chunks, structure_confidence, resolvedDeps);
       step({ id: 'segment', status: 'success', text: `Блоков: ${state.N} (${segInfo})` });
 
@@ -371,8 +407,8 @@ function createAnalyzeV2Router(deps = {}) {
       const settled = await runInWaves(
         chunks,
         async (chunkText, idx) => {
-          // Super Doc: каждому блоку — его sticky local context (раздел + НПА).
-          const v = await validateChunk(chunkText, idx, state, resolvedDeps, chunkContexts[idx] || null);
+          // Super Doc: каждому блоку — sticky-контекст + тип + lead-in.
+          const v = await validateChunk(chunkText, idx, state, resolvedDeps, blockMeta[idx] || null);
           // fastest-first: строка таблицы и шаг уходят сразу, не дожидаясь волны.
           step({
             id: `seg_${idx}`,
