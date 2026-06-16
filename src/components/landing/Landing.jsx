@@ -80,9 +80,9 @@ export default function Landing() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          className="mb-7 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs font-semibold text-white/75 backdrop-blur-md sm:text-sm"
+          className="mb-4 inline-flex items-center gap-2.5 rounded-full border border-white/20 bg-white/10 px-6 py-2 text-base font-extrabold text-white/95 backdrop-blur-md sm:text-lg shadow-[0_0_15px_rgba(255,255,255,0.1)]"
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.6)]" />
+          <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_3px_rgba(52,211,153,0.8)]" />
           {tr('lp_badge')}
         </motion.div>
 
@@ -97,7 +97,7 @@ export default function Landing() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.85 }}
-          className="mx-auto mt-8 max-w-2xl text-lg font-medium leading-relaxed text-white/70 sm:text-xl"
+          className="mx-auto mt-4 max-w-2xl text-lg font-medium leading-relaxed text-white/70 sm:text-xl"
         >
           {tr('lp_subtitle')}
         </motion.p>
