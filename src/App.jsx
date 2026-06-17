@@ -1343,10 +1343,28 @@ const CreateDocMode = ({ onToast }) => {
   const generate = async () => {
     if (genBusy) return; setGenBusy(true);
     try {
-      // Фаза 2B (планировщик→RAG→драфтер) — следующий шаг. Пока показываем
-      // тест-документ движка, чтобы было видно финал флоу.
-      onToast && onToast('law', 'Генерация по досье — Фаза 2B. Показываю пример движка.');
-      await renderLegalDocument(ISK_TEST_BLOCKS, { onToast, name: 'Исковое заявление.docx' });
+      // Фаза 2B: мультиагентная генерация по собранному досье
+      // (планировщик → RAG по кодексам → драфтер v4-pro → DocBlock[]).
+      onToast && onToast('law', 'Генерирую документ по досье…');
+      const payloadMsgs = messages.filter(m => !(m.role === 'assistant' && /не до конца понял|не смог разобрать|Не удалось связаться/i.test(m.text)));
+      const res = await fetch(`${_ensureBackend()}/api/v2/draft-document`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docType, messages: payloadMsgs }),
+      });
+      if (!res.ok) {
+        let msg = 'HTTP ' + res.status;
+        try { const e = await res.json(); if (e && e.error) msg = e.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      const data = await res.json();
+      if (!data || !Array.isArray(data.blocks) || !data.blocks.length) {
+        throw new Error('Пустой документ от генератора');
+      }
+      const tplLabel = (DOC_TYPES.find(d => d.k === docType) || {}).label || 'Документ';
+      await renderLegalDocument(data.blocks, { onToast, name: `${tplLabel}.docx` });
+    } catch (e) {
+      console.error('[draft-document]', e);
+      onToast && onToast('warning', 'Ошибка генерации: ' + ((e && e.message) || e));
     } finally { setGenBusy(false); }
   };
 

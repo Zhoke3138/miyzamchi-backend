@@ -584,6 +584,195 @@ ${checklist}
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ФАЗА 2B — ГЕНЕРАЦИЯ ДОКУМЕНТА (режим «Документы → Создать»)
+  //  /api/v2/draft-document — мультиагентный конвейер (зеркало проверки):
+  //    1) Планировщик (Gemini flash-lite) — из диалога вытягивает структурную
+  //       фактуру + формулирует RAG-запросы по применимым кодексам.
+  //    2) Ищейки/RAG (Pinecone) — тянут эталонные статьи (full_text) для
+  //       заземления цитат: драфтер цитирует ТОЛЬКО реальные нормы из базы.
+  //    3) Драфтер (DeepSeek v4-pro, reasoning) — собирает документ в формате
+  //       DocBlock[] (тот же, что рисует renderLegalDocument на фронте).
+  //  Возвращает JSON { blocks[], articlesUsed[], route }.
+  // ═══════════════════════════════════════════════════════════════════════
+  const PLANNER_SYS = (tpl) => `Ты — Планировщик юридического ИИ «Мыйзамчы» (Кыргызстан).
+По собранному диалогу подготовь план составления документа «${tpl.label}».
+
+Применимые кодексы/НПА (ориентир): ${(tpl.codesHint || []).join('; ')}.
+
+Верни СТРОГО JSON без markdown:
+{
+  "facts": {
+    ${(tpl.requiredFields || []).concat(tpl.optionalFields || []).map((f) => `"${f.key}": "<${f.title}: что известно из диалога, дословно факты; '' если не сказано>"`).join(',\n    ')}
+  },
+  "subject_line": "<краткая формулировка предмета для подзаголовка, напр. 'о признании договора недействительным'>",
+  "rag_queries": ["<3-6 точных юридических запросов к базе НПА КР по сути спора — называй институты и нормы, напр. 'недействительность сделки кабальные условия Гражданский кодекс КР', 'признание договора купли-продажи недействительным основания'>"]
+}
+
+ПРАВИЛА: бери только то, что реально сказано в диалоге; НЕ выдумывай имена/суммы/даты/адреса (если нет — ставь ''). rag_queries формулируй по предмету спора, чтобы найти материальные и процессуальные нормы.`;
+
+  const DRAFTER_SYS = (tpl) => `Ты — старший юрист Кыргызской Республики. Составь юридически грамотный документ «${tpl.label}» и верни его СТРОГО как JSON-массив блоков (DocBlock[]) — без markdown, без пояснений.
+
+ФОРМАТ БЛОКА:
+{ "kind": "<тип>", "align": "left|center|right|justify (необязательно)", "runs": [ { "t": "текст", "bold": true?, "italic": true?, "underline": true?, "cite": "<НПА ст.N, если это ссылка на норму>" } ] }
+
+ТИПЫ БЛОКОВ (kind) и их назначение:
+- court           — наименование суда (шапка, справа)
+- party_header    — стороны: Истец/Ответчик с адресами и реквизитами (справа), по одной строке на блок
+- spacer          — пустой отступ (runs: [])
+- title           — НАЗВАНИЕ документа заглавными, по центру, bold (напр. «ИСКОВОЕ ЗАЯВЛЕНИЕ»)
+- subtitle        — подзаголовок «о …», по центру
+- paragraph       — абзац фабулы/правового обоснования (по ширине). Ссылки на статьи — отдельным run с italic:true и cite
+- demand_heading  — «Прошу:» (bold, underline)
+- demand_item     — нумерованный пункт требований (по одному на блок: «1. …», «2. …»)
+- attachment_heading — «Приложение:» (bold)
+- attachment_item — нумерованный пункт перечня приложений
+- signature       — строка подписи (справа)
+
+ПОРЯДОК СЕКЦИЙ:
+${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
+
+ЖЕЛЕЗНЫЕ ПРАВИЛА:
+1. Цитируй ТОЛЬКО статьи из приведённого ЭТАЛОННОГО списка норм (RAG). Не придумывай номера статей по памяти. Если подходящей нормы в эталоне нет — пиши фабулу без ссылки.
+2. Каждую ссылку на норму оформляй ОТДЕЛЬНЫМ run: italic:true и cite:"<НПА ст.N>". Окружающий текст — обычными run. Следи за пробелами между run (》«Согласно » + «статье 487…»《).
+3. НЕ выдумывай факты (имена, суммы, даты, адреса, ИНН). Используй ТОЛЬКО данные из досье. Если обязательная деталь отсутствует — оставь заполняемое место «____________».
+4. Обязательно сформулируй процессуальное основание («Руководствуясь ст. … ГПК КР, прошу:») перед блоком demand_heading, если это иск.
+5. Раздели стороны и смысловые секции блоками spacer.
+6. Верни ТОЛЬКО JSON-массив блоков. Первый символ ответа — «[», последний — «]».`;
+
+  router.post('/draft-document', async (req, res) => {
+    try {
+      const docType = String((req.body && req.body.docType) || 'isk');
+      const messages = Array.isArray(req.body && req.body.messages) ? req.body.messages : [];
+      const tpl = getTemplate(docType);
+      if (!tpl) return res.status(400).json({ error: `Неизвестный тип документа: ${docType}` });
+      if (!messages.length) return res.status(400).json({ error: 'Пустой диалог' });
+
+      const convo = messages.map((m) => {
+        const role = m && m.role === 'assistant' ? 'ИНТЕРВЬЮЕР' : 'ПОЛЬЗОВАТЕЛЬ';
+        return `${role}: ${String((m && m.text) || '').slice(0, 4000)}`;
+      }).join('\n\n');
+
+      // ── 1) ПЛАНИРОВЩИК ──
+      let plan = { facts: {}, subject_line: '', rag_queries: [] };
+      try {
+        const rawPlan = await clients.geminiJson({
+          systemPrompt: PLANNER_SYS(tpl),
+          userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON-план.`,
+          model: 'gemini-3.1-flash-lite',
+          maxOutputTokens: 2048,
+          timeoutMs: 25000,
+        });
+        const c = String(rawPlan || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+        const a = c.indexOf('{'), b = c.lastIndexOf('}');
+        if (a !== -1 && b > a) plan = JSON.parse(c.slice(a, b + 1));
+      } catch (e) {
+        console.warn('[draft-document] planner failed, degraded:', e.message);
+      }
+      const ragQueries = (Array.isArray(plan.rag_queries) && plan.rag_queries.length)
+        ? plan.rag_queries.slice(0, 6)
+        : [tpl.label + ' ' + (plan.subject_line || '')];
+
+      // ── 2) RAG: тянем эталонные статьи (заземление цитат) ──
+      let articlesUsed = [];
+      try {
+        const hits = (await resolvedDeps.pineconeSearch?.(ragQueries, null, 8)) || [];
+        const seen = new Set();
+        for (const h of hits) {
+          const md = (h && h.metadata) || {};
+          const key = `${md.npa_title}|${md.article_title}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          articlesUsed.push({
+            npa_title: md.npa_title || '',
+            article_title: md.article_title || '',
+            full_text: String(md.full_text || '').slice(0, 1600),
+            score: h.score,
+          });
+          if (articlesUsed.length >= 10) break;
+        }
+      } catch (e) {
+        console.warn('[draft-document] RAG failed, degraded (no citations):', e.message);
+      }
+      const refBlock = articlesUsed.length
+        ? articlesUsed.map((a, i) => `[${i + 1}] ${[a.npa_title, a.article_title].filter(Boolean).join(' — ')}\n${a.full_text}`).join('\n\n')
+        : '(эталонных норм в базе не найдено — составляй без точных ссылок на статьи)';
+
+      // ── 3) ДРАФТЕР (DeepSeek v4-pro, reasoning) ──
+      const drafterUser = [
+        `ТИП ДОКУМЕНТА: ${tpl.label}`,
+        `ПРЕДМЕТ: ${plan.subject_line || ''}`,
+        '',
+        'ДОСЬЕ (факты от пользователя — используй ТОЛЬКО их, ничего не выдумывай):',
+        JSON.stringify(plan.facts || {}, null, 2),
+        '',
+        'ИСХОДНЫЙ ДИАЛОГ (для нюансов):',
+        convo,
+        '',
+        'ЭТАЛОННЫЕ НОРМЫ ИЗ БАЗЫ НПА КР (цитируй ТОЛЬКО отсюда):',
+        refBlock,
+        '',
+        'Составь документ и верни JSON-массив блоков (DocBlock[]).',
+      ].join('\n');
+
+      const { text: draftText, model: usedModel } = await clients.deepseekReason({
+        systemPrompt: DRAFTER_SYS(tpl),
+        userPrompt: drafterUser,
+        model: 'deepseek-v4-pro',
+        reasoning_effort: 'high',
+        thinking: 'enabled',
+      });
+
+      // Парсим массив блоков (срезаем обёртки, поддерживаем {blocks:[...]} и [...]).
+      let blocks = null;
+      const cleaned = String(draftText || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+      const tryParse = (s) => { try { return JSON.parse(s); } catch (_) { return null; } };
+      let parsed = tryParse(cleaned);
+      if (!parsed) {
+        const la = cleaned.indexOf('['), lb = cleaned.lastIndexOf(']');
+        if (la !== -1 && lb > la) parsed = tryParse(cleaned.slice(la, lb + 1));
+      }
+      if (!parsed) {
+        const oa = cleaned.indexOf('{'), ob = cleaned.lastIndexOf('}');
+        if (oa !== -1 && ob > oa) parsed = tryParse(cleaned.slice(oa, ob + 1));
+      }
+      if (Array.isArray(parsed)) blocks = parsed;
+      else if (parsed && Array.isArray(parsed.blocks)) blocks = parsed.blocks;
+
+      if (!Array.isArray(blocks) || !blocks.length) {
+        console.warn(`[draft-document] unparseable drafter output (len=${String(draftText || '').length}): ${String(draftText || '').slice(0, 200)}`);
+        return res.status(502).json({ error: 'Драфтер вернул некорректный формат. Попробуйте ещё раз.' });
+      }
+
+      // Лёгкая нормализация блоков (защита фронт-рендера от мусора).
+      const safeBlocks = blocks
+        .filter((b) => b && typeof b === 'object')
+        .map((b) => ({
+          kind: String(b.kind || 'paragraph'),
+          ...(b.align ? { align: String(b.align) } : {}),
+          runs: Array.isArray(b.runs)
+            ? b.runs.filter((r) => r && typeof r === 'object').map((r) => ({
+                t: String(r.t == null ? '' : r.t),
+                ...(r.bold ? { bold: true } : {}),
+                ...(r.italic ? { italic: true } : {}),
+                ...(r.underline ? { underline: true } : {}),
+                ...(r.cite ? { cite: String(r.cite) } : {}),
+              }))
+            : [],
+        }));
+
+      console.log(`[draft-document] ${docType} → ${safeBlocks.length} блоков | RAG=${articlesUsed.length} статей | model=${usedModel}`);
+      return res.json({
+        blocks: safeBlocks,
+        articlesUsed: articlesUsed.map((a) => [a.npa_title, a.article_title].filter(Boolean).join(' — ')),
+        route: { planner: 'gemini-3.1-flash-lite', drafter: usedModel },
+      });
+    } catch (err) {
+      console.error('[draft-document] error:', err.message);
+      return res.status(500).json({ error: 'Сбой генерации: ' + err.message });
+    }
+  });
+
   return router;
 }
 
