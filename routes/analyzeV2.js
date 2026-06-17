@@ -586,19 +586,33 @@ ${checklist}
 
   // ═══════════════════════════════════════════════════════════════════════
   //  ФАЗА 2B — ГЕНЕРАЦИЯ ДОКУМЕНТА (режим «Документы → Создать»)
-  //  /api/v2/draft-document — мультиагентный конвейер (зеркало проверки):
-  //    1) Планировщик (Gemini flash-lite) — из диалога вытягивает структурную
-  //       фактуру + формулирует RAG-запросы по применимым кодексам.
-  //    2) Ищейки/RAG (Pinecone) — тянут эталонные статьи (full_text) для
-  //       заземления цитат: драфтер цитирует ТОЛЬКО реальные нормы из базы.
-  //    3) Драфтер (DeepSeek v4-pro, reasoning) — собирает документ в формате
-  //       DocBlock[] (тот же, что рисует renderLegalDocument на фронте).
-  //  Возвращает JSON { blocks[], articlesUsed[], route }.
+  //  /api/v2/draft-document — мультиагентная research-коллегия (SSE-стрим):
+  //    1) Планировщик-исследователь (flash-lite) — фактура + ЧЕТЫРЕ группы
+  //       поисковых запросов: точные / связанные / общие / процессуальные.
+  //    2) Ищейки/RAG (Pinecone, параллельно по группам) — широкий охват:
+  //       тянут кандидатов из всех релевантных кодексов, дедуп по статье.
+  //    3) Отборщик (flash-lite) — из кандидатов оставляет реально применимые,
+  //       присваивает каждой норме роль (exact/related/general/procedural).
+  //    4) Драфтер (DeepSeek v4-pro, reasoning) — насыщенный документ с полным
+  //       правовым обоснованием, цитирует ТОЛЬКО реальные статьи из базы.
+  //  SSE: { stage } прогресс → финальный { done:true, blocks[], articlesUsed[] }.
   // ═══════════════════════════════════════════════════════════════════════
-  const PLANNER_SYS = (tpl) => `Ты — Планировщик юридического ИИ «Мыйзамчы» (Кыргызстан).
-По собранному диалогу подготовь план составления документа «${tpl.label}».
+  const CAT_LABEL = {
+    exact:      'ТОЧНЫЕ НОРМЫ ПО ПРЕДМЕТУ',
+    related:    'СВЯЗАННЫЕ НОРМЫ',
+    general:    'ОБЩИЕ НОРМЫ',
+    procedural: 'ПРОЦЕССУАЛЬНЫЕ НОРМЫ',
+  };
+  const PLANNER_SYS = (tpl) => `Ты — ведущий юрист-исследователь ИИ «Мыйзамчы» (Кыргызстан).
+По собранному диалогу подготовь ПЛАН составления документа «${tpl.label}» и СТРАТЕГИЮ поиска норм права КР.
 
 Применимые кодексы/НПА (ориентир): ${(tpl.codesHint || []).join('; ')}.
+
+Сформулируй поисковые запросы в ЧЕТЫРЁХ группах, чтобы найти АБСОЛЮТНО ВСЕ применимые нормы:
+• exact      — нормы ПРЯМО по предмету спора (основание требования);
+• related    — связанные институты (последствия, смежные нормы, спец. законы по предмету);
+• general    — общие положения кодекса (о сделках, обязательствах, праве собственности и т.п.);
+• procedural — процессуальные нормы (подсудность, форма и содержание иска, госпошлина, исковая давность — ГПК КР).
 
 Верни СТРОГО JSON без markdown:
 {
@@ -606,102 +620,195 @@ ${checklist}
     ${(tpl.requiredFields || []).concat(tpl.optionalFields || []).map((f) => `"${f.key}": "<${f.title}: что известно из диалога, дословно факты; '' если не сказано>"`).join(',\n    ')}
   },
   "subject_line": "<краткая формулировка предмета для подзаголовка, напр. 'о признании договора недействительным'>",
-  "rag_queries": ["<3-6 точных юридических запросов к базе НПА КР по сути спора — называй институты и нормы, напр. 'недействительность сделки кабальные условия Гражданский кодекс КР', 'признание договора купли-продажи недействительным основания'>"]
+  "legal_questions": ["<1-3 ключевых правовых вопроса дела>"],
+  "queries": {
+    "exact":      ["<2-4 точных запроса>"],
+    "related":    ["<2-4 запроса>"],
+    "general":    ["<1-3 запроса>"],
+    "procedural": ["<1-3 запроса по ГПК КР>"]
+  }
 }
 
-ПРАВИЛА: бери только то, что реально сказано в диалоге; НЕ выдумывай имена/суммы/даты/адреса (если нет — ставь ''). rag_queries формулируй по предмету спора, чтобы найти материальные и процессуальные нормы.`;
+ПРАВИЛА: факты бери ТОЛЬКО из диалога, не выдумывай имена/суммы/даты/адреса (нет → ''). Запросы пиши развёрнуто, называя институты и кодекс КР, чтобы векторный поиск нашёл максимум норм.`;
 
-  const DRAFTER_SYS = (tpl) => `Ты — старший юрист Кыргызской Республики. Составь юридически грамотный документ «${tpl.label}» и верни его СТРОГО как JSON-массив блоков (DocBlock[]) — без markdown, без пояснений.
+  const SELECTOR_SYS = `Ты — юрист-аналитик (право Кыргызской Республики). Тебе дан СПИСОК КАНДИДАТ-СТАТЕЙ из базы НПА (найдены RAG) и суть дела. Отбери ТОЛЬКО реально применимые к делу нормы и присвой каждой роль.
+
+Роли: "exact" (прямо обосновывает требование), "related" (связанная норма/последствия), "general" (общее положение), "procedural" (процессуальная норма ГПК).
+
+Верни СТРОГО JSON без markdown:
+{ "keep": [ { "i": <номер кандидата>, "role": "exact|related|general|procedural", "why": "<очень кратко зачем>" } ] }
+
+ПРАВИЛА: оставляй только относящиеся к делу статьи (мусор и нерелевантное — выбрасывай). Не добавляй статьи, которых нет в списке. Сохрани все действительно полезные нормы — лучше полнее.`;
+
+  const DRAFTER_SYS = (tpl) => `Ты — старший юрист Кыргызской Республики. Составь ПОЛНЫЙ, юридически грамотный документ «${tpl.label}» и верни его СТРОГО как JSON-массив блоков (DocBlock[]) — без markdown, без пояснений.
 
 ФОРМАТ БЛОКА:
 { "kind": "<тип>", "align": "left|center|right|justify (необязательно)", "runs": [ { "t": "текст", "bold": true?, "italic": true?, "underline": true?, "cite": "<НПА ст.N, если это ссылка на норму>" } ] }
 
-ТИПЫ БЛОКОВ (kind) и их назначение:
-- court           — наименование суда (шапка, справа)
-- party_header    — стороны: Истец/Ответчик с адресами и реквизитами (справа), по одной строке на блок
-- spacer          — пустой отступ (runs: [])
-- title           — НАЗВАНИЕ документа заглавными, по центру, bold (напр. «ИСКОВОЕ ЗАЯВЛЕНИЕ»)
-- subtitle        — подзаголовок «о …», по центру
-- paragraph       — абзац фабулы/правового обоснования (по ширине). Ссылки на статьи — отдельным run с italic:true и cite
-- demand_heading  — «Прошу:» (bold, underline)
-- demand_item     — нумерованный пункт требований (по одному на блок: «1. …», «2. …»)
-- attachment_heading — «Приложение:» (bold)
-- attachment_item — нумерованный пункт перечня приложений
-- signature       — строка подписи (справа)
+ТИПЫ БЛОКОВ (kind):
+- court · party_header (стороны, по строке на блок) · spacer (runs:[]) · title (НАЗВАНИЕ, bold) · subtitle («о …»)
+- paragraph (фабула / правовое обоснование) · demand_heading («Прошу:») · demand_item (нумерованное требование)
+- attachment_heading («Приложение:») · attachment_item · signature
 
 ПОРЯДОК СЕКЦИЙ:
 ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
 
+КАК ПИСАТЬ ПРАВОВОЕ ОБОСНОВАНИЕ (это ГЛАВНОЕ — документ должен быть содержательным, а не из двух абзацев):
+• Сначала ФАБУЛА: подробно изложи обстоятельства из досье (стороны, даты, предмет, в чём нарушение).
+• Затем НЕСКОЛЬКО абзацев правового обоснования — задействуй ВСЕ применимые нормы из эталона:
+  – сперва ТОЧНЫЕ нормы (прямое основание требования) — процитируй и объясни, как норма применяется к фактам;
+  – затем СВЯЗАННЫЕ и ОБЩИЕ нормы (последствия, смежные институты) — каждой норме отдельный смысловой абзац;
+• Отдельный абзац ПРОЦЕССУАЛЬНОГО основания: «Руководствуясь ст. … ГПК КР, прошу:» со ссылками на процессуальные нормы.
+• Каждое требование в «Прошу:» должно опираться на изложенное обоснование.
+
 ЖЕЛЕЗНЫЕ ПРАВИЛА:
-1. Цитируй ТОЛЬКО статьи из приведённого ЭТАЛОННОГО списка норм (RAG). Не придумывай номера статей по памяти. Если подходящей нормы в эталоне нет — пиши фабулу без ссылки.
-2. Каждую ссылку на норму оформляй ОТДЕЛЬНЫМ run: italic:true и cite:"<НПА ст.N>". Окружающий текст — обычными run. Следи за пробелами между run (》«Согласно » + «статье 487…»《).
-3. НЕ выдумывай факты (имена, суммы, даты, адреса, ИНН). Используй ТОЛЬКО данные из досье. Если обязательная деталь отсутствует — оставь заполняемое место «____________».
-4. Обязательно сформулируй процессуальное основание («Руководствуясь ст. … ГПК КР, прошу:») перед блоком demand_heading, если это иск.
-5. Раздели стороны и смысловые секции блоками spacer.
-6. Верни ТОЛЬКО JSON-массив блоков. Первый символ ответа — «[», последний — «]».`;
+1. Цитируй ТОЛЬКО статьи из приведённого ЭТАЛОННОГО списка норм (RAG), группы помечены. Не придумывай номера статей по памяти. Используй КАК МОЖНО БОЛЬШЕ применимых норм из списка — не ограничивайся одной-двумя.
+2. Каждую ссылку на норму — ОТДЕЛЬНЫМ run: italic:true и cite:"<НПА ст.N>". Окружающий текст — обычными run. Следи за пробелами между run.
+3. НЕ выдумывай факты (имена, суммы, даты, адреса, ИНН). Только из досье. Нет обязательной детали — ставь «____________».
+4. Раздели стороны и смысловые секции блоками spacer.
+5. Верни ТОЛЬКО JSON-массив блоков. Первый символ ответа — «[», последний — «]».`;
 
   router.post('/draft-document', async (req, res) => {
-    try {
-      const docType = String((req.body && req.body.docType) || 'isk');
-      const messages = Array.isArray(req.body && req.body.messages) ? req.body.messages : [];
-      const tpl = getTemplate(docType);
-      if (!tpl) return res.status(400).json({ error: `Неизвестный тип документа: ${docType}` });
-      if (!messages.length) return res.status(400).json({ error: 'Пустой диалог' });
+    // Базовая валидация ДО SSE-заголовков (чтобы отдать чистый 400).
+    const docType = String((req.body && req.body.docType) || 'isk');
+    const messages = Array.isArray(req.body && req.body.messages) ? req.body.messages : [];
+    const tpl = getTemplate(docType);
+    if (!tpl) return res.status(400).json({ error: `Неизвестный тип документа: ${docType}` });
+    if (!messages.length) return res.status(400).json({ error: 'Пустой диалог' });
 
+    // SSE (как в /analyze-document — анти-буферизация Render).
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+    const sse = (obj) => {
+      if (res.writableEnded) return;
+      res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      if (typeof res.flush === 'function') { try { res.flush(); } catch (_) {} }
+    };
+    const done = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
+    const stage = (text, extra = {}) => sse({ stage: text, ...extra });
+
+    try {
       const convo = messages.map((m) => {
         const role = m && m.role === 'assistant' ? 'ИНТЕРВЬЮЕР' : 'ПОЛЬЗОВАТЕЛЬ';
         return `${role}: ${String((m && m.text) || '').slice(0, 4000)}`;
       }).join('\n\n');
+      const parseObj = (raw) => {
+        const c = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+        try { return JSON.parse(c); } catch (_) {}
+        const a = c.indexOf('{'), b = c.lastIndexOf('}');
+        if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a, b + 1)); } catch (__) {} }
+        return null;
+      };
 
-      // ── 1) ПЛАНИРОВЩИК ──
-      let plan = { facts: {}, subject_line: '', rag_queries: [] };
+      // ── 1) ПЛАНИРОВЩИК-ИССЛЕДОВАТЕЛЬ ──
+      stage('🔍 Анализирую дело и планирую поиск норм…');
+      let plan = { facts: {}, subject_line: '', legal_questions: [], queries: {} };
       try {
         const rawPlan = await clients.geminiJson({
           systemPrompt: PLANNER_SYS(tpl),
           userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON-план.`,
-          model: 'gemini-3.1-flash-lite',
-          maxOutputTokens: 2048,
-          timeoutMs: 25000,
+          model: 'gemini-3.1-flash-lite', maxOutputTokens: 2048, timeoutMs: 25000,
         });
-        const c = String(rawPlan || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
-        const a = c.indexOf('{'), b = c.lastIndexOf('}');
-        if (a !== -1 && b > a) plan = JSON.parse(c.slice(a, b + 1));
-      } catch (e) {
-        console.warn('[draft-document] planner failed, degraded:', e.message);
-      }
-      const ragQueries = (Array.isArray(plan.rag_queries) && plan.rag_queries.length)
-        ? plan.rag_queries.slice(0, 6)
-        : [tpl.label + ' ' + (plan.subject_line || '')];
+        const p = parseObj(rawPlan);
+        if (p) plan = { ...plan, ...p };
+      } catch (e) { console.warn('[draft-document] planner failed, degraded:', e.message); }
 
-      // ── 2) RAG: тянем эталонные статьи (заземление цитат) ──
-      let articlesUsed = [];
-      try {
-        const hits = (await resolvedDeps.pineconeSearch?.(ragQueries, null, 8)) || [];
-        const seen = new Set();
-        for (const h of hits) {
+      const cats = ['exact', 'related', 'general', 'procedural'];
+      const q = (plan.queries && typeof plan.queries === 'object') ? plan.queries : {};
+      // Фолбэк-запросы, если планировщик не дал группу.
+      const subj = plan.subject_line || tpl.label;
+      const catQueries = {
+        exact:      (Array.isArray(q.exact) && q.exact.length)           ? q.exact.slice(0, 4)      : [subj],
+        related:    (Array.isArray(q.related) && q.related.length)       ? q.related.slice(0, 4)    : [],
+        general:    (Array.isArray(q.general) && q.general.length)       ? q.general.slice(0, 3)    : [],
+        procedural: (Array.isArray(q.procedural) && q.procedural.length) ? q.procedural.slice(0, 3) : ['исковое заявление форма содержание подсудность государственная пошлина ГПК Кыргызской Республики'],
+      };
+
+      // ── 2) ИЩЕЙКИ/RAG — параллельно по группам, широкий охват ──
+      stage('📚 Ищу применимые нормы (точные, связанные, общие, процессуальные)…');
+      const pool = new Map(); // key npa|article → {npa_title, article_title, full_text, score, cats:Set}
+      const addHits = (hits, cat) => {
+        for (const h of (hits || [])) {
           const md = (h && h.metadata) || {};
+          if (!md.full_text) continue;
           const key = `${md.npa_title}|${md.article_title}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          articlesUsed.push({
-            npa_title: md.npa_title || '',
-            article_title: md.article_title || '',
-            full_text: String(md.full_text || '').slice(0, 1600),
-            score: h.score,
-          });
-          if (articlesUsed.length >= 10) break;
+          let rec = pool.get(key);
+          if (!rec) {
+            rec = { npa_title: md.npa_title || '', article_title: md.article_title || '', full_text: String(md.full_text || '').slice(0, 1700), score: h.score || 0, cats: new Set() };
+            pool.set(key, rec);
+          }
+          rec.cats.add(cat);
+          if ((h.score || 0) > rec.score) rec.score = h.score || 0;
         }
-      } catch (e) {
-        console.warn('[draft-document] RAG failed, degraded (no citations):', e.message);
-      }
-      const refBlock = articlesUsed.length
-        ? articlesUsed.map((a, i) => `[${i + 1}] ${[a.npa_title, a.article_title].filter(Boolean).join(' — ')}\n${a.full_text}`).join('\n\n')
-        : '(эталонных норм в базе не найдено — составляй без точных ссылок на статьи)';
+      };
+      await Promise.all(cats.map(async (cat) => {
+        const qs = catQueries[cat];
+        if (!qs || !qs.length) return;
+        try {
+          const hits = (await resolvedDeps.pineconeSearch?.(qs, null, 6)) || [];
+          addHits(hits, cat);
+        } catch (e) { console.warn(`[draft-document] RAG cat=${cat} failed:`, e.message); }
+      }));
+      let candidates = Array.from(pool.values()).sort((a, b) => b.score - a.score).slice(0, 28);
+      stage(`📚 Найдено кандидат-норм: ${candidates.length}. Отбираю применимые…`, { found: candidates.length });
 
-      // ── 3) ДРАФТЕР (DeepSeek v4-pro, reasoning) ──
+      // ── 3) ОТБОРЩИК — оставляет применимые, присваивает роль ──
+      let selected = []; // {rec, role}
+      if (candidates.length) {
+        try {
+          const list = candidates.map((c, i) => `[${i}] ${[c.npa_title, c.article_title].filter(Boolean).join(' — ')} :: ${c.full_text.slice(0, 240)}`).join('\n');
+          const rawSel = await clients.geminiJson({
+            systemPrompt: SELECTOR_SYS,
+            userPrompt: `СУТЬ ДЕЛА: ${subj}\nВОПРОСЫ: ${(plan.legal_questions || []).join('; ')}\nДОСЬЕ: ${JSON.stringify(plan.facts || {})}\n\nКАНДИДАТЫ:\n${list}\n\nВерни JSON {keep:[...]}.`,
+            model: 'gemini-3.1-flash-lite', maxOutputTokens: 2048, timeoutMs: 25000,
+          });
+          const sel = parseObj(rawSel);
+          if (sel && Array.isArray(sel.keep)) {
+            for (const k of sel.keep) {
+              const idx = Number(k && k.i);
+              if (Number.isInteger(idx) && candidates[idx]) {
+                const role = ['exact', 'related', 'general', 'procedural'].includes(k.role) ? k.role : 'related';
+                selected.push({ rec: candidates[idx], role });
+              }
+            }
+          }
+        } catch (e) { console.warn('[draft-document] selector failed, fallback to top candidates:', e.message); }
+      }
+      // Фолбэк: отборщик пуст → берём топ кандидатов, роль по группе RAG.
+      if (!selected.length) {
+        selected = candidates.slice(0, 14).map((rec) => ({
+          rec, role: rec.cats.has('exact') ? 'exact' : rec.cats.has('procedural') ? 'procedural' : rec.cats.has('general') ? 'general' : 'related',
+        }));
+      }
+
+      // Группируем выбранные нормы по роли для эталонного блока драфтера.
+      const byRole = { exact: [], related: [], general: [], procedural: [] };
+      for (const s of selected) (byRole[s.role] || byRole.related).push(s.rec);
+      let refIdx = 0;
+      const articlesUsed = [];
+      const refParts = [];
+      for (const cat of cats) {
+        const arr = byRole[cat];
+        if (!arr || !arr.length) continue;
+        const lines = arr.map((a) => {
+          refIdx += 1;
+          articlesUsed.push([a.npa_title, a.article_title].filter(Boolean).join(' — '));
+          return `[${refIdx}] ${[a.npa_title, a.article_title].filter(Boolean).join(' — ')}\n${a.full_text}`;
+        });
+        refParts.push(`=== ${CAT_LABEL[cat]} ===\n${lines.join('\n\n')}`);
+      }
+      const refBlock = refParts.length ? refParts.join('\n\n') : '(эталонных норм в базе не найдено — составляй фабулу без точных ссылок на статьи)';
+      console.log(`[draft-document] ${docType} | candidates=${candidates.length} → selected=${selected.length} | roles=${JSON.stringify(Object.fromEntries(cats.map((c) => [c, byRole[c].length])))}`);
+
+      // ── 4) ДРАФТЕР (DeepSeek v4-pro) ──
+      stage(`✍️ Составляю документ по ${articlesUsed.length} нормам…`, { articles: articlesUsed.length });
       const drafterUser = [
         `ТИП ДОКУМЕНТА: ${tpl.label}`,
         `ПРЕДМЕТ: ${plan.subject_line || ''}`,
+        `ПРАВОВЫЕ ВОПРОСЫ: ${(plan.legal_questions || []).join('; ')}`,
         '',
         'ДОСЬЕ (факты от пользователя — используй ТОЛЬКО их, ничего не выдумывай):',
         JSON.stringify(plan.facts || {}, null, 2),
@@ -709,42 +816,37 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
         'ИСХОДНЫЙ ДИАЛОГ (для нюансов):',
         convo,
         '',
-        'ЭТАЛОННЫЕ НОРМЫ ИЗ БАЗЫ НПА КР (цитируй ТОЛЬКО отсюда):',
+        'ЭТАЛОННЫЕ НОРМЫ ИЗ БАЗЫ НПА КР (сгруппированы по роли — задействуй ВСЕ применимые, цитируй точно):',
         refBlock,
         '',
-        'Составь документ и верни JSON-массив блоков (DocBlock[]).',
+        'Составь ПОЛНЫЙ документ с развёрнутым правовым обоснованием и верни JSON-массив блоков (DocBlock[]).',
       ].join('\n');
 
+      // Heartbeat: гоним «тики» по мере content-дельт, чтобы прокси Render не
+      // закрыл SSE за долгий ответ v4-pro. Сам текст в UI не выводим (это JSON).
+      let tick = 0;
+      const onDelta = (d) => { if (d && d.text) { tick += d.text.length; if (tick > 1200) { tick = 0; sse({ heartbeat: 1 }); } } };
       const { text: draftText, model: usedModel } = await clients.deepseekReason({
         systemPrompt: DRAFTER_SYS(tpl),
         userPrompt: drafterUser,
-        model: 'deepseek-v4-pro',
-        reasoning_effort: 'high',
-        thinking: 'enabled',
+        model: 'deepseek-v4-pro', reasoning_effort: 'high', thinking: 'enabled',
+        onDelta,
       });
 
-      // Парсим массив блоков (срезаем обёртки, поддерживаем {blocks:[...]} и [...]).
-      let blocks = null;
+      // Парс массива блоков ([...] или {blocks:[...]}).
       const cleaned = String(draftText || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
       const tryParse = (s) => { try { return JSON.parse(s); } catch (_) { return null; } };
       let parsed = tryParse(cleaned);
-      if (!parsed) {
-        const la = cleaned.indexOf('['), lb = cleaned.lastIndexOf(']');
-        if (la !== -1 && lb > la) parsed = tryParse(cleaned.slice(la, lb + 1));
-      }
-      if (!parsed) {
-        const oa = cleaned.indexOf('{'), ob = cleaned.lastIndexOf('}');
-        if (oa !== -1 && ob > oa) parsed = tryParse(cleaned.slice(oa, ob + 1));
-      }
-      if (Array.isArray(parsed)) blocks = parsed;
-      else if (parsed && Array.isArray(parsed.blocks)) blocks = parsed.blocks;
+      if (!parsed) { const la = cleaned.indexOf('['), lb = cleaned.lastIndexOf(']'); if (la !== -1 && lb > la) parsed = tryParse(cleaned.slice(la, lb + 1)); }
+      if (!parsed) { const oa = cleaned.indexOf('{'), ob = cleaned.lastIndexOf('}'); if (oa !== -1 && ob > oa) parsed = tryParse(cleaned.slice(oa, ob + 1)); }
+      let blocks = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.blocks) ? parsed.blocks : null);
 
       if (!Array.isArray(blocks) || !blocks.length) {
         console.warn(`[draft-document] unparseable drafter output (len=${String(draftText || '').length}): ${String(draftText || '').slice(0, 200)}`);
-        return res.status(502).json({ error: 'Драфтер вернул некорректный формат. Попробуйте ещё раз.' });
+        sse({ error: 'Драфтер вернул некорректный формат. Попробуйте ещё раз.' });
+        return done();
       }
 
-      // Лёгкая нормализация блоков (защита фронт-рендера от мусора).
       const safeBlocks = blocks
         .filter((b) => b && typeof b === 'object')
         .map((b) => ({
@@ -761,15 +863,18 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
             : [],
         }));
 
-      console.log(`[draft-document] ${docType} → ${safeBlocks.length} блоков | RAG=${articlesUsed.length} статей | model=${usedModel}`);
-      return res.json({
+      console.log(`[draft-document] ${docType} → ${safeBlocks.length} блоков | norms=${articlesUsed.length} | model=${usedModel}`);
+      sse({
+        done: true,
         blocks: safeBlocks,
-        articlesUsed: articlesUsed.map((a) => [a.npa_title, a.article_title].filter(Boolean).join(' — ')),
-        route: { planner: 'gemini-3.1-flash-lite', drafter: usedModel },
+        articlesUsed,
+        route: { planner: 'gemini-3.1-flash-lite', selector: 'gemini-3.1-flash-lite', drafter: usedModel },
       });
+      return done();
     } catch (err) {
       console.error('[draft-document] error:', err.message);
-      return res.status(500).json({ error: 'Сбой генерации: ' + err.message });
+      sse({ error: 'Сбой генерации: ' + err.message });
+      return done();
     }
   });
 

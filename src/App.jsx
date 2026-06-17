@@ -1301,6 +1301,7 @@ const CreateDocMode = ({ onToast }) => {
   const [busy, setBusy]       = useState(false);     // интервьюер думает
   const [ready, setReady]     = useState(false);     // досье собрано
   const [genBusy, setGenBusy] = useState(false);
+  const [genStatus, setGenStatus] = useState('');  // прогресс генерации (SSE-stage)
   const listRef = useRef(null);
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, busy]);
 
@@ -1341,31 +1342,54 @@ const CreateDocMode = ({ onToast }) => {
   };
 
   const generate = async () => {
-    if (genBusy) return; setGenBusy(true);
+    if (genBusy) return; setGenBusy(true); setGenStatus('Запускаю агентов…');
     try {
-      // Фаза 2B: мультиагентная генерация по собранному досье
-      // (планировщик → RAG по кодексам → драфтер v4-pro → DocBlock[]).
-      onToast && onToast('law', 'Генерирую документ по досье…');
+      // Фаза 2B: мультиагентная research-коллегия (SSE):
+      // планировщик → RAG по 4 группам норм → отборщик → драфтер v4-pro.
       const payloadMsgs = messages.filter(m => !(m.role === 'assistant' && /не до конца понял|не смог разобрать|Не удалось связаться/i.test(m.text)));
       const res = await fetch(`${_ensureBackend()}/api/v2/draft-document`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ docType, messages: payloadMsgs }),
       });
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         let msg = 'HTTP ' + res.status;
         try { const e = await res.json(); if (e && e.error) msg = e.error; } catch (_) {}
         throw new Error(msg);
       }
-      const data = await res.json();
-      if (!data || !Array.isArray(data.blocks) || !data.blocks.length) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let result = null, errMsg = null;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n'); buf = parts.pop() || '';
+        for (const part of parts) {
+          const line = part.split('\n').find(l => l.startsWith('data:'));
+          if (!line) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') continue;
+          let evt; try { evt = JSON.parse(payload); } catch (_) { continue; }
+          if (evt.stage) setGenStatus(evt.stage);
+          else if (evt.error) errMsg = evt.error;
+          else if (evt.done) result = evt;
+          // evt.heartbeat игнорируем (только держит соединение живым).
+        }
+      }
+      if (errMsg) throw new Error(errMsg);
+      if (!result || !Array.isArray(result.blocks) || !result.blocks.length) {
         throw new Error('Пустой документ от генератора');
       }
+      setGenStatus('Готово — отрисовываю в редакторе…');
       const tplLabel = (DOC_TYPES.find(d => d.k === docType) || {}).label || 'Документ';
-      await renderLegalDocument(data.blocks, { onToast, name: `${tplLabel}.docx` });
+      await renderLegalDocument(result.blocks, { onToast, name: `${tplLabel}.docx` });
+      const n = (result.articlesUsed || []).length;
+      if (n) onToast && onToast('check', `Документ готов · задействовано норм: ${n}`);
     } catch (e) {
       console.error('[draft-document]', e);
       onToast && onToast('warning', 'Ошибка генерации: ' + ((e && e.message) || e));
-    } finally { setGenBusy(false); }
+    } finally { setGenBusy(false); setGenStatus(''); }
   };
 
   // ── ШАГ 1: выбор типа ──
@@ -1409,10 +1433,18 @@ const CreateDocMode = ({ onToast }) => {
         {busy && <div style={{ alignSelf: 'flex-start', fontSize: 'var(--text-xs)', color: 'var(--muted)', padding: '0 var(--s-1)' }}>Интервьюер думает…</div>}
       </div>
       {ready && (
-        <button type="button" onClick={generate} disabled={genBusy}
-          style={{ margin: 'var(--s-2) 0', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: 'none', background: genBusy ? 'var(--hover)' : 'linear-gradient(135deg,var(--accent),var(--accent2))', color: genBusy ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: genBusy ? 'default' : 'pointer', fontFamily: 'var(--font-sans)' }}>
-          {genBusy ? 'Генерация…' : '⚖️ Сгенерировать документ'}
-        </button>
+        <div style={{ margin: 'var(--s-2) 0' }}>
+          {genBusy && genStatus && (
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', padding: '0 var(--s-1) var(--s-1h)', display: 'flex', alignItems: 'center', gap: 'var(--s-1)' }}>
+              <span className="dot-pulse" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+              <span>{genStatus}</span>
+            </div>
+          )}
+          <button type="button" onClick={generate} disabled={genBusy}
+            style={{ width: '100%', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: 'none', background: genBusy ? 'var(--hover)' : 'linear-gradient(135deg,var(--accent),var(--accent2))', color: genBusy ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: genBusy ? 'default' : 'pointer', fontFamily: 'var(--font-sans)' }}>
+            {genBusy ? 'Агенты работают…' : '⚖️ Сгенерировать документ'}
+          </button>
+        </div>
       )}
       <div style={{ display: 'flex', gap: 'var(--s-1h)', alignItems: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: 'var(--s-2)' }}>
         <textarea value={input} onChange={e => setInput(e.target.value)}
