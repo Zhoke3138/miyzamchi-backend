@@ -1162,6 +1162,49 @@ const _waitFreshEditor = (prev, timeoutMs = 8000) => new Promise((resolve) => {
   tick();
 });
 
+// HTML-экранирование + сборка run → HTML. НЕ режем пробелы (иначе соседние
+// runs слипаются: «Согласно » + «статье» → «Согласностатье»). Только
+// схлопываем переносы строк в пробел (PM-абзац = один блок).
+const _escHtml = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const _runToHtml = (run) => {
+  const t = String((run && run.t) || '').replace(/\s*\n\s*/g, ' ');
+  if (!t.trim() && t === '') return '';
+  let html = _escHtml(t);
+  if (run.bold) html = `<strong>${html}</strong>`;
+  if (run.italic) html = `<em>${html}</em>`;       // курсив — цитаты НПА
+  if (run.underline) html = `<u>${html}</u>`;       // подчёрк — особые моменты
+  return html;
+};
+const _blockToHtml = (block) => {
+  const align = block.align || LEGAL_KIND_ALIGN[block.kind] || 'left';
+  const inner = (block.runs || []).map(_runToHtml).join('');
+  // text-align читается HTML-импортёром SuperDoc (style.textAlign → OOXML w:jc).
+  const style = `text-align:${align};font-family:'Times New Roman', serif;`;
+  return `<p style="${style}">${inner || '&nbsp;'}</p>`;
+};
+
+// Убираем ПУСТЫЕ абзацы по краям (стартовый <p><br></p> нового дока и хвост),
+// НЕ трогая намеренные spacer-абзацы в середине.
+const _trimEmptyEdges = (editor) => {
+  const view = editor && editor.view; if (!view) return;
+  // лидирующий пустой абзац
+  let st = view.state;
+  if (st.doc.childCount > 1) {
+    const f = st.doc.firstChild;
+    if (f && f.isTextblock && f.content.size === 0) view.dispatch(st.tr.delete(0, f.nodeSize));
+  }
+  // хвостовой пустой абзац
+  st = view.state;
+  if (st.doc.childCount > 1) {
+    const l = st.doc.lastChild;
+    if (l && l.isTextblock && l.content.size === 0) {
+      const start = st.doc.content.size - l.nodeSize;
+      view.dispatch(st.tr.delete(start, st.doc.content.size));
+    }
+  }
+};
+
 async function renderLegalDocument(blocks, opts = {}) {
   const toast = opts.onToast;
   if (!Array.isArray(blocks) || !blocks.length) { toast && toast('warning', 'Пустой документ'); return false; }
@@ -1171,51 +1214,21 @@ async function renderLegalDocument(blocks, opts = {}) {
   try { if (window.__ideHandleAction) window.__ideHandleAction('newDoc', opts.name || 'Документ.docx'); }
   catch (e) { console.warn('[renderLegalDocument] newDoc dispatch failed', e); }
 
-  // 2. Ждём готовности нового редактора.
+  // 2. Ждём готовности нового редактора (Document API).
   const editor = await _waitFreshEditor(prev, 8000);
-  if (!editor || !editor.view || !editor.view.state) { toast && toast('warning', 'Редактор не готов'); return false; }
+  if (!editor || !editor.doc || typeof editor.doc.insert !== 'function') { toast && toast('warning', 'Редактор не готов'); return false; }
 
   try {
-    const view = editor.view, state = view.state, schema = state.schema;
-    const paraType = schema.nodes.paragraph;
-    if (!paraType) { toast && toast('warning', 'Схема редактора без paragraph'); return false; }
-    const fontMark = schema.marks.textStyle || null;
-
-    // run → text-нода с марками. ProseMirror text не может содержать \n —
-    // поэтому каждый блок = один абзац (многострочность бьётся на блоки выше).
-    const mkText = (run) => {
-      const t = String((run && run.t) || '').replace(/\n+/g, ' ').trim();
-      if (!t) return null;
-      const build = (useFont) => {
-        const marks = [];
-        if (run.bold && schema.marks.bold) marks.push(schema.marks.bold.create());
-        if (run.italic && schema.marks.italic) marks.push(schema.marks.italic.create());
-        if (run.underline && schema.marks.underline) marks.push(schema.marks.underline.create());
-        if (useFont && fontMark) marks.push(fontMark.create({ fontFamily: LEGAL_FONT }));
-        return schema.text(t, marks.length ? marks : undefined);
-      };
-      try { return build(true); } catch (_) { try { return build(false); } catch (__) { try { return schema.text(t); } catch (___) { return null; } } }
-    };
-
-    const mkPara = (block) => {
-      const align = block.align || LEGAL_KIND_ALIGN[block.kind] || 'left';
-      const inline = (block.runs || []).map(mkText).filter(Boolean);
-      const content = inline.length ? inline : undefined;
-      // 1) С выравниванием (textAlign — валидный атрибут схемы SuperDoc).
-      if (align && align !== 'left') {
-        try { const n = paraType.createAndFill({ textAlign: align }, content); if (n) return n; } catch (_) {}
-      }
-      // 2) Фолбэк: без атрибута — контент (и inline-марки) всё равно сохраняются.
-      try { return paraType.createAndFill(null, content); } catch (_) { return null; }
-    };
-
-    const nodes = blocks.map(mkPara).filter(Boolean);
-    if (!nodes.length) { toast && toast('warning', 'Не удалось собрать документ'); return false; }
-
-    // 3. Одна транзакция: заменяем пустое тело нового дока готовыми абзацами.
-    view.dispatch(state.tr.replaceWith(0, state.doc.content.size, nodes));
+    // 3. Собираем HTML и вставляем через Document API. HTML-импортёр SuperDoc
+    //    сам разбирает style="text-align" → выравнивание и <strong>/<em>/<u>
+    //    → марки. Это надёжнее, чем гадать имя PM-атрибута выравнивания.
+    const html = blocks.map(_blockToHtml).join('');
+    const r = editor.doc.insert({ value: html, type: 'html' });
+    if (r && typeof r.then === 'function') { try { await r; } catch (_) {} }
+    // 4. Чистим пустой стартовый абзац нового документа.
+    setTimeout(() => { try { _trimEmptyEdges(editor); } catch (_) {} }, 60);
     try { editor.commands && editor.commands.focus && editor.commands.focus('start'); } catch (_) {}
-    console.log('[renderLegalDocument] rendered', { blocks: blocks.length, nodes: nodes.length, alignAttr, font: !!fontMark });
+    console.log('[renderLegalDocument] rendered via HTML', { blocks: blocks.length, htmlLen: html.length });
     toast && toast('check', 'Документ сгенерирован');
     return true;
   } catch (e) {
