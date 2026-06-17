@@ -1145,13 +1145,8 @@ const LEGAL_KIND_ALIGN = {
 };
 const LEGAL_FONT = 'Times New Roman, serif';
 
-// Имя атрибута выравнивания в схеме редактора (SuperDoc/ProseMirror —
-// обычно textAlign; пробуем альтернативы, чтобы не зависеть от версии).
-const _pickAlignAttr = (nodeType) => {
-  const attrs = (nodeType && nodeType.spec && nodeType.spec.attrs) || {};
-  for (const c of ['textAlign', 'align', 'alignment']) if (c in attrs) return c;
-  return null;
-};
+// Атрибут выравнивания абзаца в схеме SuperDoc — textAlign (подтверждено в
+// ядре: attrs.textAlign → OOXML w:jc). Значения: left|center|right|justify.
 
 // Ждём, пока после newDoc смонтируется СВЕЖИЙ редактор (window.docEngine
 // переустанавливается в onEditorCreate при remount'е по новому activeTab).
@@ -1184,7 +1179,6 @@ async function renderLegalDocument(blocks, opts = {}) {
     const view = editor.view, state = view.state, schema = state.schema;
     const paraType = schema.nodes.paragraph;
     if (!paraType) { toast && toast('warning', 'Схема редактора без paragraph'); return false; }
-    const alignAttr = _pickAlignAttr(paraType);
     const fontMark = schema.marks.textStyle || null;
 
     // run → text-нода с марками. ProseMirror text не может содержать \n —
@@ -1205,12 +1199,14 @@ async function renderLegalDocument(blocks, opts = {}) {
 
     const mkPara = (block) => {
       const align = block.align || LEGAL_KIND_ALIGN[block.kind] || 'left';
-      const attrs = (alignAttr && align) ? { [alignAttr]: align } : null;
       const inline = (block.runs || []).map(mkText).filter(Boolean);
-      let node = null;
-      try { node = paraType.createAndFill(attrs, inline.length ? inline : undefined); }
-      catch (e) { try { node = paraType.createAndFill(null, inline.length ? inline : undefined); } catch (_) { node = null; } }
-      return node;
+      const content = inline.length ? inline : undefined;
+      // 1) С выравниванием (textAlign — валидный атрибут схемы SuperDoc).
+      if (align && align !== 'left') {
+        try { const n = paraType.createAndFill({ textAlign: align }, content); if (n) return n; } catch (_) {}
+      }
+      // 2) Фолбэк: без атрибута — контент (и inline-марки) всё равно сохраняются.
+      try { return paraType.createAndFill(null, content); } catch (_) { return null; }
     };
 
     const nodes = blocks.map(mkPara).filter(Boolean);
