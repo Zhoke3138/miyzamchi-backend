@@ -26,6 +26,7 @@ const { createLightLLMCascade } = require('../lib/llmCascade');
 const { buildChunkContexts, buildLocalContextBlock } = require('../lib/localContext');
 const { buildSuperDocBlocks } = require('../lib/superDocBlocks');
 const clients = require('../services/llmClients');
+const { getTemplate, buildChecklist } = require('../lib/docTemplates');
 
 // Загрузка во ВРЕМЕННЫЙ файл с уникальным именем (ZDR-friendly: parserService удалит).
 // multer/express подключаются ЛЕНИВО внутри фабрики — чтобы импорт чистых функций
@@ -503,6 +504,79 @@ function createAnalyzeV2Router(deps = {}) {
       step({ id: 'error', status: 'error', text: `Ошибка анализа: ${err.message}` });
       sse({ text: `\n\n⚠️ Ошибка анализа: ${err.message}` });
       done();
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ФАЗА 2A — ИНТЕРВЬЮЕР (режим «Документы → Создать»)
+  //  /api/v2/draft-intake — ведёт диалог-досье: читает разговор, понимает,
+  //  каких обязательных сведений не хватает, и задаёт уточняющие вопросы.
+  //  Возвращает JSON: { ready, questions[], filled{}, missing[], summary }.
+  //  Лёгкая модель (Gemini Flash) — это не генерация, а сбор фактуры.
+  // ═══════════════════════════════════════════════════════════════════════
+  const INTAKE_SYS = (docLabel, checklist) => `Ты — Интервьюер юридического ИИ «Мыйзамчы» (Кыргызстан).
+Пользователь хочет составить документ: «${docLabel}». Твоя задача — собрать ДОСЬЕ (фактуру) для будущего составления, ведя живой диалог.
+
+${checklist}
+
+ПРАВИЛА:
+1) Проанализируй ВЕСЬ диалог и пойми, какие сведения уже даны, а каких не хватает.
+2) Если не хватает ОБЯЗАТЕЛЬНЫХ сведений — задай 1–3 коротких, конкретных вопроса простым языком (юрист-человек, без канцелярита). Спрашивай о самом важном недостающем.
+3) Можешь подсказывать примером, если пользователь не знает («например, Свердловский районный суд г. Бишкек»).
+4) ready=true СТРОГО когда собраны все ОБЯЗАТЕЛЬНЫЕ сведения. Желательные (цена иска, приложения) НЕ блокируют ready.
+5) НИКОГДА не выдумывай факты за пользователя (имена, суммы, даты, адреса). Чего нет — спрашивай.
+6) Не пиши сам документ. Только собирай фактуру.
+
+Верни СТРОГО JSON без обёрток и markdown:
+{
+  "ready": <bool>,
+  "questions": ["<вопрос1>", ...],   // пусто если ready=true
+  "filled": { "<ключ_поля>": "<кратко что известно>" },
+  "missing": ["<title недостающего обязательного поля>", ...],
+  "summary": "<если ready: 2-3 фразы краткого досье; иначе ''>"
+}`;
+
+  router.post('/draft-intake', async (req, res) => {
+    try {
+      const docType = String((req.body && req.body.docType) || 'isk');
+      const messages = Array.isArray(req.body && req.body.messages) ? req.body.messages : [];
+      const tpl = getTemplate(docType);
+      if (!tpl) return res.status(400).json({ error: `Неизвестный тип документа: ${docType}` });
+      if (!messages.length) return res.status(400).json({ error: 'Пустой диалог' });
+
+      // Диалог → текст для модели (роли помечаем явно).
+      const convo = messages.map((m) => {
+        const role = m && m.role === 'assistant' ? 'ИНТЕРВЬЮЕР' : 'ПОЛЬЗОВАТЕЛЬ';
+        return `${role}: ${String((m && m.text) || '').slice(0, 4000)}`;
+      }).join('\n\n');
+
+      const raw = await clients.geminiJson({
+        systemPrompt: INTAKE_SYS(tpl.label, buildChecklist(docType)),
+        userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON-досье по правилам.`,
+        model: 'gemini-2.5-flash',
+        maxOutputTokens: 1024,
+        timeoutMs: 25000,
+      });
+
+      let parsed = null;
+      try { parsed = JSON.parse(raw); } catch (_) {
+        const m = String(raw || '').match(/\{[\s\S]*\}/);
+        if (m) { try { parsed = JSON.parse(m[0]); } catch (__) {} }
+      }
+      if (!parsed || typeof parsed !== 'object') {
+        // graceful: не падаем, просим переформулировать
+        return res.json({ ready: false, questions: ['Уточните, пожалуйста, детали ещё раз — я не смог разобрать ответ.'], filled: {}, missing: [], summary: '' });
+      }
+      return res.json({
+        ready: !!parsed.ready,
+        questions: Array.isArray(parsed.questions) ? parsed.questions.slice(0, 4) : [],
+        filled: (parsed.filled && typeof parsed.filled === 'object') ? parsed.filled : {},
+        missing: Array.isArray(parsed.missing) ? parsed.missing : [],
+        summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+      });
+    } catch (err) {
+      console.error('[draft-intake] error:', err.message);
+      return res.status(500).json({ error: 'Сбой интервьюера: ' + err.message });
     }
   });
 

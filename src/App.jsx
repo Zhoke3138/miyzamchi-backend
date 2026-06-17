@@ -1283,27 +1283,124 @@ const ISK_TEST_BLOCKS = [
 ];
 
 /* ═══════════ CREATE DOC MODE (Фаза 1 — заглушка + тест-кнопка) ═══════════ */
+// Типы документов для шага выбора. Активен иск (Фаза 2); остальные — скоро.
+const DOC_TYPES = [
+  { k: 'isk',        label: 'Исковое заявление', blurb: 'Обращение в суд',        active: true  },
+  { k: 'pretenziya', label: 'Претензия',         blurb: 'Досудебное требование',  active: false },
+  { k: 'zayavlenie', label: 'Заявление',         blurb: 'Обращение в орган',      active: false },
+];
+const INTAKE_GREETING = {
+  isk: 'Опишите ситуацию своими словами: в какой суд подаём иск, кто истец и кто ответчик, что произошло и чего вы требуете. Если чего-то не хватит — я уточню.',
+};
+
 const CreateDocMode = ({ onToast }) => {
-  const { tr } = useI18n();
-  const [busy, setBusy] = useState(false);
-  const runTest = async () => {
-    if (busy) return;
-    setBusy(true);
-    try { await renderLegalDocument(ISK_TEST_BLOCKS, { onToast, name: 'Исковое заявление.docx' }); }
-    finally { setBusy(false); }
+  const [step, setStep]       = useState('pick');   // pick | chat
+  const [docType, setDocType] = useState(null);
+  const [messages, setMessages] = useState([]);     // {role:'assistant'|'user', text}
+  const [input, setInput]     = useState('');
+  const [busy, setBusy]       = useState(false);     // интервьюер думает
+  const [ready, setReady]     = useState(false);     // досье собрано
+  const [genBusy, setGenBusy] = useState(false);
+  const listRef = useRef(null);
+  useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, busy]);
+
+  const pickType = (t) => {
+    setDocType(t); setStep('chat'); setReady(false);
+    setMessages([{ role: 'assistant', text: INTAKE_GREETING[t] || 'Опишите суть документа.' }]);
   };
-  return (
-    <div style={{ padding: 'var(--s-4)', display: 'flex', flexDirection: 'column', gap: 'var(--s-3)', height: '100%' }}>
-      <div>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-xl)', color: 'var(--text-main)', margin: 0 }}>{tr('docs_create_title')}</h3>
-        <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 'var(--s-1h)', lineHeight: 1.5 }}>{tr('docs_create_hint')}</p>
+  const restart = () => { setStep('pick'); setDocType(null); setMessages([]); setInput(''); setReady(false); };
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    const next = [...messages, { role: 'user', text }];
+    setMessages(next); setInput(''); setBusy(true);
+    try {
+      const res = await fetch(`${_ensureBackend()}/api/v2/draft-intake`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docType, messages: next }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data.ready) {
+        setReady(true);
+        const sum = data.summary ? `Досье собрано:\n\n${data.summary}\n\n` : 'Досье собрано.\n\n';
+        setMessages(m => [...m, { role: 'assistant', text: sum + '✅ Можно переходить к генерации документа.' }]);
+      } else {
+        const qs = (data.questions && data.questions.length) ? data.questions : ['Уточните, пожалуйста, детали.'];
+        setMessages(m => [...m, { role: 'assistant', text: qs.map((q, i) => qs.length > 1 ? `${i + 1}. ${q}` : q).join('\n') }]);
+      }
+    } catch (e) {
+      console.error('[draft-intake]', e);
+      setMessages(m => [...m, { role: 'assistant', text: '⚠️ Не удалось связаться с интервьюером. Попробуйте ещё раз.' }]);
+      onToast && onToast('warning', 'Ошибка интервьюера');
+    } finally { setBusy(false); }
+  };
+
+  const generate = async () => {
+    if (genBusy) return; setGenBusy(true);
+    try {
+      // Фаза 2B (планировщик→RAG→драфтер) — следующий шаг. Пока показываем
+      // тест-документ движка, чтобы было видно финал флоу.
+      onToast && onToast('law', 'Генерация по досье — Фаза 2B. Показываю пример движка.');
+      await renderLegalDocument(ISK_TEST_BLOCKS, { onToast, name: 'Исковое заявление.docx' });
+    } finally { setGenBusy(false); }
+  };
+
+  // ── ШАГ 1: выбор типа ──
+  if (step === 'pick') {
+    return (
+      <div style={{ padding: 'var(--s-4)', display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
+        <div>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-xl)', color: 'var(--text-main)', margin: 0 }}>Создание документа</h3>
+          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 'var(--s-1)' }}>Выберите тип — затем опишите ситуацию, ИИ задаст уточняющие вопросы и соберёт досье.</p>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+          {DOC_TYPES.map(d => (
+            <button key={d.k} type="button" disabled={!d.active}
+              onClick={() => d.active && pickType(d.k)}
+              style={{ textAlign: 'left', padding: 'var(--s-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: d.active ? 'var(--bg-app)' : 'var(--hover)', cursor: d.active ? 'pointer' : 'default', opacity: d.active ? 1 : 0.55, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--s-2)', fontFamily: 'var(--font-sans)' }}>
+              <span>
+                <span style={{ display: 'block', fontWeight: 600, fontSize: 'var(--text-base)', color: 'var(--text-main)' }}>{d.label}</span>
+                <span style={{ display: 'block', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>{d.blurb}</span>
+              </span>
+              {!d.active && <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--muted)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-pill)', padding: '2px 8px' }}>скоро</span>}
+              {d.active && <span aria-hidden="true" style={{ color: 'var(--muted)', fontSize: 16 }}>→</span>}
+            </button>
+          ))}
+        </div>
       </div>
-      <div style={{ marginTop: 'auto', borderTop: '1px dashed var(--border-color)', paddingTop: 'var(--s-3)' }}>
-        <div style={{ fontSize: 'var(--text-2xs)', textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)', marginBottom: 'var(--s-2)' }}>Phase 1 · движок форматирования</div>
-        <button type="button" onClick={runTest} disabled={busy}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-1h)', padding: 'var(--s-2) var(--s-3h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: busy ? 'var(--hover)' : 'linear-gradient(135deg,var(--accent),var(--accent2))', color: busy ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: busy ? 'default' : 'pointer', fontFamily: 'var(--font-sans)' }}>
-          {busy ? 'Генерация…' : tr('docs_test_btn')}
+    );
+  }
+
+  // ── ШАГ 2: диалог-досье ──
+  const tplLabel = (DOC_TYPES.find(d => d.k === docType) || {}).label || 'Документ';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 0 var(--s-2) 0', borderBottom: '1px solid var(--border-color)' }}>
+        <span style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-main)' }}>{tplLabel}</span>
+        <button type="button" onClick={restart} style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '3px 8px', cursor: 'pointer' }}>Сменить тип</button>
+      </div>
+      <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: 'var(--s-2h) 0', display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+        {messages.map((m, i) => (
+          <div key={i} style={{ alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '88%', whiteSpace: 'pre-wrap', fontSize: 'var(--text-sm)', lineHeight: 1.5, padding: 'var(--s-1h) var(--s-2h)', borderRadius: m.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px', background: m.role === 'user' ? 'var(--accent-dim)' : 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }}>{m.text}</div>
+        ))}
+        {busy && <div style={{ alignSelf: 'flex-start', fontSize: 'var(--text-xs)', color: 'var(--muted)', padding: '0 var(--s-1)' }}>Интервьюер думает…</div>}
+      </div>
+      {ready && (
+        <button type="button" onClick={generate} disabled={genBusy}
+          style={{ margin: 'var(--s-2) 0', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: 'none', background: genBusy ? 'var(--hover)' : 'linear-gradient(135deg,var(--accent),var(--accent2))', color: genBusy ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: genBusy ? 'default' : 'pointer', fontFamily: 'var(--font-sans)' }}>
+          {genBusy ? 'Генерация…' : '⚖️ Сгенерировать документ'}
         </button>
+      )}
+      <div style={{ display: 'flex', gap: 'var(--s-1h)', alignItems: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: 'var(--s-2)' }}>
+        <textarea value={input} onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+          rows={Math.min(5, Math.max(1, input.split('\n').length))}
+          placeholder="Опишите ситуацию или ответьте на вопрос…"
+          style={{ flex: 1, resize: 'none', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: 'var(--text-sm)', lineHeight: 1.5, padding: 'var(--s-1h) var(--s-2)', fontFamily: 'var(--font-sans)', outline: 'none' }}/>
+        <button type="button" onClick={send} disabled={busy || !input.trim()}
+          style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 'var(--radius-sm)', border: 'none', background: (busy || !input.trim()) ? 'var(--hover)' : 'var(--primary)', color: (busy || !input.trim()) ? 'var(--muted)' : '#fff', cursor: (busy || !input.trim()) ? 'default' : 'pointer', fontSize: 15 }}>➤</button>
       </div>
     </div>
   );
