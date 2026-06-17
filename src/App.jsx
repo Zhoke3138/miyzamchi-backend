@@ -1128,6 +1128,201 @@ const AnalyzeDocsMode = () => {
   );
 };
 
+/* ═══════════ LEGAL DOCUMENT RENDERER (Super Doc, Фаза 1) ═══════════
+   Превращает структурированный JSON-документ (DocBlock[]) в готовый
+   юридически оформленный документ в SuperDoc: шапка справа, заголовок по
+   центру, тело по ширине, жирность/курсив (цитаты НПА)/подчёркивание,
+   шрифт Times New Roman. Генерация НАЧИСТО (без Track Changes) в НОВОМ табе.
+
+   Контракт блока:
+     { kind, align?, runs: [{ t, bold?, italic?, underline?, cite? }] }
+   kind → дефолтное выравнивание (если align не задан явно). */
+const LEGAL_KIND_ALIGN = {
+  court: 'left', party_header: 'right', spacer: 'left',
+  title: 'center', subtitle: 'center', paragraph: 'justify',
+  demand_heading: 'left', demand_item: 'left',
+  attachment_heading: 'left', attachment_item: 'left', signature: 'right',
+};
+const LEGAL_FONT = 'Times New Roman, serif';
+
+// Имя атрибута выравнивания в схеме редактора (SuperDoc/ProseMirror —
+// обычно textAlign; пробуем альтернативы, чтобы не зависеть от версии).
+const _pickAlignAttr = (nodeType) => {
+  const attrs = (nodeType && nodeType.spec && nodeType.spec.attrs) || {};
+  for (const c of ['textAlign', 'align', 'alignment']) if (c in attrs) return c;
+  return null;
+};
+
+// Ждём, пока после newDoc смонтируется СВЕЖИЙ редактор (window.docEngine
+// переустанавливается в onEditorCreate при remount'е по новому activeTab).
+const _waitFreshEditor = (prev, timeoutMs = 8000) => new Promise((resolve) => {
+  const start = Date.now();
+  const tick = () => {
+    const e = window.docEngine;
+    const ready = e && e.view && e.view.state;
+    if (ready && (e !== prev || prev == null)) return resolve(e);
+    if (Date.now() - start > timeoutMs) return resolve(ready ? e : null);
+    setTimeout(tick, 120);
+  };
+  tick();
+});
+
+async function renderLegalDocument(blocks, opts = {}) {
+  const toast = opts.onToast;
+  if (!Array.isArray(blocks) || !blocks.length) { toast && toast('warning', 'Пустой документ'); return false; }
+
+  // 1. Новый чистый таб (генерация начисто, без Track Changes).
+  const prev = window.docEngine || null;
+  try { if (window.__ideHandleAction) window.__ideHandleAction('newDoc', opts.name || 'Документ.docx'); }
+  catch (e) { console.warn('[renderLegalDocument] newDoc dispatch failed', e); }
+
+  // 2. Ждём готовности нового редактора.
+  const editor = await _waitFreshEditor(prev, 8000);
+  if (!editor || !editor.view || !editor.view.state) { toast && toast('warning', 'Редактор не готов'); return false; }
+
+  try {
+    const view = editor.view, state = view.state, schema = state.schema;
+    const paraType = schema.nodes.paragraph;
+    if (!paraType) { toast && toast('warning', 'Схема редактора без paragraph'); return false; }
+    const alignAttr = _pickAlignAttr(paraType);
+    const fontMark = schema.marks.textStyle || null;
+
+    // run → text-нода с марками. ProseMirror text не может содержать \n —
+    // поэтому каждый блок = один абзац (многострочность бьётся на блоки выше).
+    const mkText = (run) => {
+      const t = String((run && run.t) || '').replace(/\n+/g, ' ').trim();
+      if (!t) return null;
+      const build = (useFont) => {
+        const marks = [];
+        if (run.bold && schema.marks.bold) marks.push(schema.marks.bold.create());
+        if (run.italic && schema.marks.italic) marks.push(schema.marks.italic.create());
+        if (run.underline && schema.marks.underline) marks.push(schema.marks.underline.create());
+        if (useFont && fontMark) marks.push(fontMark.create({ fontFamily: LEGAL_FONT }));
+        return schema.text(t, marks.length ? marks : undefined);
+      };
+      try { return build(true); } catch (_) { try { return build(false); } catch (__) { try { return schema.text(t); } catch (___) { return null; } } }
+    };
+
+    const mkPara = (block) => {
+      const align = block.align || LEGAL_KIND_ALIGN[block.kind] || 'left';
+      const attrs = (alignAttr && align) ? { [alignAttr]: align } : null;
+      const inline = (block.runs || []).map(mkText).filter(Boolean);
+      let node = null;
+      try { node = paraType.createAndFill(attrs, inline.length ? inline : undefined); }
+      catch (e) { try { node = paraType.createAndFill(null, inline.length ? inline : undefined); } catch (_) { node = null; } }
+      return node;
+    };
+
+    const nodes = blocks.map(mkPara).filter(Boolean);
+    if (!nodes.length) { toast && toast('warning', 'Не удалось собрать документ'); return false; }
+
+    // 3. Одна транзакция: заменяем пустое тело нового дока готовыми абзацами.
+    view.dispatch(state.tr.replaceWith(0, state.doc.content.size, nodes));
+    try { editor.commands && editor.commands.focus && editor.commands.focus('start'); } catch (_) {}
+    console.log('[renderLegalDocument] rendered', { blocks: blocks.length, nodes: nodes.length, alignAttr, font: !!fontMark });
+    toast && toast('check', 'Документ сгенерирован');
+    return true;
+  } catch (e) {
+    console.error('[renderLegalDocument] failed:', e);
+    toast && toast('warning', 'Ошибка генерации: ' + ((e && e.message) || e));
+    return false;
+  }
+}
+
+/* ═══════════ ТЕСТОВЫЙ JSON ИСКА (Фаза 1 — проверка движка) ═══════════ */
+const ISK_TEST_BLOCKS = [
+  { kind: 'court', align: 'right', runs: [{ t: 'Свердловский районный суд г. Бишкек' }] },
+  { kind: 'spacer', runs: [] },
+  { kind: 'party_header', runs: [{ t: 'Истец: ОсОО «Бишкектеплосервис»' }] },
+  { kind: 'party_header', runs: [{ t: 'г. Бишкек, ул. Рыскулова, 34' }] },
+  { kind: 'party_header', runs: [{ t: 'ИНН: 00710201910236' }] },
+  { kind: 'party_header', runs: [{ t: 'Ответчик: гр. Иванов Иван Иванович' }] },
+  { kind: 'party_header', runs: [{ t: 'г. Бишкек, ул. Ленина, 1, кв. 8' }] },
+  { kind: 'spacer', runs: [] },
+  { kind: 'title', runs: [{ t: 'ИСКОВОЕ ЗАЯВЛЕНИЕ', bold: true }] },
+  { kind: 'subtitle', runs: [{ t: 'о взыскании задолженности за потреблённую тепловую энергию в сумме 13 564,86 сом' }] },
+  { kind: 'spacer', runs: [] },
+  { kind: 'paragraph', runs: [{ t: 'На основании договора доверительного управления имуществом от 13 октября 2023 года ОсОО «Бишкектеплосервис» приняло оборудование газовой котельной и обеспечивает бесперебойную поставку тепловой энергии потребителям.' }] },
+  { kind: 'paragraph', runs: [
+      { t: 'Согласно ' },
+      { t: 'статье 487 Гражданского кодекса Кыргызской Республики', italic: true, cite: 'ГК КР ст.487' },
+      { t: ', по договору энергоснабжения энергоснабжающая организация обязуется подавать абоненту энергию, а абонент обязуется оплачивать принятую энергию.' },
+  ] },
+  { kind: 'paragraph', runs: [
+      { t: 'В соответствии с ' },
+      { t: 'частью 5 статьи 222 Гражданского кодекса Кыргызской Республики', italic: true, cite: 'ГК КР ст.222 ч.5' },
+      { t: ', собственник несёт бремя содержания принадлежащего ему имущества, включая оплату тепловой энергии.' },
+  ] },
+  { kind: 'paragraph', runs: [
+      { t: 'Сумма задолженности ответчика по состоянию на дату подачи иска составляет ' },
+      { t: '13 564,86 сом', bold: true, underline: true },
+      { t: ' и до настоящего времени не погашена.' },
+  ] },
+  { kind: 'spacer', runs: [] },
+  { kind: 'demand_heading', runs: [{ t: 'Прошу:', bold: true, underline: true }] },
+  { kind: 'demand_item', runs: [{ t: '1. Взыскать с ответчика в пользу ОсОО «Бишкектеплосервис» задолженность за тепловую энергию в сумме 13 564,86 сом;' }] },
+  { kind: 'demand_item', runs: [{ t: '2. Взыскать с ответчика государственную пошлину в сумме 100 сом.' }] },
+  { kind: 'paragraph', runs: [{ t: 'Всего взыскать: 13 564,86 сом.', bold: true }] },
+  { kind: 'spacer', runs: [] },
+  { kind: 'attachment_heading', runs: [{ t: 'Приложение:', bold: true }] },
+  { kind: 'attachment_item', runs: [{ t: '1. Договор доверительного управления имуществом;' }] },
+  { kind: 'attachment_item', runs: [{ t: '2. Расчёт суммы задолженности;' }] },
+  { kind: 'attachment_item', runs: [{ t: '3. Копия претензии;' }] },
+  { kind: 'attachment_item', runs: [{ t: '4. Квитанция об оплате государственной пошлины.' }] },
+  { kind: 'spacer', runs: [] },
+  { kind: 'signature', runs: [{ t: 'Представитель по доверенности _____________ / И.О. Фамилия' }] },
+];
+
+/* ═══════════ CREATE DOC MODE (Фаза 1 — заглушка + тест-кнопка) ═══════════ */
+const CreateDocMode = ({ onToast }) => {
+  const { tr } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const runTest = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await renderLegalDocument(ISK_TEST_BLOCKS, { onToast, name: 'Исковое заявление.docx' }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div style={{ padding: 'var(--s-4)', display: 'flex', flexDirection: 'column', gap: 'var(--s-3)', height: '100%' }}>
+      <div>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-xl)', color: 'var(--text-main)', margin: 0 }}>{tr('docs_create_title')}</h3>
+        <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 'var(--s-1h)', lineHeight: 1.5 }}>{tr('docs_create_hint')}</p>
+      </div>
+      <div style={{ marginTop: 'auto', borderTop: '1px dashed var(--border-color)', paddingTop: 'var(--s-3)' }}>
+        <div style={{ fontSize: 'var(--text-2xs)', textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--muted)', marginBottom: 'var(--s-2)' }}>Phase 1 · движок форматирования</div>
+        <button type="button" onClick={runTest} disabled={busy}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--s-1h)', padding: 'var(--s-2) var(--s-3h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: busy ? 'var(--hover)' : 'linear-gradient(135deg,var(--accent),var(--accent2))', color: busy ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: busy ? 'default' : 'pointer', fontFamily: 'var(--font-sans)' }}>
+          {busy ? 'Генерация…' : tr('docs_test_btn')}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+/* ═══════════ DOCUMENTS MODE — оболочка с вкладками «Анализ | Создать» ═══════════ */
+const DocumentsMode = ({ onToast }) => {
+  const { tr } = useI18n();
+  const [tab, setTab] = useState('analyze');
+  const tabBtn = (k, label) => (
+    <button key={k} type="button" onClick={() => setTab(k)}
+      style={{ flex: 1, padding: 'var(--s-1h) var(--s-2)', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 'var(--text-sm)', fontWeight: 600, fontFamily: 'var(--font-sans)', background: tab === k ? 'var(--primary)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-muted)', transition: 'background .15s, color .15s' }}>
+      {label}
+    </button>
+  );
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', gap: 'var(--s-1)', padding: 'var(--s-1h)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-pill)', margin: '0 0 var(--s-2h) 0' }}>
+        {tabBtn('analyze', tr('docs_tab_analyze'))}
+        {tabBtn('create', tr('docs_tab_create'))}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        {tab === 'analyze' ? <AnalyzeDocsMode /> : <CreateDocMode onToast={onToast} />}
+      </div>
+    </div>
+  );
+};
+
 /* ═══════════ MARKDOWN HELPER (с XSS-санитизацией через DOMPurify) ═══════════ */
 // Sanitize HTML после marked.parse() — основная защита от XSS.
 // Если DOMPurify не загрузился (CDN-сбой) — fallback на escape всего HTML.
@@ -7634,9 +7829,9 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           {/* Переключатель режима Чат / Агент — пилюля с двумя сегментами */}
           <div role="tablist" aria-label="Режим работы ИИ" style={{display:'inline-flex',padding:2,borderRadius:'var(--radius-pill)',background:'var(--bg-app)',border:'1px solid var(--border-color)',fontFamily:'var(--font-sans)'}}>
             {[
-              {k:'chat',          label:'Чат',                icon:'sparkles',  title:'Чат — консультация без правки документа'},
-              {k:'agent',         label:'Агент',              icon:'edit',      title:'Агент — редактирует открытый документ'},
-              {k:'analyze-docs',  label:'Анализ Документов',  icon:'file',      title:'Анализ — загрузите файл для аудита или два для сравнения редакций'}
+              {k:'chat',       labelKey:'mode_chat',      icon:'sparkles',  title:'Чат — консультация без правки документа'},
+              {k:'agent',      labelKey:'mode_agent',     icon:'edit',      title:'Агент — редактирует открытый документ'},
+              {k:'documents',  labelKey:'mode_documents', icon:'file',      title:'Документы — анализ загруженного файла или создание нового документа'}
             ].map(opt => {
               const active = chatMode === opt.k;
               return (
@@ -7662,7 +7857,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                   onMouseLeave={e=>{ if(!active){ e.currentTarget.style.color='var(--text-muted)'; } }}
                 >
                   <Ico k={opt.icon} sz={13} col={active ? '#fff' : 'currentColor'}/>
-                  {opt.label}
+                  {tr(opt.labelKey)}
                 </button>
               );
             })}
@@ -7679,8 +7874,8 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         </div>
       </div>
       <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions text" aria-label="История диалога с ИИ" style={{flex:1,overflowY:'auto',padding:'var(--s-3h)'}}>
-        {chatMode === 'analyze-docs' && <AnalyzeDocsMode/>}
-        {chatMode !== 'analyze-docs' && exchanges.length === 0 && !thinking && agentSteps.length === 0 && (
+        {chatMode === 'documents' && <DocumentsMode onToast={onToast}/>}
+        {chatMode !== 'documents' && exchanges.length === 0 && !thinking && agentSteps.length === 0 && (
           <div style={{display:'flex',flexDirection:'column',padding:'var(--s-1) 0',gap:'var(--s-4)',animation:'fadeIn .35s ease'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
               <div style={{display:'flex',flexDirection:'column',gap:'var(--s-half)'}}>
@@ -7714,7 +7909,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
 
           </div>
         )}
-        {chatMode !== 'analyze-docs' && exchanges.map((ex,ei)=>(
+        {chatMode !== 'documents' && exchanges.map((ex,ei)=>(
           <div key={ei} style={{marginBottom:'var(--s-1h)',animation:'fadeIn .25s ease'}}>
             {/* User message — pill справа, индиго градиент */}
             <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'var(--s-2h)'}}>
@@ -7736,7 +7931,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             {ei<exchanges.length-1 && <div style={{height:'var(--s-3)',borderBottom:'1px dashed var(--border-color)',marginBottom:'var(--s-3)',opacity:.5}}/>}
           </div>
         ))}
-        {chatMode !== 'analyze-docs' && agentSteps.length > 0 && (
+        {chatMode !== 'documents' && agentSteps.length > 0 && (
           <div style={{marginBottom:'var(--s-2h)', padding:'var(--s-2h) var(--s-3h)', background:'var(--bg-editor)', border:'1px solid var(--border-color)', borderRadius:'var(--radius-sm)', fontFamily:'var(--font-mono)', fontSize:'var(--text-xs)', color:'var(--text)', lineHeight:'var(--lh-normal)'}}>
             <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'var(--s-2)'}}>
               <div style={{fontWeight:600, color:'var(--text)', display:'flex', alignItems:'center', gap:'var(--s-1h)'}}>
@@ -7792,7 +7987,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           </button>
         </div>
       )}
-      <div style={{padding:'var(--s-2) var(--s-2h)',borderTop:'1px solid var(--border)',flexShrink:0,background:'var(--bg-bar)',display: chatMode === 'analyze-docs' ? 'none' : 'block'}}>
+      <div style={{padding:'var(--s-2) var(--s-2h)',borderTop:'1px solid var(--border)',flexShrink:0,background:'var(--bg-bar)',display: chatMode === 'documents' ? 'none' : 'block'}}>
         {exchanges.length === 0 && attachments.length === 0 && (
           <>
           <div style={{display:'flex',gap:'var(--s-1h)',marginBottom:'var(--s-2)',flexWrap:'wrap'}}>{(agent

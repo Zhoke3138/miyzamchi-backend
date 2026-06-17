@@ -86,7 +86,16 @@ export const TRANSLATIONS = {
     lp_card1_desc: 'Профессиональный редактор юридических документов на SuperDoc: правки в режиме рецензирования, экспорт в Word и PDF, AI-агент прямо в тексте.',
     lp_card2_desc: 'Мультиагентная RAG-система по законодательству КР: поиск противоречий с НПА, цитаты со ссылками на статьи, аудит договоров и исков.',
     lp_card3_desc: 'Автоматизация работы с клиентами: приём заявок, выставление счетов и напоминания прямо в WhatsApp — без ручной рутины.',
-    lp_footer: 'Юридический ИИ-ассистент Кыргызской Республики'
+    lp_footer: 'Юридический ИИ-ассистент Кыргызской Республики',
+    // ── Режимы ИИ-панели + режим «Документы» ──
+    mode_chat: 'Чат',
+    mode_agent: 'Агент',
+    mode_documents: 'Документы',
+    docs_tab_analyze: 'Анализ',
+    docs_tab_create: 'Создать',
+    docs_create_title: 'Создание документа',
+    docs_create_hint: 'Здесь появится форма-бриф: тип документа (претензия, иск, заявление), стороны, суммы и суть. Пока — тестовая отрисовка движка форматирования.',
+    docs_test_btn: '🧪 Тест: Исковое заявление'
   },
   ky: {
     // ── Лендинг-чат (/) ──
@@ -140,7 +149,16 @@ export const TRANSLATIONS = {
     lp_card1_desc: 'SuperDoc негизинде юридикалык документтердин кесипкөй редактору: рецензиялоо режиминде оңдоолор, Word жана PDF форматына экспорт, текстте AI-агент.',
     lp_card2_desc: 'КР мыйзамдары боюнча көп агенттик RAG-система: ЧУА менен карама-каршылыктарды издөө, беренелерге шилтемелер менен цитаталар, келишимдерди жана доолорду текшерүү.',
     lp_card3_desc: 'Кардарлар менен иштөөнү автоматташтыруу: арыздарды кабыл алуу, эсеп коюу жана эскертүүлөр түз эле WhatsApp\'та — кол менен иштебестен.',
-    lp_footer: 'Кыргыз Республикасынын юридикалык ИИ-жардамчысы'
+    lp_footer: 'Кыргыз Республикасынын юридикалык ИИ-жардамчысы',
+    // ── ИИ-панелдин режимдери + «Документтер» режими ──
+    mode_chat: 'Маек',
+    mode_agent: 'Агент',
+    mode_documents: 'Документтер',
+    docs_tab_analyze: 'Талдоо',
+    docs_tab_create: 'Түзүү',
+    docs_create_title: 'Документ түзүү',
+    docs_create_hint: 'Бул жерде форма-бриф пайда болот: документтин түрү (доомат, доо арыз, арыз), тараптар, суммалар жана маңызы. Азырынча — форматтоо кыймылдаткычынын сыноо чийими.',
+    docs_test_btn: '🧪 Сыноо: Доо арыз'
   },
   en: {
     // ── Landing chat (/) ──
@@ -194,7 +212,16 @@ export const TRANSLATIONS = {
     lp_card1_desc: 'A professional legal document editor built on SuperDoc: track-changes editing, export to Word and PDF, and an AI agent right inside the text.',
     lp_card2_desc: 'A multi-agent RAG system for Kyrgyz law: detects contradictions with regulations, cites articles with references, audits contracts and claims.',
     lp_card3_desc: 'Client workflow automation: intake requests, issue invoices, and send reminders right in WhatsApp — no manual routine.',
-    lp_footer: 'AI legal assistant for the Kyrgyz Republic'
+    lp_footer: 'AI legal assistant for the Kyrgyz Republic',
+    // ── AI panel modes + Documents mode ──
+    mode_chat: 'Chat',
+    mode_agent: 'Agent',
+    mode_documents: 'Documents',
+    docs_tab_analyze: 'Analyze',
+    docs_tab_create: 'Create',
+    docs_create_title: 'Create a document',
+    docs_create_hint: 'A guided brief will appear here: document type (demand letter, claim, application), parties, amounts and the gist. For now — a test render of the formatting engine.',
+    docs_test_btn: '🧪 Test: Statement of Claim'
   }
 };
 
