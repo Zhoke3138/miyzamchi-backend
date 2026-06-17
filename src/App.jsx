@@ -1316,9 +1316,12 @@ const CreateDocMode = ({ onToast }) => {
     const next = [...messages, { role: 'user', text }];
     setMessages(next); setInput(''); setBusy(true);
     try {
+      // В модель шлём всю историю (память диалога), КРОМЕ служебных ошибок —
+      // чтобы они не засоряли контекст интервьюера.
+      const payloadMsgs = next.filter(m => !(m.role === 'assistant' && /не до конца понял|не смог разобрать|Не удалось связаться/i.test(m.text)));
       const res = await fetch(`${_ensureBackend()}/api/v2/draft-intake`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docType, messages: next }),
+        body: JSON.stringify({ docType, messages: payloadMsgs }),
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();

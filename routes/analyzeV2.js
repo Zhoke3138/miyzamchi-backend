@@ -554,18 +554,23 @@ ${checklist}
         systemPrompt: INTAKE_SYS(tpl.label, buildChecklist(docType)),
         userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON-досье по правилам.`,
         model: 'gemini-2.5-flash',
-        maxOutputTokens: 1024,
+        maxOutputTokens: 2048,
         timeoutMs: 25000,
+        // КРИТИЧНО: отключаем CoT. Иначе на длинном диалоге thinking съедает
+        // бюджет токенов, JSON обрезается → пустой text() → парс падает.
+        thinkingConfig: { thinkingBudget: 0 },
       });
 
+      // Упрочнённый парс: срезаем ```json-обёртки и берём {...} от первой { до последней }.
+      const cleaned = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
       let parsed = null;
-      try { parsed = JSON.parse(raw); } catch (_) {
-        const m = String(raw || '').match(/\{[\s\S]*\}/);
-        if (m) { try { parsed = JSON.parse(m[0]); } catch (__) {} }
+      try { parsed = JSON.parse(cleaned); } catch (_) {
+        const a = cleaned.indexOf('{'), b = cleaned.lastIndexOf('}');
+        if (a !== -1 && b > a) { try { parsed = JSON.parse(cleaned.slice(a, b + 1)); } catch (__) {} }
       }
       if (!parsed || typeof parsed !== 'object') {
-        // graceful: не падаем, просим переформулировать
-        return res.json({ ready: false, questions: ['Уточните, пожалуйста, детали ещё раз — я не смог разобрать ответ.'], filled: {}, missing: [], summary: '' });
+        console.warn(`[draft-intake] unparseable output (len=${String(raw || '').length}): ${String(raw || '').slice(0, 200)}`);
+        return res.json({ ready: false, questions: ['Повторите, пожалуйста, последнюю мысль другими словами — я не до конца понял.'], filled: {}, missing: [], summary: '', _parseFail: true });
       }
       return res.json({
         ready: !!parsed.ready,
