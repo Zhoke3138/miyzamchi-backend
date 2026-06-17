@@ -553,12 +553,11 @@ ${checklist}
       const raw = await clients.geminiJson({
         systemPrompt: INTAKE_SYS(tpl.label, buildChecklist(docType)),
         userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON-досье по правилам.`,
-        model: 'gemini-2.5-flash',
+        // gemini-3.1-flash-lite — worker-модель: быстрее и не-thinking, поэтому
+        // бюджет токенов не уходит в CoT и JSON не обрезается (без thinkingConfig).
+        model: 'gemini-3.1-flash-lite',
         maxOutputTokens: 2048,
         timeoutMs: 25000,
-        // КРИТИЧНО: отключаем CoT. Иначе на длинном диалоге thinking съедает
-        // бюджет токенов, JSON обрезается → пустой text() → парс падает.
-        thinkingConfig: { thinkingBudget: 0 },
       });
 
       // Упрочнённый парс: срезаем ```json-обёртки и берём {...} от первой { до последней }.
