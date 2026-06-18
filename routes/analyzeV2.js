@@ -476,7 +476,30 @@ function createAnalyzeV2Router(deps = {}) {
         if (d.text) { sawContent = true; sse({ text: d.text }); }
         // d.reasoning НЕ выводим в UI — это служебная цепочка мыслей.
       };
-      const report = (await resolvedDeps.judge?.({ graph, effort: route.reasoning_effort, model: route.model, thinking: route.thinking, state, onDelta: onJudgeDelta })) || { summary: '', risks: graph };
+      // ── Живой прогресс Судьи во время «раздумий» (reasoning) ──
+      // До первого content-токена модель молча думает (v4-pro: десятки секунд).
+      // Чтобы юрист видел, ЧТО происходит, крутим фазы + секундомер на том же
+      // loading-шаге 'judge' (фронт сам рисует спиннер). Стоп — как пошёл текст.
+      const judgeStart = Date.now();
+      const judgePhases = [
+        'Изучаю выявленные расхождения',
+        'Сверяю формулировки с нормами НПА КР',
+        'Оцениваю серьёзность и риски',
+        'Готовлю исполнительное резюме',
+      ];
+      let jp = 0;
+      const judgeTicker = setInterval(() => {
+        if (sawContent || res.writableEnded) return;
+        const el = Math.round((Date.now() - judgeStart) / 1000);
+        step({ id: 'judge', status: 'loading', text: `🧠 ${route.name}: ${judgePhases[jp % judgePhases.length]}…`, reason: `идёт анализ · ${el} c` });
+        jp += 1;
+      }, 2500);
+      let report;
+      try {
+        report = (await resolvedDeps.judge?.({ graph, effort: route.reasoning_effort, model: route.model, thinking: route.thinking, state, onDelta: onJudgeDelta })) || { summary: '', risks: graph };
+      } finally {
+        clearInterval(judgeTicker);
+      }
       step({ id: 'judge', status: 'success', text: 'Итоговый отчёт готов' });
 
       // Текст судьи (markdown, 2 секции). Если content уже ушёл дельтами выше —
@@ -822,10 +845,61 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
         'Составь ПОЛНЫЙ документ с развёрнутым правовым обоснованием и верни JSON-массив блоков (DocBlock[]).',
       ].join('\n');
 
-      // Heartbeat: гоним «тики» по мере content-дельт, чтобы прокси Render не
-      // закрыл SSE за долгий ответ v4-pro. Сам текст в UI не выводим (это JSON).
-      let tick = 0;
-      const onDelta = (d) => { if (d && d.text) { tick += d.text.length; if (tick > 1200) { tick = 0; sse({ heartbeat: 1 }); } } };
+      // Нормализация одного блока (защита фронт-рендера от мусора).
+      const normalizeBlock = (b) => ({
+        kind: String((b && b.kind) || 'paragraph'),
+        ...(b && b.align ? { align: String(b.align) } : {}),
+        runs: Array.isArray(b && b.runs)
+          ? b.runs.filter((r) => r && typeof r === 'object').map((r) => ({
+              t: String(r.t == null ? '' : r.t),
+              ...(r.bold ? { bold: true } : {}),
+              ...(r.italic ? { italic: true } : {}),
+              ...(r.underline ? { underline: true } : {}),
+              ...(r.cite ? { cite: String(r.cite) } : {}),
+            }))
+          : [],
+      });
+
+      // Инкрементальный парсер JSON-массива: по мере того как v4-pro пишет
+      // массив блоков, выдёргиваем КАЖДЫЙ закрытый top-level объект и сразу
+      // шлём его событием { block } → во фронте документ появляется по частям.
+      // Состояние держим между дельтами (acc только растёт, scan не сбрасываем).
+      let acc = '';
+      let scan = 0, depth = 0, inStr = false, esc = false, objStart = -1;
+      let streamedCount = 0;
+      let hbReason = 0;
+      const feedStream = () => {
+        for (; scan < acc.length; scan++) {
+          const ch = acc[scan];
+          if (inStr) {
+            if (esc) esc = false;
+            else if (ch === '\\') esc = true;
+            else if (ch === '"') inStr = false;
+            continue;
+          }
+          if (ch === '"') { inStr = true; continue; }
+          if (ch === '{') { if (depth === 0) objStart = scan; depth += 1; }
+          else if (ch === '}') {
+            if (depth > 0) {
+              depth -= 1;
+              if (depth === 0 && objStart !== -1) {
+                const objStr = acc.slice(objStart, scan + 1);
+                objStart = -1;
+                try {
+                  const o = JSON.parse(objStr);
+                  if (o && (o.kind || o.runs)) { streamedCount += 1; sse({ block: normalizeBlock(o) }); }
+                } catch (_) { /* объект ещё не дописан корректно — пропускаем */ }
+              }
+            }
+          }
+        }
+      };
+      const onDelta = (d) => {
+        if (!d) return;
+        // Фаза reasoning (до контента): heartbeat, чтобы прокси Render держал SSE.
+        if (d.reasoning) { hbReason += d.reasoning.length; if (hbReason > 1500) { hbReason = 0; sse({ heartbeat: 1 }); } }
+        if (d.text) { acc += d.text; feedStream(); }
+      };
       const { text: draftText, model: usedModel } = await clients.deepseekReason({
         systemPrompt: DRAFTER_SYS(tpl),
         userPrompt: drafterUser,
@@ -833,7 +907,8 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
         onDelta,
       });
 
-      // Парс массива блоков ([...] или {blocks:[...]}).
+      // Финальный парс целиком ([...] или {blocks:[...]}) — канонический результат
+      // и фолбэк, если стрим-парсер что-то не выдернул (или формат-обёртка).
       const cleaned = String(draftText || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
       const tryParse = (s) => { try { return JSON.parse(s); } catch (_) { return null; } };
       let parsed = tryParse(cleaned);
@@ -847,26 +922,13 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
         return done();
       }
 
-      const safeBlocks = blocks
-        .filter((b) => b && typeof b === 'object')
-        .map((b) => ({
-          kind: String(b.kind || 'paragraph'),
-          ...(b.align ? { align: String(b.align) } : {}),
-          runs: Array.isArray(b.runs)
-            ? b.runs.filter((r) => r && typeof r === 'object').map((r) => ({
-                t: String(r.t == null ? '' : r.t),
-                ...(r.bold ? { bold: true } : {}),
-                ...(r.italic ? { italic: true } : {}),
-                ...(r.underline ? { underline: true } : {}),
-                ...(r.cite ? { cite: String(r.cite) } : {}),
-              }))
-            : [],
-        }));
+      const safeBlocks = blocks.filter((b) => b && typeof b === 'object').map(normalizeBlock);
 
-      console.log(`[draft-document] ${docType} → ${safeBlocks.length} блоков | norms=${articlesUsed.length} | model=${usedModel}`);
+      console.log(`[draft-document] ${docType} → ${safeBlocks.length} блоков (streamed=${streamedCount}) | norms=${articlesUsed.length} | model=${usedModel}`);
       sse({
         done: true,
         blocks: safeBlocks,
+        streamedCount,
         articlesUsed,
         route: { planner: 'gemini-3.1-flash-lite', selector: 'gemini-3.1-flash-lite', drafter: usedModel },
       });

@@ -1238,6 +1238,30 @@ async function renderLegalDocument(blocks, opts = {}) {
   }
 }
 
+/* ═══ Прогрессивная вставка: документ появляется по блокам во время генерации ═══ */
+// Открываем чистый таб ОДИН раз и возвращаем свежий редактор. Дальше блоки
+// дописываются по одному (_appendLegalBlock) — как печатает ИИ.
+const _openLegalDoc = async (opts = {}) => {
+  const prev = window.docEngine || null;
+  try { if (window.__ideHandleAction) window.__ideHandleAction('newDoc', opts.name || 'Документ.docx'); }
+  catch (e) { console.warn('[openLegalDoc] newDoc dispatch failed', e); }
+  const editor = await _waitFreshEditor(prev, 8000);
+  return (editor && editor.doc && typeof editor.doc.insert === 'function') ? editor : null;
+};
+// Дописываем один блок в конец. Курсор держим в конце (focus('end')) — тогда
+// последовательные insert'ы идут друг за другом, а не в начало.
+const _appendLegalBlock = async (editor, block) => {
+  try { editor.commands && editor.commands.focus && editor.commands.focus('end'); } catch (_) {}
+  const html = _blockToHtml(block);
+  const r = editor.doc.insert({ value: html, type: 'html' });
+  if (r && typeof r.then === 'function') { try { await r; } catch (_) {} }
+};
+// Финал: убрать пустые края, курсор в начало.
+const _finalizeLegalDoc = (editor) => {
+  setTimeout(() => { try { _trimEmptyEdges(editor); } catch (_) {} }, 60);
+  try { editor.commands && editor.commands.focus && editor.commands.focus('start'); } catch (_) {}
+};
+
 /* ═══════════ ТЕСТОВЫЙ JSON ИСКА (Фаза 1 — проверка движка) ═══════════ */
 const ISK_TEST_BLOCKS = [
   { kind: 'court', align: 'right', runs: [{ t: 'Свердловский районный суд г. Бишкек' }] },
@@ -1356,10 +1380,15 @@ const CreateDocMode = ({ onToast }) => {
         try { const e = await res.json(); if (e && e.error) msg = e.error; } catch (_) {}
         throw new Error(msg);
       }
+      const tplLabel = (DOC_TYPES.find(d => d.k === docType) || {}).label || 'Документ';
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
       let result = null, errMsg = null;
+      // Прогрессивная отрисовка: открываем редактор на первом блоке и дописываем
+      // блоки по мере прихода. failed → переходим на полный рендер в конце.
+      const streamed = [];
+      let editor = null, opened = false, failed = false;
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -1371,21 +1400,36 @@ const CreateDocMode = ({ onToast }) => {
           const payload = line.slice(5).trim();
           if (payload === '[DONE]') continue;
           let evt; try { evt = JSON.parse(payload); } catch (_) { continue; }
-          if (evt.stage) setGenStatus(evt.stage);
+          if (evt.block) {
+            streamed.push(evt.block);
+            setGenStatus(`✍️ Пишу документ… (блоков: ${streamed.length})`);
+            if (!failed) {
+              if (!opened) { opened = true; editor = await _openLegalDoc({ name: `${tplLabel}.docx` }); if (!editor) failed = true; }
+              if (editor) { try { await _appendLegalBlock(editor, evt.block); } catch (_) { failed = true; } }
+            }
+          }
+          else if (evt.stage) setGenStatus(evt.stage);
           else if (evt.error) errMsg = evt.error;
           else if (evt.done) result = evt;
           // evt.heartbeat игнорируем (только держит соединение живым).
         }
       }
       if (errMsg) throw new Error(errMsg);
-      if (!result || !Array.isArray(result.blocks) || !result.blocks.length) {
-        throw new Error('Пустой документ от генератора');
+      const finalBlocks = (result && Array.isArray(result.blocks) && result.blocks.length) ? result.blocks : streamed;
+      if (!finalBlocks.length) throw new Error('Пустой документ от генератора');
+
+      if (!failed && opened && editor && streamed.length) {
+        // Прогрессивная вставка прошла — просто финализируем.
+        setGenStatus('Готово ✓');
+        _finalizeLegalDoc(editor);
+        onToast && onToast('check', 'Документ сгенерирован');
+      } else {
+        // Фолбэк: рисуем целиком (стрим не сработал / формат-обёртка / нет блоков).
+        setGenStatus('Отрисовываю документ…');
+        await renderLegalDocument(finalBlocks, { onToast, name: `${tplLabel}.docx` });
       }
-      setGenStatus('Готово — отрисовываю в редакторе…');
-      const tplLabel = (DOC_TYPES.find(d => d.k === docType) || {}).label || 'Документ';
-      await renderLegalDocument(result.blocks, { onToast, name: `${tplLabel}.docx` });
-      const n = (result.articlesUsed || []).length;
-      if (n) onToast && onToast('check', `Документ готов · задействовано норм: ${n}`);
+      const n = (result && result.articlesUsed || []).length;
+      if (n) onToast && onToast('law', `Задействовано норм: ${n}`);
     } catch (e) {
       console.error('[draft-document]', e);
       onToast && onToast('warning', 'Ошибка генерации: ' + ((e && e.message) || e));
