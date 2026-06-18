@@ -1350,14 +1350,16 @@ const CreateDocMode = ({ onToast }) => {
   const [ready, setReady]     = useState(false);     // досье собрано
   const [genBusy, setGenBusy] = useState(false);
   const [genStatus, setGenStatus] = useState('');  // прогресс генерации (SSE-stage)
+  const [genDone, setGenDone]     = useState(false); // документ сгенерирован (показать «Скачать»)
+  const [genReview, setGenReview] = useState(null);  // результат самопроверки {ok, issues[]}
   const listRef = useRef(null);
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, busy]);
 
   const pickType = (t) => {
-    setDocType(t); setStep('chat'); setReady(false);
+    setDocType(t); setStep('chat'); setReady(false); setGenDone(false); setGenReview(null);
     setMessages([{ role: 'assistant', text: INTAKE_GREETING[t] || 'Опишите суть документа.' }]);
   };
-  const restart = () => { setStep('pick'); setDocType(null); setMessages([]); setInput(''); setReady(false); };
+  const restart = () => { setStep('pick'); setDocType(null); setMessages([]); setInput(''); setReady(false); setGenDone(false); setGenReview(null); };
 
   const send = async () => {
     const text = input.trim();
@@ -1389,8 +1391,10 @@ const CreateDocMode = ({ onToast }) => {
     } finally { setBusy(false); }
   };
 
+  const downloadDoc = () => { try { window.__ideHandleAction && window.__ideHandleAction('exportWord'); } catch (_) {} };
+
   const generate = async () => {
-    if (genBusy) return; setGenBusy(true); setGenStatus('Запускаю агентов…');
+    if (genBusy) return; setGenBusy(true); setGenStatus('Запускаю агентов…'); setGenDone(false); setGenReview(null);
     try {
       // Фаза 2B: мультиагентная research-коллегия (SSE):
       // планировщик → RAG по 4 группам норм → отборщик → драфтер v4-pro.
@@ -1454,6 +1458,8 @@ const CreateDocMode = ({ onToast }) => {
       }
       const n = (result && result.articlesUsed || []).length;
       if (n) onToast && onToast('law', `Задействовано норм: ${n}`);
+      setGenReview(result && result.review || null);
+      setGenDone(true);
     } catch (e) {
       console.error('[draft-document]', e);
       onToast && onToast('warning', 'Ошибка генерации: ' + ((e && e.message) || e));
@@ -1510,8 +1516,31 @@ const CreateDocMode = ({ onToast }) => {
           )}
           <button type="button" onClick={generate} disabled={genBusy}
             style={{ width: '100%', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: 'none', background: genBusy ? 'var(--hover)' : 'linear-gradient(135deg,var(--accent),var(--accent2))', color: genBusy ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: genBusy ? 'default' : 'pointer', fontFamily: 'var(--font-sans)' }}>
-            {genBusy ? 'Агенты работают…' : '⚖️ Сгенерировать документ'}
+            {genBusy ? 'Агенты работают…' : (genDone ? '⚖️ Перегенерировать' : '⚖️ Сгенерировать документ')}
           </button>
+
+          {genDone && !genBusy && (
+            <>
+              <button type="button" onClick={downloadDoc}
+                style={{ width: '100%', marginTop: 'var(--s-1h)', padding: 'var(--s-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
+                ⬇ Скачать .docx
+              </button>
+              {/* Карточка самопроверки */}
+              {genReview && (
+                <div style={{ marginTop: 'var(--s-2)', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
+                  <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: genReview.ok ? 'var(--green, #10a37f)' : 'var(--orange, #d97706)', marginBottom: (genReview.issues && genReview.issues.length) ? 'var(--s-1h)' : 0 }}>
+                    {genReview.ok ? '✓ Самопроверка: замечаний нет' : `⚠ Самопроверка: замечаний — ${genReview.issues.length}`}
+                  </div>
+                  {(genReview.issues || []).map((it, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 'var(--s-1)', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', lineHeight: 1.45, padding: '2px 0' }}>
+                      <span style={{ flexShrink: 0 }}>{it.severity === 'high' ? '🔴' : it.severity === 'medium' ? '🟡' : '🔵'}</span>
+                      <span>{it.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
       <div style={{ display: 'flex', gap: 'var(--s-1h)', alignItems: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: 'var(--s-2)' }}>

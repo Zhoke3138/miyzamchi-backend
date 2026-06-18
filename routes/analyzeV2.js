@@ -154,6 +154,8 @@ function buildInjectedContext(chunkText, state) {
 }
 
 function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+// Чистка CJK-артефактов (DeepSeek иногда вставляет иероглифы в русский текст).
+function cleanCjk(s) { return String(s == null ? '' : s).replace(/[　-〿㐀-䶿一-鿿豈-﫿＀-￯]/g, ''); }
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 /**
@@ -473,7 +475,7 @@ function createAnalyzeV2Router(deps = {}) {
       let sawContent = false;  // пошёл основной текст (его дубль ниже не шлём)
       const onJudgeDelta = (d) => {
         if (!d) return;
-        if (d.text) { sawContent = true; sse({ text: d.text }); }
+        if (d.text) { sawContent = true; sse({ text: cleanCjk(d.text) }); }
         // d.reasoning НЕ выводим в UI — это служебная цепочка мыслей.
       };
       // ── Живой прогресс Судьи во время «раздумий» (reasoning) ──
@@ -505,7 +507,7 @@ function createAnalyzeV2Router(deps = {}) {
       // Текст судьи (markdown, 2 секции). Если content уже ушёл дельтами выше —
       // НЕ дублируем. Фоллбэк одним куском остаётся для skip-пути (пустой граф),
       // Gemini-fallback без стрима и ошибок до первого content-чанка.
-      if (report.summary && !sawContent) sse({ text: report.summary });
+      if (report.summary && !sawContent) sse({ text: cleanCjk(report.summary) });
 
       // Executive Summary card (ошибки + слепые зоны).
       const risks = graph.filter((g) => g.status === 'error' || g.blind_spot);
@@ -896,13 +898,16 @@ ${tpl.courtDoc
         'Составь ПОЛНЫЙ документ с развёрнутым правовым обоснованием и верни JSON-массив блоков (DocBlock[]).',
       ].join('\n');
 
+      // Чистка CJK-артефактов: DeepSeek иногда вставляет иероглифы/полноширинную
+      // пунктуацию в русский текст (баг модели). Кириллицу/латиницу не трогаем.
+      const stripCjk = (s) => String(s).replace(/[　-〿㐀-䶿一-鿿豈-﫿＀-￯]/g, '');
       // Нормализация одного блока (защита фронт-рендера от мусора).
       const normalizeBlock = (b) => ({
         kind: String((b && b.kind) || 'paragraph'),
         ...(b && b.align ? { align: String(b.align) } : {}),
         runs: Array.isArray(b && b.runs)
           ? b.runs.filter((r) => r && typeof r === 'object').map((r) => ({
-              t: String(r.t == null ? '' : r.t),
+              t: stripCjk(String(r.t == null ? '' : r.t)),
               ...(r.bold ? { bold: true } : {}),
               ...(r.italic ? { italic: true } : {}),
               ...(r.underline ? { underline: true } : {}),
@@ -981,12 +986,45 @@ ${tpl.courtDoc
       const safeBlocks = blocks.filter((b) => b && typeof b === 'object').map(normalizeBlock);
 
       console.log(`[draft-document] ${docType} → ${safeBlocks.length} блоков (streamed=${streamedCount}) | norms=${articlesUsed.length} | model=${usedModel}`);
+
+      // ── 5) САМОПРОВЕРКА — контролёр сверяет готовый документ с эталоном RAG ──
+      // Замыкает цикл «создал → проверил»: ловит выдуманные/перепутанные ссылки
+      // и незаполненные обязательные места. Лёгкая модель, бюджет ~18с, graceful.
+      stage('🔎 Проверяю готовый документ…');
+      let review = null;
+      try {
+        const docText = safeBlocks
+          .map((b) => (b.runs || []).map((r) => r.t).join(''))
+          .filter((s) => s.trim())
+          .join('\n');
+        const SELFCHECK_SYS = `Ты — контролёр качества юридического документа (право Кыргызской Республики). Тебе дан ГОТОВЫЙ документ и ЭТАЛОННЫЕ нормы из базы (RAG). Проверь:
+1) все ссылки на статьи СООТВЕТСТВУЮТ эталону (нет выдуманных или перепутанных номеров статей/НПА);
+2) нет ли пустых обязательных мест («____»), которые должны были заполниться из досье;
+3) логические/структурные пробелы (нет требования, нет обоснования, нет подписи и т.п.).
+Верни СТРОГО JSON без markdown: { "ok": <bool>, "issues": [ { "severity": "high|medium|low", "text": "<кратко что не так и как исправить>" } ] }. Если всё в порядке — ok:true, issues:[]. Не придирайся к шаблонным прочеркам «____», если данных по ним не было в досье.`;
+        const rawRev = await withTimeout((async () => clients.geminiJson({
+          systemPrompt: SELFCHECK_SYS,
+          userPrompt: `ЭТАЛОННЫЕ НОРМЫ:\n${refBlock}\n\nГОТОВЫЙ ДОКУМЕНТ:\n${docText.slice(0, 12000)}\n\nВерни JSON-вывод проверки.`,
+          model: 'gemini-3.1-flash-lite', maxOutputTokens: 1500, timeoutMs: 16000,
+        }))(), 18000, null);
+        const rev = parseObj(rawRev);
+        if (rev && typeof rev === 'object') {
+          const issues = Array.isArray(rev.issues) ? rev.issues
+            .filter((i) => i && i.text)
+            .slice(0, 6)
+            .map((i) => ({ severity: ['high', 'medium', 'low'].includes(i.severity) ? i.severity : 'medium', text: stripCjk(String(i.text)).slice(0, 280) }))
+            : [];
+          review = { ok: !!rev.ok && issues.length === 0, issues };
+        }
+      } catch (e) { console.warn('[draft-document] self-check failed:', e.message); }
+
       sse({
         done: true,
         blocks: safeBlocks,
         streamedCount,
         articlesUsed,
-        route: { planner: 'gemini-3.1-flash-lite', retrieval: 'rag-4groups', drafter: usedModel },
+        review,
+        route: { planner: 'gemini-3.1-flash-lite', retrieval: 'rag-4groups', drafter: usedModel, reviewer: 'gemini-3.1-flash-lite' },
       });
       return done();
     } catch (err) {
