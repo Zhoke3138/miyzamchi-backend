@@ -4415,25 +4415,34 @@ body.dk .analyze-accordion-content {
     line-height: 1.5 !important;
 }
 
-/* Возвращаем тулбару нативное отображение и добавляем скрытый скролл */
+/* Тулбар: ПЕРЕНОС инструментов на несколько строк, чтобы в узкой колонке
+   редактора ни одно поле не пряталось за невидимым горизонтальным скроллом
+   (раньше overflow-x:auto + скрытый скроллбар → часть инструментов была
+   недоступна). Теперь wrap — всё видно, тулбар растёт по высоте. */
 .superdoc-workspace-wrapper .ProseMirror-menubar,
 .superdoc-workspace-wrapper .sd-toolbar,
 .superdoc-workspace-wrapper .superdoc-toolbar {
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    flex-wrap: nowrap !important;
-    white-space: nowrap;
-    
-    /* Скрываем скроллбар для Firefox и IE/Edge */
-    scrollbar-width: none !important;
-    -ms-overflow-style: none !important;
+    flex-wrap: wrap !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    white-space: normal !important;
+    row-gap: 2px;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
 }
 
-/* Скрываем скроллбар для Chrome, Safari и Opera */
-.superdoc-workspace-wrapper .ProseMirror-menubar::-webkit-scrollbar,
-.superdoc-workspace-wrapper .sd-toolbar::-webkit-scrollbar,
-.superdoc-workspace-wrapper .superdoc-toolbar::-webkit-scrollbar {
-    display: none !important;
+/* Поля-контролы тулбара (шрифт/размер/цвет) не должны схлопываться и обрезать
+   текст — даём им не сжиматься и показывать содержимое полностью. */
+.superdoc-workspace-wrapper .sd-toolbar [class*="dropdown"],
+.superdoc-workspace-wrapper .sd-toolbar [class*="select"],
+.superdoc-workspace-wrapper .sd-toolbar input,
+.superdoc-workspace-wrapper .superdoc-toolbar [class*="dropdown"],
+.superdoc-workspace-wrapper .superdoc-toolbar [class*="select"],
+.superdoc-workspace-wrapper .superdoc-toolbar input {
+    flex-shrink: 0 !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
 }
 
 /* ══════════════════════════════════════════════════════════════════
