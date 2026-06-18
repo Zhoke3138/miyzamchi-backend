@@ -8287,6 +8287,33 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           </div>
         )}
         <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.rtf,image/*" style={{display:'none'}} onChange={(e)=>{const files=Array.from(e.target.files||[]);e.target.value='';files.forEach(processAttFile)}}/>
+        {/* Быстрые пресеты — заполняют поле ввода (без авто-отправки, юрист проверяет).
+            Контекст: с документом (agent) — разбор/упрощение; без — типовые юр-запросы. */}
+        {!inp.trim() && !thinking && (
+          <div style={{display:'flex',gap:'var(--s-1h)',marginBottom:'var(--s-1h)',flexWrap:'wrap'}}>
+            {(agent
+              ? [
+                  ['📝 Краткое резюме', 'Сделай краткое резюме этого документа: суть, стороны, ключевые условия и сроки.'],
+                  ['⚠️ Найди риски', 'Проверь документ на юридические риски и слабые формулировки, перечисли их с пояснением.'],
+                  ['✂️ Упрости', 'Упрости формулировки выделенного фрагмента, сохранив юридический смысл.'],
+                  ['🌐 На кыргызский', 'Переведи выделенный фрагмент на кыргызский язык, сохранив юридическую терминологию.'],
+                ]
+              : [
+                  ['⚖️ Применимые нормы', 'Какие нормы законодательства Кыргызской Республики применимы к этой ситуации?'],
+                  ['📋 План действий', 'Составь пошаговый план юридических действий по моей ситуации.'],
+                  ['💬 Простыми словами', 'Объясни простыми словами правовую суть моего вопроса.'],
+                ]
+            ).map(([label, text]) => (
+              <button key={label} type="button"
+                onClick={()=>{ setInp(text); setTimeout(()=>{ const el=document.getElementById('myz-ai-input'); if(el){ el.focus(); el.style.height='auto'; el.style.height=Math.min(160,el.scrollHeight)+'px'; } }, 0); }}
+                style={{fontSize:'var(--text-xs)',color:'var(--text-muted)',background:'var(--bg-app)',border:'1px solid var(--border-color)',borderRadius:'var(--radius-pill)',padding:'var(--s-1) var(--s-2)',cursor:'pointer',fontFamily:'var(--font-sans)',whiteSpace:'nowrap',transition:'all .15s'}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.color='var(--accent-strong, var(--accent))'}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.color='var(--text-muted)'}}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <div style={{display:'flex', alignItems:'center', gap:'var(--s-2h)', marginBottom:'var(--s-1h)', flexWrap:'wrap'}}>
           <label style={{display:'flex',alignItems:'center',gap:'var(--s-1h)',fontSize:'var(--text-sm)',color:'var(--muted)',cursor:'pointer',fontFamily:'var(--font-sans)'}}>
             <input type="checkbox" checked={incognito} onChange={e=>setIncognito(e.target.checked)} style={{accentColor:'var(--accent)',cursor:'pointer',width:13,height:13}} />
