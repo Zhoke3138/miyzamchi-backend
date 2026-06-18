@@ -1392,6 +1392,7 @@ const CreateDocMode = ({ onToast }) => {
   };
 
   const downloadDoc = () => { try { window.__ideHandleAction && window.__ideHandleAction('exportWord'); } catch (_) {} };
+  const downloadPdf = () => { try { window.__ideHandleAction && window.__ideHandleAction('exportPdf'); } catch (_) {} };
 
   const generate = async () => {
     if (genBusy) return; setGenBusy(true); setGenStatus('Запускаю агентов…'); setGenDone(false); setGenReview(null);
@@ -1521,10 +1522,16 @@ const CreateDocMode = ({ onToast }) => {
 
           {genDone && !genBusy && (
             <>
-              <button type="button" onClick={downloadDoc}
-                style={{ width: '100%', marginTop: 'var(--s-1h)', padding: 'var(--s-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
-                ⬇ Скачать .docx
-              </button>
+              <div style={{ display: 'flex', gap: 'var(--s-1h)', marginTop: 'var(--s-1h)' }}>
+                <button type="button" onClick={downloadDoc}
+                  style={{ flex: 1, padding: 'var(--s-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
+                  ⬇ .docx
+                </button>
+                <button type="button" onClick={downloadPdf}
+                  style={{ flex: 1, padding: 'var(--s-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
+                  ⬇ PDF
+                </button>
+              </div>
               {/* Карточка самопроверки */}
               {genReview && (
                 <div style={{ marginTop: 'var(--s-2)', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
