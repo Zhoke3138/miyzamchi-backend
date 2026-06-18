@@ -612,11 +612,11 @@ ${checklist}
   //  /api/v2/draft-document — мультиагентная research-коллегия (SSE-стрим):
   //    1) Планировщик-исследователь (flash-lite) — фактура + ЧЕТЫРЕ группы
   //       поисковых запросов: точные / связанные / общие / процессуальные.
-  //    2) Ищейки/RAG (Pinecone, параллельно по группам) — широкий охват:
-  //       тянут кандидатов из всех релевантных кодексов, дедуп по статье.
-  //    3) Отборщик (flash-lite) — из кандидатов оставляет реально применимые,
-  //       присваивает каждой норме роль (exact/related/general/procedural).
-  //    4) Драфтер (DeepSeek v4-pro, reasoning) — насыщенный документ с полным
+  //    2) Ищейки/RAG (Pinecone, параллельно по 4 группам + всегда-вкл.
+  //       процессуальные запросы) — широкий охват, дедуп по статье, роль = группа
+  //       RAG по приоритету (exact>related>procedural>general). Отдельного
+  //       агента-отборщика НЕТ (экономит ~5-10с и не режет охват — фильтрует драфтер).
+  //    3) Драфтер (DeepSeek v4-pro, reasoning) — насыщенный документ с полным
   //       правовым обоснованием, цитирует ТОЛЬКО реальные статьи из базы.
   //  SSE: { stage } прогресс → финальный { done:true, blocks[], articlesUsed[] }.
   // ═══════════════════════════════════════════════════════════════════════
@@ -631,11 +631,11 @@ ${checklist}
 
 Применимые кодексы/НПА (ориентир): ${(tpl.codesHint || []).join('; ')}.
 
-Сформулируй поисковые запросы в ЧЕТЫРЁХ группах, чтобы найти АБСОЛЮТНО ВСЕ применимые нормы:
+Сформулируй РАЗВЁРНУТЫЙ набор поисковых запросов в ЧЕТЫРЁХ группах, чтобы найти АБСОЛЮТНО ВСЕ применимые нормы (не скупись — лучше больше запросов):
 • exact      — нормы ПРЯМО по предмету спора (основание требования);
-• related    — связанные институты (последствия, смежные нормы, спец. законы по предмету);
-• general    — общие положения кодекса (о сделках, обязательствах, праве собственности и т.п.);
-• procedural — процессуальные нормы (подсудность, форма и содержание иска, госпошлина, исковая давность — ГПК КР).
+• related    — связанные институты + СПЕЦИАЛЬНЫЕ ЗАКОНЫ/КОДЕКСЫ по предмету (напр. для земли — Земельный кодекс КР; для потребителя — Закон «О защите прав потребителей»; для аренды/займа/подряда — соответствующие главы), последствия (реституция, убытки, неустойка);
+• general    — общие положения Гражданского кодекса (о сделках, недействительности, обязательствах, праве собственности, представительстве);
+• procedural — процессуальные нормы ГПК КР: подсудность; форма и содержание искового заявления; государственная пошлина (размер, расчёт); исковая давность и сроки; обеспечительные меры; последствия несоблюдения досудебного порядка.
 
 Верни СТРОГО JSON без markdown:
 {
@@ -645,23 +645,23 @@ ${checklist}
   "subject_line": "<краткая формулировка предмета для подзаголовка, напр. 'о признании договора недействительным'>",
   "legal_questions": ["<1-3 ключевых правовых вопроса дела>"],
   "queries": {
-    "exact":      ["<2-4 точных запроса>"],
-    "related":    ["<2-4 запроса>"],
-    "general":    ["<1-3 запроса>"],
-    "procedural": ["<1-3 запроса по ГПК КР>"]
+    "exact":      ["<3-5 точных запросов>"],
+    "related":    ["<3-5 запросов: спец. законы по предмету + последствия>"],
+    "general":    ["<2-4 запроса по общим положениям ГК КР>"],
+    "procedural": ["<3-5 запросов по ГПК КР: пошлина, сроки/давность, подсудность, форма иска>"]
   }
 }
 
-ПРАВИЛА: факты бери ТОЛЬКО из диалога, не выдумывай имена/суммы/даты/адреса (нет → ''). Запросы пиши развёрнуто, называя институты и кодекс КР, чтобы векторный поиск нашёл максимум норм.`;
+ПРАВИЛА: факты бери ТОЛЬКО из диалога, не выдумывай имена/суммы/даты/адреса (нет → ''). Запросы пиши развёрнуто, называя конкретные институты, кодексы и законы КР, чтобы векторный поиск нашёл максимум норм. Обязательно укажи СПЕЦИАЛЬНЫЙ закон/кодекс, профильный для предмета спора.`;
 
-  const SELECTOR_SYS = `Ты — юрист-аналитик (право Кыргызской Республики). Тебе дан СПИСОК КАНДИДАТ-СТАТЕЙ из базы НПА (найдены RAG) и суть дела. Отбери ТОЛЬКО реально применимые к делу нормы и присвой каждой роль.
-
-Роли: "exact" (прямо обосновывает требование), "related" (связанная норма/последствия), "general" (общее положение), "procedural" (процессуальная норма ГПК).
-
-Верни СТРОГО JSON без markdown:
-{ "keep": [ { "i": <номер кандидата>, "role": "exact|related|general|procedural", "why": "<очень кратко зачем>" } ] }
-
-ПРАВИЛА: оставляй только относящиеся к делу статьи (мусор и нерелевантное — выбрасывай). Не добавляй статьи, которых нет в списке. Сохрани все действительно полезные нормы — лучше полнее.`;
+  // Всегда-включённые процессуальные запросы (госпошлина / сроки / подсудность /
+  // форма иска) — чтобы эти нормы подтягивались независимо от планировщика.
+  const PROC_DEFAULTS = [
+    'размер и расчёт государственной пошлины по исковому заявлению Кыргызская Республика',
+    'срок исковой давности гражданские дела',
+    'подсудность гражданских дел районный суд',
+    'форма и содержание искового заявления требования ГПК',
+  ];
 
   const DRAFTER_SYS = (tpl) => `Ты — старший юрист Кыргызской Республики. Составь ПОЛНЫЙ, юридически грамотный документ «${tpl.label}» и верни его СТРОГО как JSON-массив блоков (DocBlock[]) — без markdown, без пояснений.
 
@@ -680,9 +680,10 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
 • Сначала ФАБУЛА: подробно изложи обстоятельства из досье (стороны, даты, предмет, в чём нарушение).
 • Затем НЕСКОЛЬКО абзацев правового обоснования — задействуй ВСЕ применимые нормы из эталона:
   – сперва ТОЧНЫЕ нормы (прямое основание требования) — процитируй и объясни, как норма применяется к фактам;
-  – затем СВЯЗАННЫЕ и ОБЩИЕ нормы (последствия, смежные институты) — каждой норме отдельный смысловой абзац;
+  – затем СПЕЦИАЛЬНЫЕ нормы профильного закона/кодекса по предмету (если есть в эталоне) и СВЯЗАННЫЕ/ОБЩИЕ нормы (последствия, смежные институты) — каждой норме отдельный смысловой абзац;
+• Где применимо — отрази ПРОЦЕССУАЛЬНЫЕ моменты со ссылками на ГПК КР: подсудность (почему этот суд), соблюдение срока исковой давности, размер и расчёт государственной пошлины.
 • Отдельный абзац ПРОЦЕССУАЛЬНОГО основания: «Руководствуясь ст. … ГПК КР, прошу:» со ссылками на процессуальные нормы.
-• Каждое требование в «Прошу:» должно опираться на изложенное обоснование.
+• Каждое требование в «Прошу:» должно опираться на изложенное обоснование; если есть имущественное требование/спор — добавь требование о взыскании госпошлины.
 
 ЖЕЛЕЗНЫЕ ПРАВИЛА:
 1. Цитируй ТОЛЬКО статьи из приведённого ЭТАЛОННОГО списка норм (RAG), группы помечены. Не придумывай номера статей по памяти. Используй КАК МОЖНО БОЛЬШЕ применимых норм из списка — не ограничивайся одной-двумя.
@@ -743,11 +744,13 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
       const q = (plan.queries && typeof plan.queries === 'object') ? plan.queries : {};
       // Фолбэк-запросы, если планировщик не дал группу.
       const subj = plan.subject_line || tpl.label;
+      const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
       const catQueries = {
-        exact:      (Array.isArray(q.exact) && q.exact.length)           ? q.exact.slice(0, 4)      : [subj],
-        related:    (Array.isArray(q.related) && q.related.length)       ? q.related.slice(0, 4)    : [],
-        general:    (Array.isArray(q.general) && q.general.length)       ? q.general.slice(0, 3)    : [],
-        procedural: (Array.isArray(q.procedural) && q.procedural.length) ? q.procedural.slice(0, 3) : ['исковое заявление форма содержание подсудность государственная пошлина ГПК Кыргызской Республики'],
+        exact:      (Array.isArray(q.exact) && q.exact.length)     ? q.exact.slice(0, 5)   : [subj],
+        related:    (Array.isArray(q.related) && q.related.length) ? q.related.slice(0, 5) : [],
+        general:    (Array.isArray(q.general) && q.general.length) ? q.general.slice(0, 4) : [],
+        // Процессуальные = запросы планировщика + всегда-включённые дефолты (пошлина/сроки/подсудность/форма).
+        procedural: uniq([...(Array.isArray(q.procedural) ? q.procedural : []), ...PROC_DEFAULTS]).slice(0, 7),
       };
 
       // ── 2) ИЩЕЙКИ/RAG — параллельно по группам, широкий охват ──
@@ -760,7 +763,7 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
           const key = `${md.npa_title}|${md.article_title}`;
           let rec = pool.get(key);
           if (!rec) {
-            rec = { npa_title: md.npa_title || '', article_title: md.article_title || '', full_text: String(md.full_text || '').slice(0, 1700), score: h.score || 0, cats: new Set() };
+            rec = { npa_title: md.npa_title || '', article_title: md.article_title || '', full_text: String(md.full_text || '').slice(0, 1300), score: h.score || 0, cats: new Set() };
             pool.set(key, rec);
           }
           rec.cats.add(cat);
@@ -771,45 +774,21 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
         const qs = catQueries[cat];
         if (!qs || !qs.length) return;
         try {
-          const hits = (await resolvedDeps.pineconeSearch?.(qs, null, 6)) || [];
+          const hits = (await resolvedDeps.pineconeSearch?.(qs, null, 8)) || [];
           addHits(hits, cat);
         } catch (e) { console.warn(`[draft-document] RAG cat=${cat} failed:`, e.message); }
       }));
-      let candidates = Array.from(pool.values()).sort((a, b) => b.score - a.score).slice(0, 28);
-      stage(`📚 Найдено кандидат-норм: ${candidates.length}. Отбираю применимые…`, { found: candidates.length });
 
-      // ── 3) ОТБОРЩИК — оставляет применимые, присваивает роль ──
-      let selected = []; // {rec, role}
-      if (candidates.length) {
-        try {
-          const list = candidates.map((c, i) => `[${i}] ${[c.npa_title, c.article_title].filter(Boolean).join(' — ')} :: ${c.full_text.slice(0, 240)}`).join('\n');
-          const rawSel = await clients.geminiJson({
-            systemPrompt: SELECTOR_SYS,
-            userPrompt: `СУТЬ ДЕЛА: ${subj}\nВОПРОСЫ: ${(plan.legal_questions || []).join('; ')}\nДОСЬЕ: ${JSON.stringify(plan.facts || {})}\n\nКАНДИДАТЫ:\n${list}\n\nВерни JSON {keep:[...]}.`,
-            model: 'gemini-3.1-flash-lite', maxOutputTokens: 2048, timeoutMs: 25000,
-          });
-          const sel = parseObj(rawSel);
-          if (sel && Array.isArray(sel.keep)) {
-            for (const k of sel.keep) {
-              const idx = Number(k && k.i);
-              if (Number.isInteger(idx) && candidates[idx]) {
-                const role = ['exact', 'related', 'general', 'procedural'].includes(k.role) ? k.role : 'related';
-                selected.push({ rec: candidates[idx], role });
-              }
-            }
-          }
-        } catch (e) { console.warn('[draft-document] selector failed, fallback to top candidates:', e.message); }
-      }
-      // Фолбэк: отборщик пуст → берём топ кандидатов, роль по группе RAG.
-      if (!selected.length) {
-        selected = candidates.slice(0, 14).map((rec) => ({
-          rec, role: rec.cats.has('exact') ? 'exact' : rec.cats.has('procedural') ? 'procedural' : rec.cats.has('general') ? 'general' : 'related',
-        }));
-      }
-
-      // Группируем выбранные нормы по роли для эталонного блока драфтера.
+      // ── 3) Роль нормы = группа RAG по приоритету (без отдельного агента-отборщика).
+      //     Берём ТОП по score внутри каждой роли — широкий охват всех видов норм.
+      const roleOf = (rec) => rec.cats.has('exact') ? 'exact' : rec.cats.has('related') ? 'related' : rec.cats.has('procedural') ? 'procedural' : 'general';
+      const allNorms = Array.from(pool.values()).sort((a, b) => b.score - a.score);
+      const caps = { exact: 8, related: 7, general: 5, procedural: 7 };
       const byRole = { exact: [], related: [], general: [], procedural: [] };
-      for (const s of selected) (byRole[s.role] || byRole.related).push(s.rec);
+      for (const rec of allNorms) {
+        const role = roleOf(rec);
+        if (byRole[role].length < caps[role]) byRole[role].push(rec);
+      }
       let refIdx = 0;
       const articlesUsed = [];
       const refParts = [];
@@ -824,7 +803,8 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
         refParts.push(`=== ${CAT_LABEL[cat]} ===\n${lines.join('\n\n')}`);
       }
       const refBlock = refParts.length ? refParts.join('\n\n') : '(эталонных норм в базе не найдено — составляй фабулу без точных ссылок на статьи)';
-      console.log(`[draft-document] ${docType} | candidates=${candidates.length} → selected=${selected.length} | roles=${JSON.stringify(Object.fromEntries(cats.map((c) => [c, byRole[c].length])))}`);
+      stage(`📚 Норм найдено: ${allNorms.length}, в работу: ${refIdx}. Составляю документ…`, { found: allNorms.length, used: refIdx });
+      console.log(`[draft-document] ${docType} | pool=${allNorms.length} → used=${refIdx} | roles=${JSON.stringify(Object.fromEntries(cats.map((c) => [c, byRole[c].length])))}`);
 
       // ── 4) ДРАФТЕР (DeepSeek v4-pro) ──
       stage(`✍️ Составляю документ по ${articlesUsed.length} нормам…`, { articles: articlesUsed.length });
@@ -930,7 +910,7 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
         blocks: safeBlocks,
         streamedCount,
         articlesUsed,
-        route: { planner: 'gemini-3.1-flash-lite', selector: 'gemini-3.1-flash-lite', drafter: usedModel },
+        route: { planner: 'gemini-3.1-flash-lite', retrieval: 'rag-4groups', drafter: usedModel },
       });
       return done();
     } catch (err) {
