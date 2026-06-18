@@ -7846,15 +7846,22 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         try{
           const parsed=parseAgentCommands(agentFullText);
           if(parsed.commands && parsed.commands.length){
+            // Статус «✍️ Применяю правки…» — даём кадру отрисоваться, чтобы пауза
+            // между концом ответа и появлением диффа не читалась как «завис».
+            updateChatMessages(m=>m.map(x=>x.id===aiId?{...x,applyingEdits:true}:x));
+            await new Promise(r=>setTimeout(r,40));
             const changeIds={}; const applied={};
             parsed.commands.forEach((cmd,idx)=>{
               const r=applyCommandCaptureIds(cmd,onToast);
               if(r.ok){ changeIds[idx]=r.ids; applied[idx]='previewing'; }
             });
-            updateChatMessages(m=>m.map(x=>x.id===aiId?{...x,autoApplied:true,changeIds,appliedCmds:{...(x.appliedCmds||{}),...applied}}:x));
+            updateChatMessages(m=>m.map(x=>x.id===aiId?{...x,autoApplied:true,applyingEdits:false,changeIds,appliedCmds:{...(x.appliedCmds||{}),...applied}}:x));
             console.log('[auto-apply] applied commands:', parsed.commands.length, changeIds);
+          } else {
+            // Агент ответил текстом без правок — не молчим, сообщаем юристу.
+            onToast&&onToast('law','Агент не предложил правок к документу');
           }
-        }catch(e){ console.error('[auto-apply] failed:', e); }
+        }catch(e){ console.error('[auto-apply] failed:', e); updateChatMessages(m=>m.map(x=>x.id===aiId?{...x,applyingEdits:false}:x)); }
       }
     }
   };
@@ -8033,6 +8040,12 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         {mode==='thinking' && !m.text && !hasThink && agentSteps.length === 0 && renderThinkingBar(m.status||streamStatus)}
         {isAgent ? (
           <>
+            {m.applyingEdits && (
+              <div style={{display:'flex',alignItems:'center',gap:8,margin:'6px 0',fontSize:11,color:'var(--accent)',fontWeight:600}}>
+                <span className="dot-pulse" style={{width:7,height:7,borderRadius:'50%',background:'var(--accent)',flexShrink:0}}/>
+                <span>✍️ Применяю правки в документ…</span>
+              </div>
+            )}
             {parsed.analysis && <div className="ai-md" dangerouslySetInnerHTML={{__html:renderMarkdown(parsed.analysis)}}/>}
             {!parsed.analysis && !parsed.commands.length && m.text && <div className="ai-md" dangerouslySetInnerHTML={{__html:renderMarkdown(m.text)}}/>}
             {parsed.commands.length>0 && (
