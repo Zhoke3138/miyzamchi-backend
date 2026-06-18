@@ -1631,8 +1631,61 @@ const DeadlineCalculator = () => {
     </div>
   );
 };
-const LegalToolsMode = () => (
-  <div style={{ padding: 'var(--s-1)' }}><DeadlineCalculator /></div>
+// Библиотека типовых клауз — вставка готовых формулировок в открытый документ.
+// Это шаблоны с прочерками; вставляются как обычный текст (не Track Changes).
+const CLAUSES = [
+  ['Разрешение споров',
+    'Все споры и разногласия, возникающие из настоящего договора или в связи с ним, Стороны разрешают путём переговоров с обязательным направлением письменной претензии. Срок ответа на претензию — 10 (десять) календарных дней. При недостижении согласия спор подлежит рассмотрению в суде по месту нахождения ответчика в соответствии с законодательством Кыргызской Республики.'],
+  ['Форс-мажор',
+    'Стороны освобождаются от ответственности за полное или частичное неисполнение обязательств по настоящему договору, если оно явилось следствием обстоятельств непреодолимой силы (форс-мажор), возникших после заключения договора и которые Стороны не могли предвидеть или предотвратить. Сторона, для которой создалась невозможность исполнения, обязана письменно уведомить другую Сторону в течение ____ дней с момента наступления таких обстоятельств.'],
+  ['Конфиденциальность',
+    'Стороны обязуются сохранять конфиденциальность сведений, полученных в ходе исполнения настоящего договора, и не разглашать их третьим лицам без письменного согласия другой Стороны, за исключением случаев, предусмотренных законодательством Кыргызской Республики. Обязательство о конфиденциальности действует в течение срока действия договора и ____ лет после его прекращения.'],
+  ['Согласие на обработку персональных данных',
+    'Подписывая настоящий договор, Стороны дают друг другу согласие на обработку персональных данных (сбор, хранение, использование, передачу) в целях исполнения договора в соответствии с законодательством Кыргызской Республики о персональных данных. Согласие действует до истечения установленных законом сроков хранения.'],
+  ['Срок действия и расторжение',
+    'Настоящий договор вступает в силу с момента подписания Сторонами и действует до «___» __________ 20__ года / до полного исполнения Сторонами своих обязательств. Договор может быть расторгнут по соглашению Сторон, а также в одностороннем порядке в случаях, предусмотренных законодательством Кыргызской Республики, с письменным уведомлением за ____ дней.'],
+  ['Электронный документооборот',
+    'Стороны признают юридическую силу документов и сообщений, направленных по адресам электронной почты и номерам телефонов в мессенджерах, указанным в реквизитах Сторон. Стороны вправе использовать факсимильное воспроизведение подписи, что не противоречит требованиям статьи 176 Гражданского кодекса Кыргызской Республики.'],
+];
+const ClauseLibrary = ({ onToast }) => {
+  const insertClause = (title, body) => {
+    const ed = window.docEngine;
+    if (!ed || !ed.doc || typeof ed.doc.insert !== 'function') { onToast && onToast('warning', 'Откройте документ в редакторе'); return; }
+    const html = `<p style="text-align:left;font-family:'Times New Roman', serif;"><strong>${_escHtml(title)}</strong></p>`
+      + `<p style="text-align:justify;font-family:'Times New Roman', serif;">${_escHtml(body)}</p>`;
+    try { ed.commands && ed.commands.focus && ed.commands.focus('end'); } catch (_) {}
+    try {
+      const r = ed.doc.insert({ value: html, type: 'html' });
+      if (r && typeof r.then === 'function') r.catch(() => {});
+      onToast && onToast('check', `Вставлено: ${title}`);
+    } catch (e) { onToast && onToast('warning', 'Не удалось вставить'); }
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+      <div>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', color: 'var(--text-main)', margin: 0 }}>Библиотека клауз</h3>
+        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 'var(--s-1)' }}>Готовые формулировки — вставляются в открытый документ (прочерки заполните).</p>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-1h)' }}>
+        {CLAUSES.map(([title, body]) => (
+          <button key={title} type="button" onClick={() => insertClause(title, body)}
+            style={{ textAlign: 'left', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-color)'; }}>
+            <span style={{ display: 'block', fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-main)' }}>{title}</span>
+            <span style={{ display: 'block', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{body.slice(0, 70)}…</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+const LegalToolsMode = ({ onToast }) => (
+  <div style={{ padding: 'var(--s-1)', display: 'flex', flexDirection: 'column', gap: 'var(--s-4)' }}>
+    <DeadlineCalculator />
+    <div style={{ height: 1, background: 'var(--border-color)' }} />
+    <ClauseLibrary onToast={onToast} />
+  </div>
 );
 
 /* ═══════════ DOCUMENTS MODE — оболочка с вкладками «Анализ | Создать | Инструменты» ═══════════ */
@@ -1653,7 +1706,7 @@ const DocumentsMode = ({ onToast }) => {
         {tabBtn('tools', 'Инструменты')}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-        {tab === 'analyze' ? <AnalyzeDocsMode /> : tab === 'create' ? <CreateDocMode onToast={onToast} /> : <LegalToolsMode />}
+        {tab === 'analyze' ? <AnalyzeDocsMode /> : tab === 'create' ? <CreateDocMode onToast={onToast} /> : <LegalToolsMode onToast={onToast} />}
       </div>
     </div>
   );
