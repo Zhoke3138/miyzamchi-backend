@@ -1556,7 +1556,86 @@ const CreateDocMode = ({ onToast }) => {
   );
 };
 
-/* ═══════════ DOCUMENTS MODE — оболочка с вкладками «Анализ | Создать» ═══════════ */
+/* ═══════════ LEGAL TOOLS — калькулятор сроков (чистый клиент, без бэкенда) ═══════════ */
+// Прибавляет период к дате. Без хардкода правовых ставок — период задаёт юрист,
+// пресеты лишь ориентир (исчисление сроков уточняется по НПА КР).
+const _addPeriod = (dateStr, amount, unit) => {
+  const d = new Date(dateStr); if (isNaN(d.getTime())) return null;
+  const a = Number(amount) || 0;
+  if (unit === 'years') d.setFullYear(d.getFullYear() + a);
+  else if (unit === 'months') d.setMonth(d.getMonth() + a);
+  else d.setDate(d.getDate() + a);
+  return d;
+};
+const _fmtDate = (d) => d ? `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}` : '—';
+const SROK_PRESETS = [
+  ['Исковая давность (3 года)', 3, 'years'],
+  ['Спец. давность (1 год)', 1, 'years'],
+  ['Апелляция (30 дней)', 30, 'days'],
+  ['Ответ на претензию (10 дней)', 10, 'days'],
+  ['Ответ на претензию (30 дней)', 30, 'days'],
+];
+const DeadlineCalculator = () => {
+  const [start, setStart] = useState(() => new Date().toISOString().slice(0, 10));
+  const [amount, setAmount] = useState(3);
+  const [unit, setUnit] = useState('years');
+  const end = useMemo(() => _addPeriod(start, amount, unit), [start, amount, unit]);
+  const daysLeft = useMemo(() => {
+    if (!end) return null;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    return Math.round((end.getTime() - today.getTime()) / 86400000);
+  }, [end]);
+  const tone = daysLeft == null ? 'var(--text-muted)' : daysLeft < 0 ? 'var(--red, #dc2626)' : daysLeft <= 30 ? 'var(--orange, #d97706)' : 'var(--green, #10a37f)';
+  const inputStyle = { border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: 'var(--text-sm)', padding: 'var(--s-1h) var(--s-2)', fontFamily: 'var(--font-sans)', outline: 'none' };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2h)' }}>
+      <div>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', color: 'var(--text-main)', margin: 0 }}>Калькулятор сроков</h3>
+        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 'var(--s-1)' }}>Дата события + период → крайний срок и сколько дней осталось.</p>
+      </div>
+      <div style={{ display: 'flex', gap: 'var(--s-1h)', flexWrap: 'wrap' }}>
+        {SROK_PRESETS.map(([label, a, u]) => (
+          <button key={label} type="button" onClick={() => { setAmount(a); setUnit(u); }}
+            style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-pill)', padding: 'var(--s-1) var(--s-2)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        Дата события
+        <input type="date" value={start} onChange={e => setStart(e.target.value)} style={inputStyle} />
+      </label>
+      <div style={{ display: 'flex', gap: 'var(--s-1h)', alignItems: 'flex-end' }}>
+        <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+          Период
+          <input type="number" min="0" value={amount} onChange={e => setAmount(e.target.value)} style={inputStyle} />
+        </label>
+        <select value={unit} onChange={e => setUnit(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
+          <option value="days">дней</option>
+          <option value="months">месяцев</option>
+          <option value="years">лет</option>
+        </select>
+      </div>
+      <div style={{ padding: 'var(--s-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
+        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>Крайний срок</div>
+        <div style={{ fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--text-main)', fontFamily: 'var(--font-display)' }}>{_fmtDate(end)}</div>
+        {daysLeft != null && (
+          <div style={{ fontSize: 'var(--text-sm)', color: tone, marginTop: 4, fontWeight: 600 }}>
+            {daysLeft < 0 ? `Срок истёк ${Math.abs(daysLeft)} дн. назад` : daysLeft === 0 ? 'Срок истекает сегодня' : `Осталось ${daysLeft} дн.`}
+          </div>
+        )}
+      </div>
+      <p style={{ fontSize: 'var(--text-2xs)', color: 'var(--muted)', lineHeight: 1.4 }}>
+        ⚠️ Ориентировочный расчёт. Порядок исчисления сроков (нерабочие дни, момент начала течения) уточняйте по НПА КР для конкретного случая.
+      </p>
+    </div>
+  );
+};
+const LegalToolsMode = () => (
+  <div style={{ padding: 'var(--s-1)' }}><DeadlineCalculator /></div>
+);
+
+/* ═══════════ DOCUMENTS MODE — оболочка с вкладками «Анализ | Создать | Инструменты» ═══════════ */
 const DocumentsMode = ({ onToast }) => {
   const { tr } = useI18n();
   const [tab, setTab] = useState('analyze');
@@ -1571,9 +1650,10 @@ const DocumentsMode = ({ onToast }) => {
       <div style={{ display: 'flex', gap: 'var(--s-1)', padding: 'var(--s-1h)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-pill)', margin: '0 0 var(--s-2h) 0' }}>
         {tabBtn('analyze', tr('docs_tab_analyze'))}
         {tabBtn('create', tr('docs_tab_create'))}
+        {tabBtn('tools', 'Инструменты')}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-        {tab === 'analyze' ? <AnalyzeDocsMode /> : <CreateDocMode onToast={onToast} />}
+        {tab === 'analyze' ? <AnalyzeDocsMode /> : tab === 'create' ? <CreateDocMode onToast={onToast} /> : <LegalToolsMode />}
       </div>
     </div>
   );
