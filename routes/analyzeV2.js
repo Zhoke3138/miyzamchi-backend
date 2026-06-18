@@ -610,13 +610,15 @@ ${checklist}
   // ═══════════════════════════════════════════════════════════════════════
   //  ФАЗА 2B — ГЕНЕРАЦИЯ ДОКУМЕНТА (режим «Документы → Создать»)
   //  /api/v2/draft-document — мультиагентная research-коллегия (SSE-стрим):
-  //    1) Планировщик-исследователь (flash-lite) — фактура + ЧЕТЫРЕ группы
-  //       поисковых запросов: точные / связанные / общие / процессуальные.
-  //    2) Ищейки/RAG (Pinecone, параллельно по 4 группам + всегда-вкл.
-  //       процессуальные запросы) — широкий охват, дедуп по статье, роль = группа
-  //       RAG по приоритету (exact>related>procedural>general). Отдельного
-  //       агента-отборщика НЕТ (экономит ~5-10с и не режет охват — фильтрует драфтер).
-  //    3) Драфтер (DeepSeek v4-pro, reasoning) — насыщенный документ с полным
+  //    1) КОЛЛЕГИЯ ПАРАЛЛЕЛЬНЫХ АГЕНТОВ (Promise.all, бюджет ~20с на агента):
+  //       • агент фактуры (flash-lite) — facts/subject/legal_questions;
+  //       • 4 агента-исследователя (точные / связанные+спец.законы / общие /
+  //         процессуальные) — КАЖДЫЙ сам формулирует запросы по своей
+  //         специализации и сам ищет в Pinecone. Процессуальный всегда добавляет
+  //         дефолты (пошлина/сроки/подсудность/форма). Дедуп по статье, роль =
+  //         специализация агента по приоритету (exact>related>procedural>general).
+  //       Отдельного агента-отборщика НЕТ — нерелевантное отсекает драфтер.
+  //    2) Драфтер (DeepSeek v4-pro, reasoning) — насыщенный документ с полным
   //       правовым обоснованием, цитирует ТОЛЬКО реальные статьи из базы.
   //  SSE: { stage } прогресс → финальный { done:true, blocks[], articlesUsed[] }.
   // ═══════════════════════════════════════════════════════════════════════
@@ -727,34 +729,64 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
         return null;
       };
 
-      // ── 1) ПЛАНИРОВЩИК-ИССЛЕДОВАТЕЛЬ ──
-      stage('🔍 Анализирую дело и планирую поиск норм…');
-      let plan = { facts: {}, subject_line: '', legal_questions: [], queries: {} };
-      try {
-        const rawPlan = await clients.geminiJson({
-          systemPrompt: PLANNER_SYS(tpl),
-          userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON-план.`,
-          model: 'gemini-3.1-flash-lite', maxOutputTokens: 2048, timeoutMs: 25000,
-        });
-        const p = parseObj(rawPlan);
-        if (p) plan = { ...plan, ...p };
-      } catch (e) { console.warn('[draft-document] planner failed, degraded:', e.message); }
-
+      // ── 1-2) КОЛЛЕГИЯ АГЕНТОВ: фактура + 4 специализированных исследователя ──
+      //   Каждый исследователь САМ формулирует запросы по своей специализации и
+      //   САМ ищет в Pinecone. Все агенты работают ПАРАЛЛЕЛЬНО (Promise.all);
+      //   у каждого бюджет ~20с (withTimeout) — медленный агент не тормозит остальных.
       const cats = ['exact', 'related', 'general', 'procedural'];
-      const q = (plan.queries && typeof plan.queries === 'object') ? plan.queries : {};
-      // Фолбэк-запросы, если планировщик не дал группу.
-      const subj = plan.subject_line || tpl.label;
       const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
-      const catQueries = {
-        exact:      (Array.isArray(q.exact) && q.exact.length)     ? q.exact.slice(0, 5)   : [subj],
-        related:    (Array.isArray(q.related) && q.related.length) ? q.related.slice(0, 5) : [],
-        general:    (Array.isArray(q.general) && q.general.length) ? q.general.slice(0, 4) : [],
-        // Процессуальные = запросы планировщика + всегда-включённые дефолты (пошлина/сроки/подсудность/форма).
-        procedural: uniq([...(Array.isArray(q.procedural) ? q.procedural : []), ...PROC_DEFAULTS]).slice(0, 7),
+      const withTimeout = (p, ms, fb) => Promise.race([
+        Promise.resolve(p).catch(() => fb),
+        new Promise((r) => setTimeout(() => r(fb), ms)),
+      ]);
+      const RESEARCH_AGENTS = {
+        exact:      { label: 'Точные нормы',      focus: 'нормы материального права, ПРЯМО обосновывающие требование (основание иска по предмету спора)' },
+        related:    { label: 'Спец. и связанные', focus: 'профильный СПЕЦИАЛЬНЫЙ закон/кодекс по предмету (земля→Земельный кодекс КР, потребитель→Закон «О защите прав потребителей», аренда/заём/подряд→соответствующие главы ГК) + связанные институты и последствия (реституция, убытки, неустойка)' },
+        general:    { label: 'Общие нормы',       focus: 'общие положения Гражданского кодекса КР: о сделках, недействительности сделок, обязательствах, праве собственности, представительстве' },
+        procedural: { label: 'Процессуальные',    focus: 'процессуальные нормы ГПК КР: подсудность; форма и содержание искового заявления; государственная пошлина (размер, расчёт); исковая давность и сроки' },
       };
+      const researcherSys = (agent) => `Ты — юрист-исследователь права Кыргызской Республики, узкая специализация: «${agent.label}». Тебе дан диалог о деле для документа «${tpl.label}». Сформулируй 3-6 ТОЧНЫХ поисковых запросов к векторной базе НПА КР, чтобы найти ВСЕ нормы строго по своей специализации: ${agent.focus}. Верни СТРОГО JSON без markdown: { "queries": ["...", ...] }. Запросы развёрнутые — называй конкретные институты, кодексы и законы КР.`;
 
-      // ── 2) ИЩЕЙКИ/RAG — параллельно по группам, широкий охват ──
-      stage('📚 Ищу применимые нормы (точные, связанные, общие, процессуальные)…');
+      stage('🧑‍⚖️ Коллегия исследователей ищет нормы параллельно (точные · связанные · общие · процессуальные)…');
+      const t0 = Date.now();
+
+      // Агент фактуры (facts/subject/legal_questions для драфтера) — параллельно с исследователями.
+      const factsAgent = withTimeout((async () => {
+        const raw = await clients.geminiJson({
+          systemPrompt: PLANNER_SYS(tpl), userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON-план.`,
+          model: 'gemini-3.1-flash-lite', maxOutputTokens: 2048, timeoutMs: 18000,
+        });
+        return parseObj(raw) || {};
+      })(), 20000, {});
+
+      // 4 агента-исследователя: каждый сам → queries (LLM) → retrieval (Pinecone).
+      const researchAgents = cats.map((cat) => withTimeout((async () => {
+        const agent = RESEARCH_AGENTS[cat];
+        let queries = [];
+        try {
+          const raw = await clients.geminiJson({
+            systemPrompt: researcherSys(agent), userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON с queries.`,
+            model: 'gemini-3.1-flash-lite', maxOutputTokens: 1024, timeoutMs: 15000,
+          });
+          const o = parseObj(raw);
+          if (o && Array.isArray(o.queries)) queries = o.queries.slice(0, 6);
+        } catch (e) { console.warn(`[draft-document] agent ${cat} query failed:`, e.message); }
+        // Процессуальный агент всегда добавляет дефолты (пошлина/сроки/подсудность/форма).
+        if (cat === 'procedural') queries = uniq([...queries, ...PROC_DEFAULTS]).slice(0, 8);
+        if (!queries.length && cat === 'exact') queries = [String(tpl.label)];
+        if (!queries.length) return { cat, hits: [] };
+        let hits = [];
+        try { hits = (await resolvedDeps.pineconeSearch?.(queries, null, 8)) || []; }
+        catch (e) { console.warn(`[draft-document] agent ${cat} RAG failed:`, e.message); }
+        // Прогресс конкретного агента в UI (по мере готовности).
+        sse({ stage: `   ✓ ${agent.label}: запросов ${queries.length}, найдено статей ${hits.length}`, agent: cat, found: hits.length });
+        return { cat, hits };
+      })(), 22000, { cat, hits: [] }));
+
+      const [factsRes, ...agentResults] = await Promise.all([factsAgent, ...researchAgents]);
+      const plan = { facts: {}, subject_line: '', legal_questions: [], ...(factsRes || {}) };
+
+      // Сводим находки всех агентов в общий пул (дедуп по статье; роль = специализация агента).
       const pool = new Map(); // key npa|article → {npa_title, article_title, full_text, score, cats:Set}
       const addHits = (hits, cat) => {
         for (const h of (hits || [])) {
@@ -770,14 +802,8 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
           if ((h.score || 0) > rec.score) rec.score = h.score || 0;
         }
       };
-      await Promise.all(cats.map(async (cat) => {
-        const qs = catQueries[cat];
-        if (!qs || !qs.length) return;
-        try {
-          const hits = (await resolvedDeps.pineconeSearch?.(qs, null, 8)) || [];
-          addHits(hits, cat);
-        } catch (e) { console.warn(`[draft-document] RAG cat=${cat} failed:`, e.message); }
-      }));
+      for (const r of (agentResults || [])) addHits(r && r.hits, r && r.cat);
+      console.log(`[draft-document] research board: ${pool.size} норм за ${Math.round((Date.now() - t0) / 1000)}с (агенты параллельно)`);
 
       // ── 3) Роль нормы = группа RAG по приоритету (без отдельного агента-отборщика).
       //     Берём ТОП по score внутри каждой роли — широкий охват всех видов норм.
