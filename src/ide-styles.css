@@ -6,9 +6,9 @@
    Inspiration: Linear · Cursor · Vercel · Harvey AI · NYT Magazine
    ───────────────────────────────────────────────────────────────────
    Typography
-     Display : Instrument Serif        (italic editorial, gravitas)
-     Body    : Geist                   (geometric precision)
-     Mono    : Geist Mono              (technical, refined)
+     Display : IBM Plex Serif          (editorial serif, Cyrillic ✓)
+     Body    : IBM Plex Sans           (humanist sans, Cyrillic ✓)
+     Mono    : IBM Plex Mono           (technical mono, Cyrillic ✓)
      Long    : Newsreader              (paragraphs, NPA documents)
    ───────────────────────────────────────────────────────────────────
    Все имена классов и CSS-переменных сохранены 1:1 с предыдущей
@@ -19,12 +19,12 @@
 *{box-sizing:border-box;margin:0;padding:0}
 html,body,#root{width:100%;height:100%;overflow:hidden}
 body{
-  font-family:'Geist','Inter',ui-sans-serif,system-ui,-apple-system,sans-serif;
-  font-size:13.5px;
+  font-family:'IBM Plex Sans','Inter',ui-sans-serif,system-ui,-apple-system,sans-serif;
+  font-size:14px;
   -webkit-font-smoothing:antialiased;
   -moz-osx-font-smoothing:grayscale;
-  letter-spacing:-.011em;
-  font-feature-settings:"ss01","ss03","cv11","liga","calt","kern";
+  letter-spacing:-.012em;
+  font-feature-settings:"liga","kern","calt","zero";
   font-optical-sizing:auto;
   background:var(--bg-editor);
   color:var(--text);
@@ -96,10 +96,10 @@ body{
     0 8px 32px var(--accent-glow);
 
   /* Typography stacks */
-  --font-display:'Instrument Serif',Georgia,serif;
-  --font-body:'Geist','Inter',ui-sans-serif,system-ui,sans-serif;
-  --font-mono:'Geist Mono','JetBrains Mono',ui-monospace,monospace;
-  --font-long:'Newsreader','Times New Roman',Times,serif;
+  --font-display:'IBM Plex Serif',Georgia,serif;
+  --font-body:'IBM Plex Sans','Inter',ui-sans-serif,system-ui,sans-serif;
+  --font-mono:'IBM Plex Mono','JetBrains Mono',ui-monospace,monospace;
+  --font-long:'Newsreader','IBM Plex Serif',Times,serif;
   /* Alias: половина JSX использует var(--font-sans) — токен раньше не
      существовал, текст падал на дефолтный serif. Сделан как алиас на --font-body. */
   --font-sans:var(--font-body);
@@ -680,10 +680,10 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
    CHAT MARKDOWN — editorial typography + technical precision
    ════════════════════════════════════════════════════════════════════ */
 .ai-md{
-  font-size:13.5px;line-height:1.72;color:var(--text);
+  font-size:14.5px;line-height:1.75;color:var(--text);
   word-break:break-word;
   font-family:var(--font-body);
-  font-feature-settings:"ss01","cv11","kern","liga";
+  font-feature-settings:"liga","kern","calt";
 }
 .ai-md h1,.ai-md h2,.ai-md h3,.ai-md h4{
   margin:22px 0 10px;
@@ -827,7 +827,7 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
 .art-modal-body{
   flex:1;overflow-y:auto;padding:22px 26px;
   font-family:var(--font-long);
-  font-size:14.5px;line-height:1.8;
+  font-size:15.5px;line-height:1.85;
   color:var(--text);white-space:pre-wrap;
 }
 .art-modal-foot{

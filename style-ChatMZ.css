@@ -34,8 +34,8 @@
   --motion-base: 200ms;
   --motion-slow: 280ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "IBM Plex Sans", "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
 }
 
 body.light-mode {
@@ -2504,7 +2504,7 @@ body.light-mode .source-item-body {
 }
 @keyframes src-fade-in { from { opacity: 0; } to { opacity: 1; } }
 .source-item-text {
-  font-family: 'Newsreader', Georgia, serif;
+  font-family: 'Newsreader', 'IBM Plex Serif', Georgia, serif;
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-primary);
