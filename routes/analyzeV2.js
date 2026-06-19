@@ -272,33 +272,24 @@ function twoStagePineconeFilter(hits, absThreshold = 0.65, tail = 0.25) {
 // ---------------------------------------------------------------------------
 // ФАЗА 3: Judgment (DeepSeek reasoner, динамический effort)
 // ---------------------------------------------------------------------------
-/**
- * Динамический reasoning_effort (ТЗ 4.1).
- * High — порядок проверки первым, т.к. перекрывает остальные.
- */
-// deepseek-v4-pro принимает только 'high' | 'max'. Динамика сложности:
-// >3 ошибок/слепых зон суммарно ИЛИ >2 разных НПА → 'max', иначе 'high'.
-function pickReasoningEffort({ errorCount = 0, blindSpotCount = 0, distinctNpaCount = 0 }) {
-  if ((errorCount + blindSpotCount) > 3 || distinctNpaCount > 2) return 'max';
-  return 'high';
-}
-
-// ── 2026-06-16 Динамический роутер Судьи (по идее пользователя) ─────────────
-// Лёгкий документ (мало замечаний, ≤1 НПА, небольшой объём) → СТАНДАРТНЫЙ
-// судья DeepSeek v4-flash, минимальное рассуждение ('low'), thinking ВЫКЛ —
-// быстро и без CoT-задержки. Тяжёлый → ВЕРХОВНЫЙ судья v4-pro, рассуждение
-// от минимума ('high') к максимуму ('max'), thinking ВКЛ.
-//   model: 'deepseek-v4-flash' | 'deepseek-v4-pro'
-//   reasoning_effort: 'low' (flash) | 'high'|'max' (pro)
-//   thinking: 'disabled' (flash) | 'enabled' (pro)
+// ── 2026-06-19 Роутер Судьи — только по числу замечаний, thinking всегда ВЫКЛ ──
+// thinking: 'enabled' убрано у обеих моделей — оно вызывало 30-60с паузу перед
+// первым токеном. Судья — синтезатор готовых вердиктов, CoT ему не нужен.
+//
+// Шкала (issues = errorCount + blindSpotCount):
+//   0-9  замечаний → deepseek-v4-flash, reasoning_effort: 'low'  (быстро)
+//   10-40 замечаний → deepseek-v4-flash, reasoning_effort: 'medium'
+//   >40  замечаний → deepseek-v4-pro,   reasoning_effort: 'high' (исключительный кейс)
+//
+// Длина документа и число НПА НЕ являются критерием выбора модели:
+// длинный чистый договор на 60 страниц не нуждается в Pro.
 function pickJudgeRoute({ errorCount = 0, blindSpotCount = 0, distinctNpaCount = 0, totalBlocks = 0 }) {
   const issues = errorCount + blindSpotCount;
-  const light = issues <= 2 && distinctNpaCount <= 1 && totalBlocks <= 25;
-  if (light) {
-    return { tier: 'standard', model: 'deepseek-v4-flash', reasoning_effort: 'low', thinking: 'disabled', name: 'DeepSeek v4 Flash' };
+  if (issues > 40) {
+    return { tier: 'supreme', model: 'deepseek-v4-pro', reasoning_effort: 'high', thinking: 'disabled', name: 'DeepSeek v4 Pro' };
   }
-  const severe = issues > 3 || distinctNpaCount > 2 || totalBlocks > 60;
-  return { tier: 'supreme', model: 'deepseek-v4-pro', reasoning_effort: severe ? 'max' : 'high', thinking: 'enabled', name: 'DeepSeek v4 Pro' };
+  const effort = issues >= 10 ? 'medium' : 'low';
+  return { tier: 'standard', model: 'deepseek-v4-flash', reasoning_effort: effort, thinking: 'disabled', name: 'DeepSeek v4 Flash' };
 }
 
 /** Метрики: confidenceScore = 1 - Слепые/N; purityIndex = 1 - Ошибки/N. */
@@ -1602,7 +1593,7 @@ module.exports = {
   // экспорт чистых функций для smoke-тестов
   _internals: {
     buildInjectedContext, twoStagePineconeFilter,
-    pickReasoningEffort, pickJudgeRoute, computeMetrics,
+    pickJudgeRoute, computeMetrics,
     toStepStatus, verdictToRow,
   },
 };
