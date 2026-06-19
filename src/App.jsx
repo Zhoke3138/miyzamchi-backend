@@ -1662,6 +1662,52 @@ const DeadlineCalculator = () => {
     </div>
   );
 };
+// Калькулятор госпошлины — цена иска × ставка. Ставка РЕДАКТИРУЕМАЯ (пресеты —
+// ориентир по ПП КР №159), без хардкода спорных значений; ссылка на офиц. калькулятор.
+const _fmtSom = (n) => { try { return new Intl.NumberFormat('ru-RU').format(Math.round(n)); } catch (_) { return String(Math.round(n)); } };
+const GOSP_PRESETS = [['Имущественный иск (3%)', 3], ['Раздел имущества (1%)', 1], ['Свой %', null]];
+const GosposhlinaCalculator = () => {
+  const [claim, setClaim] = useState('');
+  const [rate, setRate] = useState(3);
+  const fee = useMemo(() => {
+    const c = parseFloat(String(claim).replace(/\s/g, '').replace(',', '.')) || 0;
+    const r = parseFloat(String(rate).replace(',', '.')) || 0;
+    return c > 0 ? c * r / 100 : 0;
+  }, [claim, rate]);
+  const inputStyle = { border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: 'var(--text-sm)', padding: 'var(--s-1h) var(--s-2)', fontFamily: 'var(--font-sans)', outline: 'none', width: '100%', boxSizing: 'border-box' };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2h)' }}>
+      <div>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', color: 'var(--text-main)', margin: 0 }}>Калькулятор госпошлины</h3>
+        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 'var(--s-1)' }}>Цена иска × ставка. Ставку можно изменить под конкретное требование.</p>
+      </div>
+      <div style={{ display: 'flex', gap: 'var(--s-1h)', flexWrap: 'wrap' }}>
+        {GOSP_PRESETS.filter(p => p[1] != null).map(([label, r]) => (
+          <button key={label} type="button" onClick={() => setRate(r)}
+            style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-pill)', padding: 'var(--s-1) var(--s-2)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        Цена иска, сом
+        <input type="text" inputMode="decimal" value={claim} onChange={e => setClaim(e.target.value)} placeholder="например, 150000" style={inputStyle} />
+      </label>
+      <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        Ставка, %
+        <input type="number" min="0" step="0.1" value={rate} onChange={e => setRate(e.target.value)} style={inputStyle} />
+      </label>
+      <div style={{ padding: 'var(--s-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
+        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>Госпошлина</div>
+        <div style={{ fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--text-main)', fontFamily: 'var(--font-display)' }}>{_fmtSom(fee)} сом</div>
+      </div>
+      <p style={{ fontSize: 'var(--text-2xs)', color: 'var(--muted)', lineHeight: 1.4 }}>
+        ⚠️ Ориентировочно. Ставки утверждены ПП КР №159 (15.04.2019) и зависят от характера требования и расчётного показателя (возможна прогрессивная шкала и льготы). Точный расчёт — на официальном калькуляторе sot.kg.
+      </p>
+    </div>
+  );
+};
+
 // Библиотека типовых клауз — вставка готовых формулировок в открытый документ.
 // Это шаблоны с прочерками; вставляются как обычный текст (не Track Changes).
 const CLAUSES = [
@@ -1714,6 +1760,8 @@ const ClauseLibrary = ({ onToast }) => {
 const LegalToolsMode = ({ onToast }) => (
   <div style={{ padding: 'var(--s-1)', display: 'flex', flexDirection: 'column', gap: 'var(--s-4)' }}>
     <DeadlineCalculator />
+    <div style={{ height: 1, background: 'var(--border-color)' }} />
+    <GosposhlinaCalculator />
     <div style={{ height: 1, background: 'var(--border-color)' }} />
     <ClauseLibrary onToast={onToast} />
   </div>
