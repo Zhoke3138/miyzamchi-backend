@@ -1379,6 +1379,8 @@ const CreateDocMode = ({ onToast }) => {
   const [genStatus, setGenStatus] = useState('');  // прогресс генерации (SSE-stage)
   const [genDone, setGenDone]     = useState(false); // документ сгенерирован (показать «Скачать»)
   const [genReview, setGenReview] = useState(null);  // результат самопроверки {ok, issues[]}
+  const [genBlocks, setGenBlocks] = useState([]);   // блоки последнего документа (для точечного патча)
+  const [patchBusy, setPatchBusy] = useState(false); // идёт точечное исправление замечаний
   const listRef = useRef(null);
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, busy]);
 
@@ -1487,11 +1489,63 @@ const CreateDocMode = ({ onToast }) => {
       const n = (result && result.articlesUsed || []).length;
       if (n) onToast && onToast('law', `Задействовано норм: ${n}`);
       setGenReview(result && result.review || null);
+      setGenBlocks(finalBlocks);
       setGenDone(true);
     } catch (e) {
       console.error('[draft-document]', e);
       onToast && onToast('warning', 'Ошибка генерации: ' + ((e && e.message) || e));
     } finally { setGenBusy(false); setGenStatus(''); }
+  };
+
+  // ── Точечное исправление замечаний самопроверки ──
+  const fixIssues = async () => {
+    if (patchBusy || genBusy || !genBlocks.length || !(genReview && genReview.issues && genReview.issues.length)) return;
+    // Захватываем issues ДО обнуления состояния
+    const issuesToFix = genReview.issues.filter(i => i.severity !== 'low');
+    const blocksSnapshot = genBlocks.slice();
+    setPatchBusy(true); setGenBusy(true); setGenStatus('🔎 Анализирую замечания…'); setGenReview(null);
+    try {
+      const res = await fetch(`${_ensureBackend()}/api/v2/patch-document`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docType, messages, blocks: blocksSnapshot, issues: issuesToFix }),
+      });
+      if (!res.ok || !res.body) {
+        let msg = 'HTTP ' + res.status;
+        try { const e = await res.json(); if (e && e.error) msg = e.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let result = null, errMsg = null;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n'); buf = parts.pop() || '';
+        for (const part of parts) {
+          const line = part.split('\n').find(l => l.startsWith('data:'));
+          if (!line) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') continue;
+          let evt; try { evt = JSON.parse(payload); } catch (_) { continue; }
+          if (evt.stage) setGenStatus(evt.stage);
+          else if (evt.error) errMsg = evt.error;
+          else if (evt.done) result = evt;
+        }
+      }
+      if (errMsg) throw new Error(errMsg);
+      if (!result || !Array.isArray(result.blocks) || !result.blocks.length) throw new Error('Нет исправленных блоков');
+      const tplLabel = (DOC_TYPES.find(d => d.k === docType) || {}).label || 'Документ';
+      setGenStatus('Обновляю документ…');
+      await renderLegalDocument(result.blocks, { onToast, name: `${tplLabel}.docx` });
+      setGenBlocks(result.blocks);
+      setGenReview(result.review || null);
+      onToast && onToast('check', result.patched ? 'Замечания исправлены точечно' : 'Документ обновлён');
+    } catch (e) {
+      console.error('[patch-document]', e);
+      onToast && onToast('warning', 'Ошибка исправления: ' + ((e && e.message) || e));
+    } finally { setPatchBusy(false); setGenBusy(false); setGenStatus(''); }
   };
 
   // ── ШАГ 1: выбор типа ──
@@ -1535,21 +1589,27 @@ const CreateDocMode = ({ onToast }) => {
         {busy && <div style={{ alignSelf: 'flex-start', fontSize: 'var(--text-xs)', color: 'var(--muted)', padding: '0 var(--s-1)' }}>Интервьюер думает…</div>}
       </div>
       {ready && (
-        <div style={{ margin: 'var(--s-2) 0' }}>
+        <div style={{ margin: 'var(--s-2) 0', display: 'flex', flexDirection: 'column', gap: 'var(--s-1h)' }}>
+          {/* Прогресс генерации / патча */}
           {genBusy && genStatus && (
-            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', padding: '0 var(--s-1) var(--s-1h)', display: 'flex', alignItems: 'center', gap: 'var(--s-1)' }}>
-              <span className="dot-pulse" style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', padding: '0 var(--s-1)', display: 'flex', alignItems: 'center' }}>
+              <span className="gen-dots"><span/><span/><span/></span>
               <span>{genStatus}</span>
             </div>
           )}
-          <button type="button" onClick={generate} disabled={genBusy}
-            style={{ width: '100%', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: 'none', background: genBusy ? 'var(--hover)' : 'linear-gradient(135deg,var(--accent),var(--accent2))', color: genBusy ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: genBusy ? 'default' : 'pointer', fontFamily: 'var(--font-sans)' }}>
-            {genBusy ? 'Агенты работают…' : (genDone ? '⚖️ Перегенерировать' : '⚖️ Сгенерировать документ')}
-          </button>
 
+          {/* Кнопка первичной генерации — только до первого успешного результата */}
+          {!genDone && (
+            <button type="button" onClick={generate} disabled={genBusy}
+              style={{ width: '100%', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: 'none', background: genBusy ? 'var(--hover)' : 'linear-gradient(135deg,var(--accent),var(--accent2))', color: genBusy ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: genBusy ? 'default' : 'pointer', fontFamily: 'var(--font-sans)' }}>
+              {genBusy ? 'Агенты работают…' : '⚖️ Сгенерировать документ'}
+            </button>
+          )}
+
+          {/* После генерации: скачать → замечания → Доработать */}
           {genDone && !genBusy && (
             <>
-              <div style={{ display: 'flex', gap: 'var(--s-1h)', marginTop: 'var(--s-1h)' }}>
+              <div style={{ display: 'flex', gap: 'var(--s-1h)' }}>
                 <button type="button" onClick={downloadDoc}
                   style={{ flex: 1, padding: 'var(--s-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
                   ⬇ .docx
@@ -1559,20 +1619,38 @@ const CreateDocMode = ({ onToast }) => {
                   ⬇ PDF
                 </button>
               </div>
+
               {/* Карточка самопроверки */}
               {genReview && (
-                <div style={{ marginTop: 'var(--s-2)', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
+                <div style={{ padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
                   <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: genReview.ok ? 'var(--green, #10a37f)' : 'var(--orange, #d97706)', marginBottom: (genReview.issues && genReview.issues.length) ? 'var(--s-1h)' : 0 }}>
                     {genReview.ok ? '✓ Самопроверка: замечаний нет' : `⚠ Самопроверка: замечаний — ${genReview.issues.length}`}
                   </div>
                   {(genReview.issues || []).map((it, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 'var(--s-1)', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', lineHeight: 1.45, padding: '2px 0' }}>
+                    <div key={i} style={{ display: 'flex', gap: 'var(--s-1)', fontSize: 'var(--text-xs)', lineHeight: 1.45, padding: '3px 0' }}>
                       <span style={{ flexShrink: 0 }}>{it.severity === 'high' ? '🔴' : it.severity === 'medium' ? '🟡' : '🔵'}</span>
-                      <span>{it.text}</span>
+                      <span style={{ color: it.severity === 'low' ? 'var(--accent, #2563eb)' : 'var(--text-muted)' }}>
+                        {it.text}
+                        {it.severity === 'low' && <span style={{ marginLeft: 4, opacity: 0.7, fontStyle: 'italic' }}> — заполните вручную</span>}
+                      </span>
                     </div>
                   ))}
                 </div>
               )}
+
+              {/* Кнопка «Доработать документ» / «Исправить замечания» — всегда снизу */}
+              {(() => {
+                const fixable = genReview && genReview.issues && genReview.issues.filter(i => i.severity !== 'low').length > 0;
+                return (
+                  <button type="button"
+                    onClick={fixable ? fixIssues : generate}
+                    style={{ width: '100%', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: 'none', background: 'linear-gradient(135deg,var(--accent),var(--accent2))', color: '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
+                    {fixable
+                      ? `✏️ Исправить замечания (${genReview.issues.filter(i => i.severity !== 'low').length})`
+                      : '↺ Доработать документ'}
+                  </button>
+                );
+              })()}
             </>
           )}
         </div>

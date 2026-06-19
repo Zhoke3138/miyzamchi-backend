@@ -593,6 +593,11 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
 
 /* ════ KEYFRAMES ══════════════════════════════════════════════════════ */
 @keyframes dot{0%,80%,100%{transform:scale(.4);opacity:.4}40%{transform:scale(1);opacity:1}}
+/* ── Три прыгающие точки «Агенты работают» ───────────────────────── */
+.gen-dots{display:inline-flex;align-items:center;gap:4px;margin-right:6px}
+.gen-dots span{display:block;width:6px;height:6px;border-radius:50%;background:var(--accent);animation:dot 1.4s ease-in-out infinite}
+.gen-dots span:nth-child(2){animation-delay:.2s}
+.gen-dots span:nth-child(3){animation-delay:.4s}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes fadeInScale{from{opacity:0;transform:scale(.95) translateY(4px)}to{opacity:1;transform:scale(1) translateY(0)}}
 @keyframes toastIn{from{opacity:0;transform:translateX(100%) scale(.9)}to{opacity:1;transform:translateX(0) scale(1)}}
