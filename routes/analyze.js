@@ -222,13 +222,14 @@ class TelemetryCollector {
 const SEGMENTS_CONCURRENCY        = 16;
 const HOUNDS_PER_SEG_CONCURRENCY  = 3;
 
-// ── 2026-05-30: Smooth Burst Throttle для агентов-верификаторов ──────
-// 20 RPS = 1 запрос каждые 50ms. Tier 1 (Gemini 3.1 Flash Lite) держит
-// 4000 RPM = 66 RPS, мы берём ~30% headroom для каскадных fallback'ов
-// на Tier 2/3 (если Tier 1 ляжет). maxConcurrent=100 — защита от
-// зависших Gemini-ответов (если упало 100 — больше не накапливаем).
-const VERIFIER_THROTTLE_RPS       = 20;
-const VERIFIER_MAX_CONCURRENT     = 100;
+// ── 2026-06-19: Smooth Burst Throttle для агентов-верификаторов ──────
+// 100 RPS = 1 запрос каждые 10ms. Gemini 3.1 Flash Lite держит 4000 RPM
+// = 66 RPS, но throttle регулирует СТАРТ задач, не завершение — реальная
+// нагрузка на Gemini определяется watchdog 45s и concurrency агентов.
+// 10ms интервал устраняет искусственную очередь при 25-30 audit-чанках.
+// maxConcurrent=200 — защита от зависших ответов при высоком RPS.
+const VERIFIER_THROTTLE_RPS       = 100;
+const VERIFIER_MAX_CONCURRENT     = 200;
 
 // User_id для KVCache-изоляции
 const KVCACHE_TRIAGE_ID     = 'miyzamchi-triage-v1';
@@ -242,13 +243,12 @@ const DEEPSEEK_AGENT_MODEL      = 'deepseek-v4-flash';
 const DEEPSEEK_JUDGE_FAST_MODEL = 'deepseek-v4-flash'; // Стандартный Судья (дефолт)
 const DEEPSEEK_JUDGE_DEEP_MODEL = 'deepseek-v4-pro';   // Верховный Судья (только эскалация)
 
-// ── 2026-06-12: Пороги эскалации Final Judge на Верховного Судью (v4-pro) ──
-// Эскалируем ТОЛЬКО если документ очень длинный ИЛИ агенты нашли сложные
-// коллизии. Всё остальное — Стандартный Судья (v4-flash): дешевле и быстрее.
-const JUDGE_LONG_DOC_CHARS    = 30000; // ~15+ страниц сплошного текста
-const JUDGE_LONG_DOC_SEGMENTS = 40;    // столько проверенных пунктов = большой документ
-const JUDGE_HARD_CRITICALS    = 2;     // ≥2 critical = сложные разногласия/коллизии
-const JUDGE_HARD_TOTAL_RISKS  = 6;     // ≥6 рисков суммарно = тяжёлый кейс
+// ── 2026-06-19: Пороги Final Judge — выбор ТОЛЬКО по числу замечаний ──
+// Длина документа НЕ является критерием. Длинный чистый договор на 60 страниц
+// не нуждается в Pro; короткая расписка с 45 нарушениями — нуждается.
+// reasoning_effort масштабируется по тяжести: меньше замечаний → быстрее.
+const JUDGE_SUPREME_RISKS_THRESHOLD = 40; // > 40 total (critical+warning) → deepseek-v4-pro
+const JUDGE_MEDIUM_RISKS_THRESHOLD  = 10; // ≥ 10 → reasoning_effort 'medium'
 
 // ── Семафор контролируемой параллельности ───────────────────────────
 async function runWithConcurrency(items, concurrency, taskFn, opts = {}) {
@@ -1399,26 +1399,27 @@ ${schemaBlock}`;
         //
         // KVCache-ID раздельные (fast/deep) — у каждой модели свой кеш-контур.
         const totalRisks = critical.length + warning.length;
-        const docChars = String(documentText || '').length;
-        const isLongDoc  = docChars > JUDGE_LONG_DOC_CHARS || total > JUDGE_LONG_DOC_SEGMENTS;
-        const isHardCase = critical.length >= JUDGE_HARD_CRITICALS || totalRisks >= JUDGE_HARD_TOTAL_RISKS;
-        const useSupreme = isLongDoc || isHardCase;
+        // Выбор Судьи: только по числу найденных замечаний (critical + warning).
+        // thinking: 'disabled' остаётся у всех — ключевой anti-latency фикс
+        // (с thinking enabled DeepSeek молча "думал" 30-60с перед первым токеном).
+        const useSupreme = totalRisks > JUDGE_SUPREME_RISKS_THRESHOLD;
+        // reasoning_effort масштабируется: меньше проблем → быстрее синтез.
+        //   0-9  рисков → 'low'    (типовой документ, быстрый синтез)
+        //   10-40 рисков → 'medium' (заметные коллизии, чуть больше связности)
+        //   >40 рисков  → 'high' на Pro (исключительный кейс)
+        const judgeReasoning = useSupreme
+            ? 'high'
+            : totalRisks >= JUDGE_MEDIUM_RISKS_THRESHOLD ? 'medium' : 'low';
 
-        // 2026-06-12 HOTFIX (latency): reasoning ЖЁСТКО на минимуме у ОБОИХ судей
-        // ('low' + thinking disabled в вызове ниже). Судья — чистый синтезатор
-        // готовых вердиктов, цепочка мыслей ему не нужна, а с thinking enabled
-        // DeepSeek молча думал десятки секунд и текст приходил почти разом.
-        // Развилка моделей (standard/supreme) сохранена.
         let judgeModel, judgeUserId, pathLabel;
-        const judgeReasoning = 'low';
         if (useSupreme) {
             judgeModel  = DEEPSEEK_JUDGE_DEEP_MODEL;   // Верховный: deepseek-v4-pro
             judgeUserId = KVCACHE_JUDGE_DEEP_ID;
-            pathLabel   = `supreme/${isLongDoc ? 'long-doc' : 'collisions'}`;
+            pathLabel   = `supreme/risks-${totalRisks}`;
         } else {
             judgeModel  = DEEPSEEK_JUDGE_FAST_MODEL;   // Стандартный: deepseek-v4-flash
             judgeUserId = KVCACHE_JUDGE_FAST_ID;
-            pathLabel   = `standard/${judgeReasoning}`;
+            pathLabel   = `standard/risks-${totalRisks}/${judgeReasoning}`;
         }
         // Человекочитаемое имя сработавшего судьи — для отображения на фронте
         const judgeDisplayName = useSupreme ? 'DeepSeek v4 Pro' : 'DeepSeek v4 Flash';
