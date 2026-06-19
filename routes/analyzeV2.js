@@ -561,6 +561,14 @@ function createAnalyzeV2Router(deps = {}) {
       //    семантический lead-in. Дробление таблиц может изменить число блоков,
       //    поэтому пересобираем chunks ПЕРЕД buildGlobalState. blockMeta[i]
       //    параллелен новому chunks[i]: { section, npa, type, continues_prev, leadIn }.
+      //
+      // ⚡ ОПТИМИЗАЦИЯ: extractGlossary использует только markdown (не зависит от
+      // классифицированных блоков) → запускаем его СРАЗУ, пока buildSuperDocBlocks
+      // работает. Экономия: max(glossary, classify) вместо sum(glossary + classify) ≈ 3-5с.
+      const glossaryPromise = resolvedDeps.extractGlossary
+        ? resolvedDeps.extractGlossary(markdown, chunks).catch(() => ({}))
+        : Promise.resolve({});
+
       const sdBlocks = await buildSuperDocBlocks(chunks, chunkContexts, { cascade: getCascade(), logger: console });
       chunks = sdBlocks.map((b) => b.text);
       const blockMeta = sdBlocks.map((b) => ({
@@ -575,7 +583,17 @@ function createAnalyzeV2Router(deps = {}) {
       const leadInCount = blockMeta.filter((m) => m.leadIn).length;
       console.log(`[SuperDoc] blocks: ${sdBlocks.length} | types=${JSON.stringify(typeCounts)} | lead-in=${leadInCount}`);
 
-      const state = await buildGlobalState(markdown, chunks, structure_confidence, resolvedDeps);
+      // Ждём глоссарий (вероятно уже готов, т.к. шёл параллельно с classify)
+      const { terms = {}, crossRefs = {}, header = '' } = (await glossaryPromise) || {};
+      const state = {
+        header,
+        terms,
+        termKeys: new Set(Object.keys(terms).map((t) => t.toLowerCase())),
+        crossRefs,
+        chunks,
+        N: chunks.length,
+        structureConfidence: structure_confidence,
+      };
       step({ id: 'segment', status: 'success', text: `Блоков: ${state.N} (${segInfo})` });
 
       // ── ФАЗА 2: волновая валидация (стримим tableRow по мере готовности) ─
@@ -595,6 +613,9 @@ function createAnalyzeV2Router(deps = {}) {
           sse({ tableRow: verdictToRow(v) });
           return v;
         },
+        // stepMs: 10мс вместо дефолтных 50мс — все блоки стартуют почти одновременно.
+        // wavePauseMs: 200мс (дефолт 1000) — меньше пауза между волнами (защита от 429).
+        { stepMs: 10, wavePauseMs: 200 },
       );
       const graph = settled.filter((s) => s.status === 'fulfilled').map((s) => s.value);
       step({ id: 'validate', status: 'success', text: `Проверено фрагментов: ${graph.length}` });

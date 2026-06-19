@@ -77,30 +77,26 @@ async function fragmentDocument(text) {
   const src = String(text || '').trim();
   if (!src) return [];
 
-  const call = (useThinking) => clients.geminiJson({
-    systemPrompt: FRAGMENT_SYS,
-    userPrompt: `ДОКУМЕНТ:\n${src.slice(0, 16000)}`,
-    model: 'gemini-3.1-flash-lite',
-    maxOutputTokens: 4096,
-    timeoutMs: 25000,
-    thinkingConfig: useThinking ? { thinkingBudget: 1500 } : null,
-  });
-
-  let raw;
+  // thinkingBudget убран — prompt-level CoT через поле "reasoning" в JSON достаточно.
+  // Нативный thinkingBudget добавлял 4-6с задержки без заметного выигрыша в качестве нарезки.
   try {
-    raw = await call(true);                       // попытка нативного CoT
-  } catch (_) {
-    try { raw = await call(false); }              // фолбэк: только prompt-CoT
-    catch (_e) { return []; }                     // совсем не вышло → роут вернётся к chunkDocument
+    const raw = await clients.geminiJson({
+      systemPrompt: FRAGMENT_SYS,
+      userPrompt: `ДОКУМЕНТ:\n${src.slice(0, 16000)}`,
+      model: 'gemini-3.1-flash-lite',
+      maxOutputTokens: 4096,
+      timeoutMs: 25000,
+    });
+    const parsed = safeJson(raw, {});
+    if (parsed.reasoning) {
+      console.log('[Gemini DEBUG] fragment reasoning:', String(parsed.reasoning).slice(0, 400));
+    }
+    return Array.isArray(parsed.fragments)
+      ? parsed.fragments.map((f) => String(f || '').trim()).filter(Boolean)
+      : [];
+  } catch (_e) {
+    return [];
   }
-
-  const parsed = safeJson(raw, {});
-  if (parsed.reasoning) {
-    console.log('[Gemini DEBUG] fragment reasoning:', String(parsed.reasoning).slice(0, 400));
-  }
-  return Array.isArray(parsed.fragments)
-    ? parsed.fragments.map((f) => String(f || '').trim()).filter(Boolean)
-    : [];
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -153,17 +149,20 @@ async function pineconeSearch(queries, npa = null, topKPerQuery = 10) {
   const exact = npa ? getDbExactName(npa) : null;
   const filter = exact ? { npa_title: { $eq: exact } } : null;
 
-  // Один прогон по всем запросам (с фильтром или без), merge по id с max score.
+  // Параллельный прогон по всем запросам (Promise.all), merge по id с max score.
+  // Было: sequential for await — 3 запроса × ~0.5с = ~1.5с на блок.
+  // Стало: все запросы стартуют одновременно → ~0.5с на блок.
   async function run(useFilter) {
-    const byId = new Map();
-    for (const q of queries) {
-      let matches = [];
+    const allMatches = await Promise.all(queries.map(async (q) => {
       try {
         const vector = await clients.getEmbedding(q);
-        matches = await clients.queryPinecone(vector, topKPerQuery, useFilter ? filter : null);
+        return await clients.queryPinecone(vector, topKPerQuery, useFilter ? filter : null);
       } catch (_) {
-        matches = []; // graceful: один промах не валит весь поиск
+        return []; // graceful: один промах не валит весь поиск
       }
+    }));
+    const byId = new Map();
+    for (const matches of allMatches) {
       for (const m of matches) {
         const prev = byId.get(m.id);
         if (!prev || m.score > prev.score) byId.set(m.id, m);
