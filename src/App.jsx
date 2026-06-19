@@ -1381,6 +1381,8 @@ const CreateDocMode = ({ onToast }) => {
   const [genReview, setGenReview] = useState(null);  // результат самопроверки {ok, issues[]}
   const [genBlocks, setGenBlocks] = useState([]);   // блоки последнего документа (для точечного патча)
   const [patchBusy, setPatchBusy] = useState(false); // идёт точечное исправление замечаний
+  const [deepReview, setDeepReview] = useState(null); // результат глубокой проверки {findings[], score, summary}
+  const [deepBusy, setDeepBusy]   = useState(false);  // идёт глубокая проверка
   const listRef = useRef(null);
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, busy]);
 
@@ -1424,7 +1426,7 @@ const CreateDocMode = ({ onToast }) => {
   const downloadPdf = () => { try { window.__ideHandleAction && window.__ideHandleAction('exportPdf'); } catch (_) {} };
 
   const generate = async () => {
-    if (genBusy) return; setGenBusy(true); setGenStatus('Запускаю агентов…'); setGenDone(false); setGenReview(null);
+    if (genBusy) return; setGenBusy(true); setGenStatus('Запускаю агентов…'); setGenDone(false); setGenReview(null); setDeepReview(null);
     try {
       // Фаза 2B: мультиагентная research-коллегия (SSE):
       // планировщик → RAG по 4 группам норм → отборщик → драфтер v4-pro.
@@ -1548,6 +1550,47 @@ const CreateDocMode = ({ onToast }) => {
     } finally { setPatchBusy(false); setGenBusy(false); setGenStatus(''); }
   };
 
+  // ── Глубокая проверка документа (по кнопке) ──
+  const runDeepCheck = async () => {
+    if (deepBusy || genBusy || !genBlocks.length) return;
+    setDeepBusy(true); setDeepReview(null);
+    try {
+      const res = await fetch(`${_ensureBackend()}/api/v2/deep-check-document`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docType, messages, blocks: genBlocks }),
+      });
+      if (!res.ok || !res.body) {
+        let msg = 'HTTP ' + res.status;
+        try { const e = await res.json(); if (e && e.error) msg = e.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let result = null, errMsg = null;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n'); buf = parts.pop() || '';
+        for (const part of parts) {
+          const line = part.split('\n').find(l => l.startsWith('data:'));
+          if (!line) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') continue;
+          let evt; try { evt = JSON.parse(payload); } catch (_) { continue; }
+          if (evt.error) errMsg = evt.error;
+          else if (evt.done) result = evt;
+        }
+      }
+      if (errMsg) throw new Error(errMsg);
+      if (result) setDeepReview(result);
+    } catch (e) {
+      console.error('[deep-check]', e);
+      onToast && onToast('warning', 'Ошибка глубокой проверки: ' + ((e && e.message) || e));
+    } finally { setDeepBusy(false); }
+  };
+
   // ── ШАГ 1: выбор типа ──
   if (step === 'pick') {
     return (
@@ -1633,6 +1676,46 @@ const CreateDocMode = ({ onToast }) => {
                         {it.text}
                         {it.severity === 'low' && <span style={{ marginLeft: 4, opacity: 0.7, fontStyle: 'italic' }}> — заполните вручную</span>}
                       </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* ── Кнопка «Глубокий анализ» ── */}
+              <button type="button" onClick={runDeepCheck} disabled={deepBusy || genBusy}
+                style={{ width: '100%', padding: 'var(--s-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: deepBusy ? 'var(--hover)' : 'var(--bg-app)', color: deepBusy ? 'var(--muted)' : 'var(--text-main)', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: (deepBusy || genBusy) ? 'default' : 'pointer', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 'var(--s-1h)' }}>
+                {deepBusy
+                  ? <><span className="gen-dots"><span/><span/><span/></span><span>Анализирую…</span></>
+                  : '🔬 Глубокий анализ документа'}
+              </button>
+
+              {/* ── Карточка результатов глубокой проверки ── */}
+              {deepReview && (
+                <div style={{ padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
+                  {/* Заголовок с оценкой */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--s-1h)' }}>
+                    <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-main)' }}>🔬 Глубокий анализ</span>
+                    <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '2px 8px', borderRadius: 'var(--radius-pill)',
+                      background: deepReview.score >= 85 ? 'rgba(16,163,127,.15)' : deepReview.score >= 60 ? 'rgba(217,119,6,.15)' : 'rgba(239,68,68,.15)',
+                      color: deepReview.score >= 85 ? 'var(--green,#10a37f)' : deepReview.score >= 60 ? 'var(--orange,#d97706)' : '#ef4444' }}>
+                      {deepReview.score}/100
+                    </span>
+                  </div>
+                  {/* Итог */}
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: deepReview.findings && deepReview.findings.length ? 'var(--s-1h)' : 0, lineHeight: 1.45 }}>
+                    {deepReview.summary}
+                  </div>
+                  {/* Список замечаний */}
+                  {(deepReview.findings || []).map((f, i) => (
+                    <div key={i} style={{ borderTop: '1px solid var(--border-color)', paddingTop: 'var(--s-1)', marginTop: 'var(--s-1)', display: 'flex', gap: 'var(--s-1)', fontSize: 'var(--text-xs)', lineHeight: 1.45 }}>
+                      <span style={{ flexShrink: 0 }}>{f.severity === 'high' ? '🔴' : f.severity === 'medium' ? '🟡' : '🔵'}</span>
+                      <div>
+                        <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{f.claim}</div>
+                        {f.location && <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>📍 {f.location}</div>}
+                        {f.article_hint && <div style={{ color: 'var(--accent,#2563eb)', marginTop: 2 }}>⚖️ {f.article_hint}</div>}
+                        {f.reason && <div style={{ color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic' }}>{f.reason}</div>}
+                        {f.category && <span style={{ display: 'inline-block', marginTop: 3, fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--border-color)', color: 'var(--muted)' }}>{f.category}</span>}
+                      </div>
                     </div>
                   ))}
                 </div>
