@@ -1258,7 +1258,7 @@ ${tpl.courtDoc
         const rawRev = await withTimeout((async () => clients.geminiJson({
           systemPrompt: SELFCHECK_SYS,
           userPrompt: `ЭТАЛОННЫЕ НОРМЫ:\n${refBlock}\n\nГОТОВЫЙ ДОКУМЕНТ:\n${docText.slice(0, 20000)}\n\nВерни JSON-вывод проверки.`,
-          model: 'gemini-2.5-flash', maxOutputTokens: 2500, timeoutMs: 22000,
+          model: 'gemini-3.1-flash-lite', maxOutputTokens: 2500, timeoutMs: 22000,
         }))(), 25000, null);
         const rev = parseObj(rawRev);
         if (rev && typeof rev === 'object') {
@@ -1371,7 +1371,7 @@ ${checklist}
       const rawFindings = await dcTimeout((async () => clients.geminiJson({
         systemPrompt: FINDER_SYS,
         userPrompt: `ДОКУМЕНТ:\n${docText.slice(0, 20000)}\n\nНайди все нарушения и верни JSON-массив.`,
-        model: 'gemini-2.5-flash', maxOutputTokens: 3000, timeoutMs: 28000,
+        model: 'gemini-3.1-flash-lite', maxOutputTokens: 3000, timeoutMs: 28000,
       }))(), 32000, null);
 
       let candidates = dcArrParseObj(rawFindings);
@@ -1397,7 +1397,7 @@ ${checklist}
         const raw = await dcTimeout((async () => clients.geminiJson({
           systemPrompt: VERIFIER_SYS,
           userPrompt: `ЗАМЕЧАНИЕ: ${finding.claim}\nМЕСТО: ${finding.location}\n\nФРАГМЕНТ ДОКУМЕНТА:\n${docText.slice(0, 8000)}\n\nПодтверди или опровергни. Верни JSON.`,
-          model: 'gemini-2.5-flash', maxOutputTokens: 400, timeoutMs: 18000,
+          model: 'gemini-3.1-flash-lite', maxOutputTokens: 400, timeoutMs: 18000,
         }))(), 20000, null);
         const v = dcParseObj(raw);
         if (!v || typeof v.confirmed !== 'boolean') return { ...finding, confirmed: true, reason: '' };
@@ -1521,7 +1521,7 @@ ${checklist}
       const rawPatch = await pWithTimeout((async () => clients.geminiJson({
         systemPrompt: PATCH_SYS,
         userPrompt: `ДОКУМЕНТ (блоки):\n${blockSummary}\n\nЗАМЕЧАНИЯ:\n${issuesList}\n\nВерни JSON исправлений.`,
-        model: 'gemini-2.5-flash', maxOutputTokens: 2500, timeoutMs: 22000,
+        model: 'gemini-3.1-flash-lite', maxOutputTokens: 2500, timeoutMs: 22000,
       }))(), 25000, null);
 
       const patchResult = pParseObj(rawPatch);
