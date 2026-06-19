@@ -1627,9 +1627,14 @@ const CreateDocMode = ({ onToast }) => {
       </div>
       <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: 'var(--s-2h) 0', display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
         {messages.map((m, i) => (
-          <div key={i} style={{ alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '88%', whiteSpace: 'pre-wrap', fontSize: 'var(--text-sm)', lineHeight: 1.5, padding: 'var(--s-1h) var(--s-2h)', borderRadius: m.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px', background: m.role === 'user' ? 'var(--accent-dim)' : 'var(--bg-app)', border: '1px solid var(--border-color)', color: 'var(--text-main)' }}>{m.text}</div>
+          <div key={i} className={`myz-create-bubble${m.role==='user'?' myz-create-bubble--user':' myz-create-bubble--ai'}`} style={{ alignSelf: m.role==='user'?'flex-end':'flex-start', maxWidth:'88%', whiteSpace:'pre-wrap', fontSize:'var(--text-sm)', lineHeight:1.6, padding:'var(--s-1h) var(--s-2h)', borderRadius: m.role==='user'?'12px 12px 4px 12px':'12px 12px 12px 4px' }}>{m.text}</div>
         ))}
-        {busy && <div style={{ alignSelf: 'flex-start', fontSize: 'var(--text-xs)', color: 'var(--muted)', padding: '0 var(--s-1)' }}>Интервьюер думает…</div>}
+        {busy && (
+          <div className="myz-create-bubble myz-create-bubble--ai" style={{ alignSelf:'flex-start', maxWidth:'60%', padding:'var(--s-1h) var(--s-2h)', borderRadius:'12px 12px 12px 4px', display:'flex', alignItems:'center', gap:'var(--s-1h)' }}>
+            <span className="gen-dots"><span/><span/><span/></span>
+            <span style={{ fontSize:'var(--text-xs)', color:'var(--muted)' }}>Интервьюер думает…</span>
+          </div>
+        )}
       </div>
       {ready && (
         <div style={{ margin: 'var(--s-2) 0', display: 'flex', flexDirection: 'column', gap: 'var(--s-1h)' }}>
@@ -3339,7 +3344,7 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
   const MENU_LABELS={'Файл':tr('menu_file'),'Правка':tr('menu_edit'),'Вид':tr('menu_view'),'Перейти':tr('menu_go'),'Черновик':tr('menu_draft'),'Право':tr('menu_law'),'Справка':tr('menu_help')};
 
   return(
-    <div style={{height:48,flexShrink:0,background:'var(--bg-bar)',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',paddingLeft:'var(--s-1h)',paddingRight:'var(--s-2h)',userSelect:'none'}}>
+    <div className="myz-menubar" style={{height:48,flexShrink:0,borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',paddingLeft:'var(--s-1h)',paddingRight:'var(--s-2h)',userSelect:'none'}}>
       <div style={{display:'flex',alignItems:'center'}}>
         <div style={{display:'flex',alignItems:'center',gap:'var(--s-2h)',padding:'0 var(--s-3h) 0 var(--s-1h)',marginRight:'var(--s-1)'}}>
           <LogoIcon sz={42} glow/>
@@ -8688,11 +8693,8 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                   ['💬 Простыми словами', 'Объясни простыми словами правовую суть моего вопроса.'],
                 ]
             ).map(([label, text]) => (
-              <button key={label} type="button"
-                onClick={()=>{ setInp(text); setTimeout(()=>{ const el=document.getElementById('myz-ai-input'); if(el){ el.focus(); el.style.height='auto'; el.style.height=Math.min(160,el.scrollHeight)+'px'; } }, 0); }}
-                style={{fontSize:'var(--text-xs)',color:'var(--text-muted)',background:'var(--bg-app)',border:'1px solid var(--border-color)',borderRadius:'var(--radius-pill)',padding:'var(--s-1) var(--s-2)',cursor:'pointer',fontFamily:'var(--font-sans)',whiteSpace:'nowrap',transition:'all .15s'}}
-                onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.color='var(--accent-strong, var(--accent))'}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.color='var(--text-muted)'}}>
+              <button key={label} type="button" className="myz-suggest-chip"
+                onClick={()=>{ setInp(text); setTimeout(()=>{ const el=document.getElementById('myz-ai-input'); if(el){ el.focus(); el.style.height='auto'; el.style.height=Math.min(160,el.scrollHeight)+'px'; } }, 0); }}>
                 {label}
               </button>
             ))}

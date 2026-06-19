@@ -4842,3 +4842,67 @@ body.dk .analyze-accordion-content {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   MENUBAR — glass effect (shows ambient mesh gradient through)
+   ════════════════════════════════════════════════════════════════════ */
+.myz-menubar {
+  background: rgba(244, 244, 246, 0.92) !important;
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow: 0 1px 0 var(--border-color), 0 2px 8px rgba(0,0,0,.04);
+  position: relative;
+  z-index: 10;
+}
+.dk .myz-menubar {
+  background: rgba(9, 9, 11, 0.88) !important;
+  box-shadow: 0 1px 0 var(--border-color), 0 2px 12px rgba(0,0,0,.25);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   CREATE DOC MODE — interview chat bubbles
+   ════════════════════════════════════════════════════════════════════ */
+.myz-create-bubble {
+  font-family: var(--font-sans);
+  animation: fadeIn .2s var(--ease-out);
+}
+.myz-create-bubble--user {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--accent-strong) 100%);
+  border: 1px solid rgba(255,255,255,.18);
+  color: #fff;
+  font-weight: 500;
+  letter-spacing: -.008em;
+  box-shadow: 0 3px 14px var(--accent-glow), 0 1px 3px rgba(0,0,0,.12),
+    inset 0 1px 0 rgba(255,255,255,.12);
+}
+.myz-create-bubble--ai {
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   SUGGEST CHIPS — preset prompt pills in AIChat input area
+   ════════════════════════════════════════════════════════════════════ */
+.myz-suggest-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  padding: var(--s-1) var(--s-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color .15s, border-color .15s, background .15s, box-shadow .15s;
+  font-weight: 500;
+  letter-spacing: -.003em;
+}
+.myz-suggest-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong, var(--accent));
+  box-shadow: 0 1px 8px var(--accent-glow);
+  background: var(--accent-dim);
+}
