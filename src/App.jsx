@@ -8564,25 +8564,24 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           </div>
         )}
         {chatMode !== 'documents' && exchanges.map((ex,ei)=>(
-          <div key={ei} style={{marginBottom:'var(--s-1h)',animation:'fadeIn .25s ease'}}>
+          <div key={ei} className="myz-exchange">
             {/* User message — pill справа, индиго градиент */}
-            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'var(--s-2h)'}}>
-              <div style={{maxWidth:'88%'}}>
-                <div style={{background:'linear-gradient(135deg, var(--accent), var(--accent-strong))',border:'1px solid var(--accent-edge)',borderRadius:'14px 14px 4px 14px',padding:'var(--s-2h) var(--s-3h)',fontSize:'var(--text-base)',lineHeight:'var(--lh-normal)',color:'#fff',fontWeight:500,boxShadow:'0 2px 10px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,.12)',letterSpacing:'-.005em',fontFamily:'var(--font-sans)'}}>{ex.user.text}</div>
+            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'var(--s-3)'}}>
+              <div style={{maxWidth:'85%'}}>
+                <div className="myz-user-bubble">{ex.user.text}</div>
               </div>
             </div>
             {/* AI message — логотип сверху, ответ во всю ширину слева */}
-            {ex.ai && (<div style={{display:'flex',flexDirection:'column',marginBottom:'var(--s-2)',gap:'var(--s-1)'}}>
-              <div style={{flexShrink:0}}>
-                <span className="myz-brand-logo" style={{display:'inline-flex',width:26,height:26,filter:'drop-shadow(0 0 4px var(--accent-glow))'}}>
+            {ex.ai && (<div className="myz-ai-wrap">
+              <div style={{flexShrink:0,display:'flex',alignItems:'center',gap:'var(--s-2)'}}>
+                <span className="myz-brand-logo" style={{display:'inline-flex',width:28,height:28,filter:'drop-shadow(0 0 5px var(--accent-glow))'}}>
                   <img src="../logo/Logo.png" alt="" draggable="false"/>
                 </span>
+                <span style={{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--muted)',fontFamily:'var(--font-sans)',letterSpacing:'.04em',textTransform:'uppercase'}}>Мыйзамчы</span>
               </div>
-              <div style={{minWidth:0}}>
-                <div style={{background:'transparent',padding:0}}>{renderAi(ex.ai)}</div>
-              </div>
+              <div style={{minWidth:0}}>{renderAi(ex.ai)}</div>
             </div>)}
-            {ei<exchanges.length-1 && <div style={{height:'var(--s-3)',borderBottom:'1px dashed var(--border-color)',marginBottom:'var(--s-3)',opacity:.5}}/>}
+            {ei<exchanges.length-1 && <div className="myz-exchange-sep"/>}
           </div>
         ))}
         {chatMode !== 'documents' && agentSteps.length > 0 && (
@@ -8613,7 +8612,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         {thinking && agentSteps.length === 0 && (
           <div style={{display:'flex',gap:'var(--s-2h)',alignItems:'flex-start'}}>
             <div style={{flexShrink:0,marginTop:'var(--s-half)'}}>
-              <span className="myz-brand-logo" style={{display:'inline-flex',width:26,height:26,filter:'drop-shadow(0 0 4px var(--accent-glow))'}}>
+              <span className="myz-brand-logo" style={{display:'inline-flex',width:28,height:28,filter:'drop-shadow(0 0 5px var(--accent-glow))'}}>
                 <img src="../logo/Logo.png" alt="" draggable="false"/>
               </span>
             </div>
@@ -8705,19 +8704,6 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={incognito?'var(--accent)':'currentColor'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
             Анонимизировать (скрыть ФИО, даты, реквизиты)
           </label>
-          <button
-            type="button"
-            onClick={()=>setDeepModalOpen(true)}
-            title="Глубокий анализ документа (PRO): Аудитор + Стратег + Драфтер + Ментор"
-            disabled={thinking}
-            style={{marginLeft:'auto', display:'inline-flex', alignItems:'center', gap:'var(--s-1h)', padding:'var(--s-1) var(--s-2h)', border:'1px solid var(--accent)', background: thinking?'var(--hover)':'var(--accent-dim)', color:'var(--accent-strong, var(--accent))', borderRadius:'var(--radius-pill)', cursor: thinking?'not-allowed':'pointer', fontSize:'var(--text-xs)', fontFamily:'var(--font-sans)', fontWeight:600, letterSpacing:'.01em', transition:'all .15s', opacity: thinking?.6:1}}
-            onMouseEnter={e=>{ if(!thinking) e.currentTarget.style.background='var(--accent)', e.currentTarget.style.color='#fff' }}
-            onMouseLeave={e=>{ if(!thinking) e.currentTarget.style.background='var(--accent-dim)', e.currentTarget.style.color='var(--accent-strong, var(--accent))' }}
-          >
-            <Ico k="law" sz={12} col="currentColor"/>
-            <span>Глубокий анализ</span>
-            <span style={{fontFamily:'var(--font-mono)', fontSize:'var(--text-2xs)', opacity:.7, letterSpacing:'.06em'}}>PRO</span>
-          </button>
         </div>
         <div style={{position:'relative',display:'flex',alignItems:'flex-end',gap:'var(--s-1h)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',background:'var(--bg-input)',transition:'border-color .3s, box-shadow .3s',padding:'var(--s-2h) var(--s-3)'}} onFocusCapture={e=>{e.currentTarget.style.borderColor='var(--primary)';e.currentTarget.style.boxShadow='0 0 0 3px var(--accent-dim)'}} onBlurCapture={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.boxShadow='none'}}>
           <button

@@ -4472,3 +4472,205 @@ body.dk .analyze-accordion-content {
     visibility: hidden !important;
     pointer-events: none !important;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   DESIGN POLISH — June 2026
+   Chat exchange layout, message bubbles, input area, global refinements.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Chat exchange wrapper ────────────────────────────────────────── */
+.myz-exchange {
+  margin-bottom: var(--s-5);
+  animation: fadeIn .28s var(--ease-out);
+}
+
+/* ── User message bubble ─────────────────────────────────────────── */
+.myz-user-bubble {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: 16px 16px 4px 16px;
+  padding: 11px 16px;
+  font-size: var(--text-md);
+  line-height: var(--lh-relaxed);
+  color: #fff;
+  font-weight: 500;
+  box-shadow:
+    0 4px 16px var(--accent-glow),
+    0 1px 3px rgba(0,0,0,.12),
+    inset 0 1px 0 rgba(255,255,255,.18);
+  letter-spacing: -.012em;
+  font-family: var(--font-sans);
+  word-break: break-word;
+  position: relative;
+}
+/* Subtle inner highlight to give it depth */
+.myz-user-bubble::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255,255,255,.08) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+/* ── AI response wrapper ─────────────────────────────────────────── */
+.myz-ai-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+  padding: var(--s-2h) var(--s-1) var(--s-1h);
+}
+
+/* ── Exchange separator — graceful gradient line ─────────────────── */
+.myz-exchange-sep {
+  height: 1px;
+  margin: var(--s-3) 0 var(--s-4);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-edge) 15%,
+    var(--border-color) 50%,
+    var(--accent-edge) 85%,
+    transparent 100%
+  );
+  opacity: .7;
+  position: relative;
+}
+
+/* ── AI message text improvements ───────────────────────────────── */
+.ai-md {
+  font-size: 14.5px;
+  line-height: 1.78;
+}
+.ai-md p { margin-bottom: 10px; }
+.ai-md p:last-child { margin-bottom: 0; }
+.ai-md li { margin: 4px 0; line-height: 1.65; }
+.ai-md strong { font-weight: 600; }
+
+/* ── Larger h2/h3 for better hierarchy ───────────────────────────── */
+.ai-md h2 { font-size: 17px; margin: 18px 0 6px; }
+.ai-md h3 { font-size: 15px; margin: 14px 0 5px; }
+
+/* ── Code block visual polish ───────────────────────────────────── */
+.ai-md pre {
+  background: var(--bg-bar);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+  margin: 14px 0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+/* ── Blockquote — more presence ─────────────────────────────────── */
+.ai-md blockquote {
+  border-left: 3px solid var(--accent);
+  background: linear-gradient(90deg, var(--accent-dim), transparent 70%);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 10px 16px;
+  margin: 14px 0;
+  font-size: 14.5px;
+  line-height: 1.68;
+  color: var(--text);
+  font-family: var(--font-long);
+  font-style: normal;
+}
+
+/* ── Welcome screen quick-action cards ──────────────────────────── */
+/* Improve hover state for the welcome grid cards */
+
+/* ── Chat input suggestion chips ────────────────────────────────── */
+/* The suggestion chips (Применимые нормы / План действий / etc.) */
+/* Style targets the button with existing inline style + pill border radius */
+
+/* ── Global button depth improvements ───────────────────────────── */
+/* Primary action button (send) — more pronounced */
+
+/* ── Chat header border — more refined ──────────────────────────── */
+
+/* ── Source badge — improved readability ─────────────────────────── */
+.src-badge {
+  font-size: 11.5px;
+  padding: 3px 10px 3px 8px;
+  letter-spacing: -.005em;
+}
+
+/* ── Protocol report table rows — more breathable ───────────────── */
+.prot-row { line-height: 1.55; }
+
+/* ── Confidence badge — slightly larger ─────────────────────────── */
+.confidence-badge {
+  font-size: var(--text-sm);
+  padding: var(--s-1h) var(--s-3);
+}
+
+/* ── Action buttons below AI message ────────────────────────────── */
+.ai-actions { margin-top: 10px; gap: var(--s-1h); }
+.ai-act-btn {
+  font-size: 11.5px;
+  padding: 5px 12px;
+  border-radius: var(--radius);
+  gap: var(--s-1h);
+}
+
+/* ── Suggest chips for the input area (top row) ─────────────────── */
+/* The row of suggestion chips (⚖️ Применимые нормы, etc.)
+   These are .btn elements with inline border-radius:var(--radius-pill) */
+
+/* ── Chat panel background — slight gradient ─────────────────────── */
+
+/* ── Анонимизировать checkbox label — bigger ────────────────────── */
+
+/* ── Input wrapper improvements ─────────────────────────────────── */
+
+/* ── Scrollbar refinement ───────────────────────────────────────── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb {
+  background: var(--accent-edge);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  background-clip: padding-box;
+}
+
+/* ── AI response font size inside renderAi wrapper ──────────────── */
+/* The outer div in renderAi uses inline font-size:var(--text-base).
+   Bump it slightly without touching JSX */
+
+/* ── Welcome screen grid cards — elevated hover ─────────────────── */
+
+/* ── Bottom disclaimer link ─────────────────────────────────────── */
+
+/* ── Mode tabs — slightly more breathing ────────────────────────── */
+
+/* ── Source list rich items — improved typography ───────────────── */
+.src-item-text {
+  font-size: 13px;
+  line-height: 1.62;
+}
+.src-item-header {
+  font-size: 11.5px;
+  padding: 7px 10px;
+}
+.src-item-npa { font-weight: 700; }
+
+/* ── Thinking box — better step typography ──────────────────────── */
+.think-step-text { font-size: var(--text-base); }
+.think-header { font-size: var(--text-base); font-weight: 600; }
+
+/* ── Separator between NPA source and content ───────────────────── */
+.msg-sources { margin-top: 14px; padding-top: 10px; }
+.msg-sources-title { font-size: 11px; letter-spacing: .07em; }
+
+/* ── Legal citation mark in ai-md ───────────────────────────────── */
+.ai-md mark, .ai-md .legal-cite {
+  font-size: .90em;
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+
+/* ── Chat section tabs (the mini pill switcher ──────────────────── */
