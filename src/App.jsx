@@ -8533,7 +8533,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           <div style={{display:'flex',flexDirection:'column',padding:'var(--s-1) 0',gap:'var(--s-4)',animation:'fadeIn .35s ease'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
               <div style={{display:'flex',flexDirection:'column',gap:'var(--s-half)'}}>
-                <div style={{fontFamily:'var(--font-display)',fontWeight:500,fontSize:'var(--text-2xl)',color:'var(--text-main)',letterSpacing:'-0.02em',lineHeight:'var(--lh-tight)'}}>Здравствуйте, коллега</div>
+                <div style={{fontFamily:'var(--font-display)',fontWeight:700,fontSize:'var(--text-3xl)',color:'var(--text-main)',letterSpacing:'-0.025em',lineHeight:'var(--lh-tight)'}}>Здравствуйте, коллега</div>
                 <div style={{fontFamily:'var(--font-sans)',fontSize:'var(--text-sm)',color:'var(--text-muted)'}}>{agent ? 'Чем могу помочь с этим документом?' : 'Задайте юридический вопрос — пройдусь по всем слоям закона КР.'}</div>
               </div>
               <LogoIcon sz={32} glow={false} />
@@ -8551,7 +8551,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                 {k:'scale',  t:'Подсудность и госпошлина', d:'Сроки давности, суд, расчёт пошлины.'},
                 {k:'sparkles', t:'Объяснить норму',        d:'Разбор статьи простыми словами.'}
               ]).map(c=>(
-                 <div key={c.t} onClick={()=>setInp(c.t)} style={{background:'var(--bg-panel)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',padding:'var(--s-3)',cursor:'pointer',display:'flex',flexDirection:'column',gap:'var(--s-1h)',transition:'border-color .2s, background .2s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--primary)';e.currentTarget.style.background='var(--accent-soft)'}} onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.background='var(--bg-panel)'}}>
+                 <div key={c.t} className="myz-welcome-card" onClick={()=>setInp(c.t)} style={{background:'var(--bg-panel)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',padding:'var(--s-3)',cursor:'pointer',display:'flex',flexDirection:'column',gap:'var(--s-1h)',transition:'border-color .2s, background .2s, box-shadow .2s, transform .15s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--primary)';e.currentTarget.style.background='var(--accent-soft)'}} onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.background='var(--bg-panel)'}}>
                    <Ico k={c.k} sz={18} col="var(--primary)" />
                    <div style={{display:'flex',flexDirection:'column',gap:'var(--s-half)'}}>
                      <span style={{fontFamily:'var(--font-sans)',fontWeight:600,fontSize:'var(--text-sm)',color:'var(--text-main)'}}>{c.t}</span>
@@ -8705,7 +8705,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             Анонимизировать (скрыть ФИО, даты, реквизиты)
           </label>
         </div>
-        <div style={{position:'relative',display:'flex',alignItems:'flex-end',gap:'var(--s-1h)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',background:'var(--bg-input)',transition:'border-color .3s, box-shadow .3s',padding:'var(--s-2h) var(--s-3)'}} onFocusCapture={e=>{e.currentTarget.style.borderColor='var(--primary)';e.currentTarget.style.boxShadow='0 0 0 3px var(--accent-dim)'}} onBlurCapture={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.boxShadow='none'}}>
+        <div className="myz-input-ring" style={{position:'relative',display:'flex',alignItems:'flex-end',gap:'var(--s-1h)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',background:'var(--bg-input)',transition:'border-color .3s, box-shadow .3s',padding:'var(--s-2h) var(--s-3)'}} onFocusCapture={e=>{e.currentTarget.style.borderColor='var(--primary)';e.currentTarget.style.boxShadow='0 0 0 3px var(--accent-dim)'}} onBlurCapture={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.boxShadow='none'}}>
           <button
             onClick={()=>fileInputRef.current?.click()}
             className="btn"
@@ -9080,7 +9080,7 @@ const App=()=>{
   }, []);
 
   return(
-    <div className={(dark?'dk ':'')+(tt?'tt ':'')+'grain'} style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',background:'var(--bg-editor)',color:'var(--text)',overflow:'hidden',fontFamily:"'DM Sans',ui-sans-serif,system-ui,sans-serif",fontSize:13.5,letterSpacing:'-.01em'}}>
+    <div className={(dark?'dk ':'')+(tt?'tt ':'')+'grain'} style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',backgroundColor:'var(--bg-editor)',backgroundImage:'var(--grad-mesh)',color:'var(--text)',overflow:'hidden',fontFamily:'var(--font-sans)',letterSpacing:'-.01em'}}>
       <MenuBar dark={dark} onToggle={toggleTheme} onPalette={()=>setShowPalette(p=>!p)} showNotif={showNotif} onToggleNotif={()=>setShowNotif(p=>!p)} onAction={handleAction} rightOpen={rightOpen} onToggleRight={()=>setRightOpen(p=>!p)} isMobile={isMobile} unsavedCount={unsavedCount} hasActiveDoc={tabs.length > 0}/>
       {({}).visible && (
         <div id="inline-prompt-menu" style={{
