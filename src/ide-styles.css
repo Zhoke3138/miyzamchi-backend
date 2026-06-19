@@ -353,15 +353,16 @@ body.dark-mode .myz-brand-logo svg path {
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
 }
 
-/* ════ HEADINGS — Instrument Serif italic for editorial gravitas ══════ */
+/* ════ HEADINGS — IBM Plex Serif bold for authority and clarity ════════ */
 h1,h2,h3,h4,.display{
   font-family:var(--font-display);
-  font-weight:400;
+  font-weight:700;
   letter-spacing:-.025em;
   line-height:1.15;
 }
 h1 em,h2 em,h3 em,.display em,.display-italic{
   font-style:italic;
+  font-weight:400;
 }
 
 /* ════ AMBIENT BACKGROUND — static mesh (SKILL §7 motion-meaning) ═══
@@ -527,7 +528,9 @@ body:not(.dk) .grain::after{opacity:.025;mix-blend-mode:multiply}
 .btn{
   position:relative;overflow:hidden;cursor:pointer;
   font-family:var(--font-body);
-  font-feature-settings:"ss01","cv11";
+  font-size:var(--text-base);
+  font-weight:500;
+  font-feature-settings:"liga","kern";
   transition:
     background .2s var(--ease),
     color .2s var(--ease),
@@ -686,20 +689,20 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
   font-feature-settings:"liga","kern","calt";
 }
 .ai-md h1,.ai-md h2,.ai-md h3,.ai-md h4{
-  margin:22px 0 10px;
-  font-family:var(--font-display);
-  font-weight:400;
-  font-style:italic;
-  color:var(--text);
-  line-height:1.2;letter-spacing:-.02em;
-}
-.ai-md h1{font-size:28px}
-.ai-md h2{font-size:22px}
-.ai-md h3{font-size:18px}
-.ai-md h4{
-  font-size:13px;font-style:normal;font-weight:600;
+  margin:20px 0 8px;
   font-family:var(--font-body);
-  text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+  font-weight:700;
+  font-style:normal;
+  color:var(--text);
+  line-height:1.2;letter-spacing:-.025em;
+}
+.ai-md h1{font-size:22px}
+.ai-md h2{font-size:18px}
+.ai-md h3{font-size:16px}
+.ai-md h4{
+  font-size:13.5px;font-style:normal;font-weight:700;
+  font-family:var(--font-body);
+  text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
   margin-top:14px;
 }
 .ai-md p{margin:5px 0 9px}
@@ -707,7 +710,7 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
 .ai-md li{margin:3px 0}
 .ai-md li::marker{color:var(--accent)}
 .ai-md strong{color:var(--text);font-weight:600;letter-spacing:-.005em}
-.ai-md em{font-style:italic;color:var(--muted);font-family:var(--font-display);font-size:1.05em}
+.ai-md em{font-style:italic;color:var(--muted);font-family:var(--font-body);font-size:1.0em}
 .ai-md code{
   font-family:var(--font-mono);font-size:11.5px;
   background:var(--accent-soft);
@@ -731,13 +734,13 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
 }
 .ai-md pre code{background:transparent;border:none;padding:0;color:inherit;font-size:inherit}
 .ai-md blockquote{
-  border-left:2px solid var(--accent);
+  border-left:3px solid var(--accent);
   padding:10px 18px;margin:12px 0;
   background:linear-gradient(90deg,var(--accent-dim),transparent 75%);
   border-radius:0 var(--radius) var(--radius) 0;
-  font-family:var(--font-display);
-  font-style:italic;
-  font-size:15px;line-height:1.6;
+  font-family:var(--font-long);
+  font-style:normal;
+  font-size:15px;line-height:1.65;
   color:var(--text);
 }
 .ai-md a{

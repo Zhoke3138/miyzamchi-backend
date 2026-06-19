@@ -8503,7 +8503,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                     border:'none',cursor:'pointer',
                     background: active ? 'var(--primary)' : 'transparent',
                     color: active ? '#fff' : 'var(--text-muted)',
-                    fontSize:'var(--text-sm)',fontWeight:600,
+                    fontSize:'var(--text-base)',fontWeight:700,
                     transition:'background .15s, color .15s',
                     fontFamily:'var(--font-sans)'
                   }}
@@ -8737,7 +8737,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             rows={1}
             onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}
             placeholder={agent ? ((getDocSnapshot() && getDocSnapshot().selection) ? tr('ws_ph_selection') : tr('ws_ph_doc')) : tr('ws_ph_legal')}
-            style={{flex:1,minHeight:24,maxHeight:140,background:'transparent',border:'none',outline:'none',resize:'none',color:'var(--text-main)',fontSize:'var(--text-base)',fontFamily:'var(--font-sans)',lineHeight:'var(--lh-normal)',padding:'var(--s-1) var(--s-1)',display:'block',overflowY:'auto'}}
+            style={{flex:1,minHeight:24,maxHeight:140,background:'transparent',border:'none',outline:'none',resize:'none',color:'var(--text-main)',fontSize:'var(--text-md)',fontWeight:500,fontFamily:'var(--font-sans)',lineHeight:'var(--lh-normal)',padding:'var(--s-1) var(--s-1)',display:'block',overflowY:'auto'}}
           />
           <button
             onClick={toggleVoice}
