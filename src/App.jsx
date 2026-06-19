@@ -1601,7 +1601,7 @@ const CreateDocMode = ({ onToast }) => {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
           {DOC_TYPES.map(d => (
-            <button key={d.k} type="button" disabled={!d.active}
+            <button key={d.k} type="button" disabled={!d.active} className={`myz-doc-type-btn${d.active?'':' myz-doc-type-btn--dim'}`}
               onClick={() => d.active && pickType(d.k)}
               style={{ textAlign: 'left', padding: 'var(--s-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: d.active ? 'var(--bg-app)' : 'var(--hover)', cursor: d.active ? 'pointer' : 'default', opacity: d.active ? 1 : 0.55, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--s-2)', fontFamily: 'var(--font-sans)' }}>
               <span>
