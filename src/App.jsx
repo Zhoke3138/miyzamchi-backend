@@ -1178,7 +1178,19 @@ const _runToHtml = (run) => {
   if (run.underline) html = `<u>${html}</u>`;       // подчёрк — особые моменты
   return html;
 };
+// Ячейка реквизитов: строки → абзацы (первая строка — жирная: название стороны).
+const _linesToCellHtml = (s) => String(s == null ? '' : s).split('\n').map((ln, i) => {
+  const t = _escHtml(ln.trim());
+  return `<p style="font-family:'Times New Roman', serif;${i === 0 ? 'font-weight:bold;' : ''}">${t || '&nbsp;'}</p>`;
+}).join('');
 const _blockToHtml = (block) => {
+  // Двухколоночные реквизиты договора (Сторона 1 | Сторона 2) — через таблицу.
+  if (block.kind === 'requisites_table' && (block.left || block.right)) {
+    return `<table style="width:100%;border-collapse:collapse;border:none;"><tbody><tr>`
+      + `<td style="width:50%;vertical-align:top;padding-right:12px;border:none;">${_linesToCellHtml(block.left)}</td>`
+      + `<td style="width:50%;vertical-align:top;padding-left:12px;border:none;">${_linesToCellHtml(block.right)}</td>`
+      + `</tr></tbody></table>`;
+  }
   const align = block.align || LEGAL_KIND_ALIGN[block.kind] || 'left';
   const inner = (block.runs || []).map(_runToHtml).join('');
   // text-align читается HTML-импортёром SuperDoc (style.textAlign → OOXML w:jc).
