@@ -3290,21 +3290,21 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
   const MENU_LABELS={'Файл':tr('menu_file'),'Правка':tr('menu_edit'),'Вид':tr('menu_view'),'Перейти':tr('menu_go'),'Черновик':tr('menu_draft'),'Право':tr('menu_law'),'Справка':tr('menu_help')};
 
   return(
-    <div className="myz-menubar" style={{height:48,flexShrink:0,borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',paddingLeft:'var(--s-1h)',paddingRight:'var(--s-2h)',userSelect:'none'}}>
-      <div style={{display:'flex',alignItems:'center'}}>
-        <div style={{display:'flex',alignItems:'center',gap:'var(--s-2h)',padding:'0 var(--s-3h) 0 var(--s-1h)',marginRight:'var(--s-1)'}}>
+    <div className="myz-menubar">
+      <div className="myz-menubar-left">
+        <div className="myz-menubar-brand">
           <LogoIcon sz={42} glow/>
-          <span style={{fontWeight:600,fontSize:'var(--text-base)',letterSpacing:'-.02em',color:'var(--text)',fontFamily:'var(--font-sans)'}}>Мыйзамчы</span>
+          <span className="myz-menubar-brand-name">Мыйзамчы</span>
         </div>
         {!isMobile && ['Файл','Правка','Вид','Перейти','Черновик','Право','Справка'].map(m=>(
           <div key={m} style={{position:'relative'}}>
             <button type="button" className="btn" aria-haspopup="menu" aria-expanded={open===m?'true':'false'} onClick={(e)=>{e.stopPropagation();setOpen(open===m?null:m)}} style={{padding:'var(--s-1) var(--s-2h)',borderRadius:'var(--radius-sm)',border:'none',cursor:'pointer',fontSize:'var(--text-sm)',color:'var(--text)',background:hov===m||open===m?'var(--hover)':'transparent',fontFamily:'var(--font-sans)',letterSpacing:'-.005em'}} onMouseEnter={()=>setHov(m)} onMouseLeave={()=>setHov(null)}>{MENU_LABELS[m]||m}</button>
             {open===m && menus[m] && (
-              <div onClick={e=>e.stopPropagation()} style={{position:'absolute',top:'100%',left:0,marginTop:'var(--s-half)',background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-lg)',zIndex:2000,minWidth:190,padding:'var(--s-1h) 0',animation:'fadeInScale .1s ease',fontFamily:'var(--font-sans)'}}>
-                {menus[m].map((it,i)=>it.s?<div key={'s'+i} style={{height:1,background:'var(--border)',margin:'var(--s-1) 0'}}/> : (
+              <div onClick={e=>e.stopPropagation()} className="myz-menu-dropdown">
+                {menus[m].map((it,i)=>it.s?<div key={'s'+i} className="myz-menu-sep"/> : (
                   <button key={i} type="button" className="myz-menu-item" onClick={()=>{setOpen(null);it.a&&it.a()}}>
                     <span>{it.l}</span>
-                    {it.h && <span style={{fontSize:'var(--text-2xs)',color:'var(--muted)',fontFamily:'var(--font-mono)'}}>{it.h}</span>}
+                    {it.h && <span className="myz-menu-hotkey">{it.h}</span>}
                   </button>
                 ))}
               </div>
@@ -3312,32 +3312,32 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
           </div>
         ))}
       </div>
-      <div style={{display:'flex',alignItems:'center',gap:'var(--s-1h)'}}>
+      <div className="myz-menubar-right">
         {/* Статус-pills — короткие визуальные сигналы для юриста перед отправкой документа */}
         {!isMobile && hasActiveDoc && (
-          <div style={{display:'flex',alignItems:'center',gap:'var(--s-1h)',marginRight:'var(--s-1h)',fontFamily:'var(--font-sans)'}}>
+          <div className="myz-menubar-pills">
             {unsavedCount === 0 ? (
-              <span title="Все вкладки сохранены" style={{display:'inline-flex',alignItems:'center',gap:'var(--s-1)',padding:'var(--s-half) var(--s-2)',borderRadius:'var(--radius-pill)',background:'var(--green-soft)',color:'var(--green-ink, var(--green))',fontSize:'var(--text-xs)',fontWeight:600,letterSpacing:'-.005em'}}>
+              <span title="Все вкладки сохранены" className="myz-status-pill myz-status-pill--saved">
                 <Glyph type="check" sz={11}/>{tr('pill_saved')}
               </span>
             ) : (
-              <span title={`Несохранённых вкладок: ${unsavedCount}`} style={{display:'inline-flex',alignItems:'center',gap:'var(--s-1)',padding:'var(--s-half) var(--s-2)',borderRadius:'var(--radius-pill)',background:'var(--orange-soft)',color:'var(--orange-ink, var(--orange))',fontSize:'var(--text-xs)',fontWeight:600,letterSpacing:'-.005em'}}>
+              <span title={`Несохранённых вкладок: ${unsavedCount}`} className="myz-status-pill myz-status-pill--unsaved">
                 <Glyph type="warn" sz={11}/>{tr('pill_unsaved')}{unsavedCount > 1 ? ` · ${unsavedCount}` : ''}
               </span>
             )}
             {analysing ? (
-              <span style={{display:'inline-flex',alignItems:'center',gap:'var(--s-1)',padding:'var(--s-half) var(--s-2)',borderRadius:'var(--radius-pill)',background:'var(--accent-soft)',color:'var(--accent-strong)',fontSize:'var(--text-xs)',fontWeight:600,letterSpacing:'-.005em'}}>
+              <span className="myz-status-pill myz-status-pill--analyzing">
                 <svg width="11" height="11" viewBox="0 0 24 24" style={{animation:'spin 0.9s linear infinite'}}><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeOpacity=".22"/><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/></svg>
                 {tr('pill_analyzing')}
               </span>
             ) : (
-              <span title="Можно запустить AI-проверку" style={{display:'inline-flex',alignItems:'center',gap:'var(--s-1)',padding:'var(--s-half) var(--s-2)',borderRadius:'var(--radius-pill)',background:'var(--info-soft)',color:'var(--info-ink, var(--info))',fontSize:'var(--text-xs)',fontWeight:600,letterSpacing:'-.005em'}}>
+              <span title="Можно запустить AI-проверку" className="myz-status-pill myz-status-pill--ready">
                 <Glyph type="scale" sz={11}/>{tr('pill_ready')}
               </span>
             )}
           </div>
         )}
-        <div role="group" aria-label="Тил / Язык / Language" style={{display:'flex',alignItems:'center',gap:2,padding:2,border:'1px solid var(--border)',borderRadius:8,marginRight:'var(--s-1)'}}>
+        <div role="group" aria-label="Тил / Язык / Language" className="myz-lang-group">
           {LANGS.map(l=>(
             <button key={l} type="button" onClick={()=>setLang(l)}
               className={`btn myz-lang-btn${lang===l ? ' myz-lang-btn--active' : ''}`}>
@@ -3355,7 +3355,7 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
           <button onClick={onToggleNotif} className="btn myz-menubar-icon-btn" title="Уведомления">
             <Ico k="bell" sz={14}/>
           </button>
-          <div className="nbadge" style={{position:'absolute',top:-3,right:-3,minWidth:16,height:16,borderRadius:'8px',background:'var(--red)',color:'#fff',fontSize:9,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid var(--bg-bar)',padding:'0 3px',boxShadow:'0 0 8px var(--red-soft)'}}>2</div>
+          <div className="nbadge myz-notif-badge">2</div>
           {showNotif && <Notifications onClose={onToggleNotif}/>}
         </div>
         <button onClick={onToggleRight} className={`btn myz-menubar-icon-btn${rightOpen?' myz-menubar-icon-btn--active':''}`} title="Панель НПА и AI (Ctrl+J)">
@@ -3364,9 +3364,9 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
         <button onClick={onToggle} className="btn myz-menubar-icon-btn" title={dark?'Светлая тема':'Тёмная тема'}>
           <Ico k={dark?'sun':'moon'} sz={14}/>
         </button>
-        {!isMobile && <div style={{width:1,height:16,background:'var(--border)',margin:'0 2px'}}/>}
+        {!isMobile && <div className="myz-menubar-divider"/>}
         {!isMobile && <Ico k="user" sz={14} col="var(--muted)"/>}
-        {!isMobile && <span style={{fontWeight:500,fontSize:13,color:'var(--text)'}}>Zhanybek Asirov</span>}
+        {!isMobile && <span className="myz-menubar-username">Zhanybek Asirov</span>}
         {!isMobile && <GradBadge shimmer>PRO</GradBadge>}
         <AvatarRing size={isMobile?26:30}>ZA</AvatarRing>
       </div>
@@ -3384,19 +3384,19 @@ const ActBar=({active,onSet})=>{
     {id:'analytics',k:'activity',label:'Аналитика'},
   ];
   return(
-    <nav className="global-nav" aria-label="Навигация рабочих областей" style={{width:44,flexShrink:0,background:'var(--bg-panel)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',alignItems:'center',paddingTop:12,paddingBottom:12,gap:10}}>
-      <div style={{marginBottom: 10, color: 'var(--primary)'}}><Ico k="shield" sz={20}/></div>
+    <nav className="global-nav myz-actbar" aria-label="Навигация рабочих областей">
+      <div className="myz-actbar-top-icon"><Ico k="shield" sz={20}/></div>
       {items.map(it=>{
         const on=active===it.id;
         return(
           <button key={it.id} type="button" title={it.label} aria-label={it.label} aria-pressed={on?'true':'false'} onClick={()=>onSet(on?null:it.id)}
             className={`btn myz-actbar-item ${on?'myz-actbar-item--on':'myz-actbar-item--off'}`}>
-            {on && <span style={{position:'absolute',left:0,top:'50%',transform:'translateY(-50%)',width:3,height:20,background:'var(--primary)',borderRadius:'0 3px 3px 0'}}/>}
+            {on && <span className="myz-actbar-indicator"/>}
             <Ico k={it.k} sz={17} />
           </button>
         );
       })}
-      <div style={{flex:1}}/>
+      <div className="flex-spacer"/>
       <button type="button" title="Пользователи" aria-label="Пользователи" className="btn myz-actbar-item myz-actbar-item--off">
         <Ico k="users" sz={17}/>
       </button>
@@ -6250,9 +6250,7 @@ const ProtocolReport = ({ tableRows, purityIndex }) => {
           Индекс правовой чистоты документа: {purityIndex}%
         </div>
       )}
-      <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-main)', marginBottom: 8 }}>
-        Протокол соответствия НПА
-      </div>
+      <div className="myz-protocol-title">Протокол соответствия НПА</div>
       <table className="analyze-table">
         <tbody>
           {tableRows.map((row, i) => {
@@ -8414,11 +8412,11 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
   },[stick,scrollToBottom,activeChat.chat?.messages,thinking,streamStatus]);
 
   return(
-    <div style={{height:'100%',display:'flex',flexDirection:'column',background:'var(--bg-panel)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)',position:'relative',overflow:'hidden',transition:'background-color .3s ease, border-color .3s ease'}}>
-      <div style={{padding:'var(--s-2) var(--s-2h)',borderBottom:'1px solid var(--border-color)',flexShrink:0,background:'var(--bg-panel)',display:'flex',alignItems:'center',justifyContent:'space-between',gap:'var(--s-1h)',transition:'background-color .3s ease, border-color .3s ease'}}>
-        <div style={{display:'flex',alignItems:'center',gap:'var(--s-2)'}}>
+    <div className="myz-chat-panel">
+      <div className="myz-chat-header">
+        <div className="myz-chat-header-left">
           {/* Переключатель режима Чат / Агент — пилюля с двумя сегментами */}
-          <div role="tablist" aria-label="Режим работы ИИ" style={{display:'inline-flex',padding:2,borderRadius:'var(--radius-pill)',background:'var(--bg-app)',border:'1px solid var(--border-color)',fontFamily:'var(--font-sans)'}}>
+          <div role="tablist" aria-label="Режим работы ИИ" className="myz-mode-pill">
             {[
               {k:'chat',       labelKey:'mode_chat',      icon:'sparkles',  title:'Чат — консультация без правки документа'},
               {k:'agent',      labelKey:'mode_agent',     icon:'edit',      title:'Агент — редактирует открытый документ'},
@@ -8442,7 +8440,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             })}
           </div>
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:'var(--s-1h)'}}>
+        <div className="myz-chat-header-right">
           <button className="btn myz-chat-header-clear" onClick={()=>{updateChatMessages(()=>[]);onToast&&onToast('trash','Очищено')}} title="Очистить чат">Очистить</button>
           {onCollapse && (
             <button type="button" onClick={onCollapse} title="Свернуть чат" aria-label="Свернуть ИИ-чат" className="myz-chat-header-close">
@@ -8451,19 +8449,19 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           )}
         </div>
       </div>
-      <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions text" aria-label="История диалога с ИИ" style={{flex:1,overflowY:'auto',padding:'var(--s-3h)'}}>
+      <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions text" aria-label="История диалога с ИИ" className="myz-chat-scroll">
         {chatMode === 'documents' && <DocumentsMode onToast={onToast}/>}
         {chatMode !== 'documents' && exchanges.length === 0 && !thinking && agentSteps.length === 0 && (
-          <div style={{display:'flex',flexDirection:'column',padding:'var(--s-1) 0',gap:'var(--s-4)',animation:'fadeIn .35s ease'}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-              <div style={{display:'flex',flexDirection:'column',gap:'var(--s-half)'}}>
-                <div style={{fontFamily:'var(--font-display)',fontWeight:700,fontSize:'var(--text-3xl)',color:'var(--text-main)',letterSpacing:'-0.025em',lineHeight:'var(--lh-tight)'}}>Здравствуйте, коллега</div>
-                <div style={{fontFamily:'var(--font-sans)',fontSize:'var(--text-sm)',color:'var(--text-muted)'}}>{agent ? 'Чем могу помочь с этим документом?' : 'Задайте юридический вопрос — пройдусь по всем слоям закона КР.'}</div>
+          <div className="myz-welcome">
+            <div className="myz-welcome-header">
+              <div className="myz-welcome-text-stack">
+                <div className="myz-welcome-title">Здравствуйте, коллега</div>
+                <div className="myz-welcome-sub">{agent ? 'Чем могу помочь с этим документом?' : 'Задайте юридический вопрос — пройдусь по всем слоям закона КР.'}</div>
               </div>
               <LogoIcon sz={32} glow={false} />
             </div>
 
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'var(--s-2)'}}>
+            <div className="myz-welcome-grid">
               {(agent ? [
                 {k:'shield', t:'Проверка рисков',     d:'Юридические риски и комплаенс.'},
                 {k:'book',   t:'Найти норму',         d:'Поиск законов и прецедентов.'},
@@ -8477,7 +8475,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
               ]).map(c=>(
                  <div key={c.t} className="myz-welcome-card" onClick={()=>setInp(c.t)}>
                    <Ico k={c.k} sz={18} col="var(--primary)" />
-                   <div style={{display:'flex',flexDirection:'column',gap:'var(--s-half)'}}>
+                   <div className="myz-welcome-card-body">
                      <span className="myz-welcome-card-title">{c.t}</span>
                      <span className="myz-welcome-card-desc">{c.d}</span>
                    </div>
@@ -8490,18 +8488,18 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         {chatMode !== 'documents' && exchanges.map((ex,ei)=>(
           <div key={ei} className="myz-exchange">
             {/* User message — pill справа, индиго градиент */}
-            <div style={{display:'flex',justifyContent:'flex-end',marginBottom:'var(--s-3)'}}>
-              <div style={{maxWidth:'85%'}}>
+            <div className="myz-user-msg-row">
+              <div className="myz-user-msg-wrap">
                 <div className="myz-user-bubble">{ex.user.text}</div>
               </div>
             </div>
             {/* AI message — логотип сверху, ответ во всю ширину слева */}
             {ex.ai && (<div className="myz-ai-wrap">
-              <div style={{flexShrink:0,display:'flex',alignItems:'center',gap:'var(--s-2)'}}>
-                <span className="myz-brand-logo" style={{display:'inline-flex',width:28,height:28,filter:'drop-shadow(0 0 5px var(--accent-glow))'}}>
+              <div className="myz-ai-brand-row">
+                <span className="myz-brand-logo myz-ai-brand-logo">
                   <img src="../logo/Logo.png" alt="" draggable="false"/>
                 </span>
-                <span style={{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--muted)',fontFamily:'var(--font-sans)',letterSpacing:'.04em',textTransform:'uppercase'}}>Мыйзамчы</span>
+                <span className="myz-ai-brand-name">Мыйзамчы</span>
               </div>
               <div style={{minWidth:0}}>{renderAi(ex.ai)}</div>
             </div>)}
@@ -8536,7 +8534,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         {thinking && agentSteps.length === 0 && (
           <div style={{display:'flex',gap:'var(--s-2h)',alignItems:'flex-start'}}>
             <div style={{flexShrink:0,marginTop:'var(--s-half)'}}>
-              <span className="myz-brand-logo" style={{display:'inline-flex',width:28,height:28,filter:'drop-shadow(0 0 5px var(--accent-glow))'}}>
+              <span className="myz-brand-logo myz-ai-brand-logo">
                 <img src="../logo/Logo.png" alt="" draggable="false"/>
               </span>
             </div>
@@ -8558,27 +8556,25 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         <div style={{height:4}}/>
       </div>
       {!stick && (
-        <div style={{position:'absolute',right:14,bottom:86}}>
-          <button className="btn" onClick={()=>{setStick(true);scrollToBottom(true)}} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',borderRadius:999,border:'1px solid var(--border)',background:'var(--bg-panel)',boxShadow:'var(--shadow-lg)',color:'var(--text)',fontSize:11.5}}>
-            <span style={{fontSize:12}}>↓</span><span>Вниз</span>
+        <div className="myz-scroll-down-wrap">
+          <button className="myz-scroll-down-btn" onClick={()=>{setStick(true);scrollToBottom(true)}}>
+            <span>↓</span><span>Вниз</span>
           </button>
         </div>
       )}
-      <div style={{padding:'var(--s-2) var(--s-2h)',borderTop:'1px solid var(--border)',flexShrink:0,background:'var(--bg-bar)',display: chatMode === 'documents' ? 'none' : 'block'}}>
+      <div className="myz-input-area" style={{display: chatMode === 'documents' ? 'none' : 'block'}}>
         {exchanges.length === 0 && attachments.length === 0 && (
-          <>
-          <div style={{display:'flex',gap:'var(--s-1h)',marginBottom:'var(--s-2)',flexWrap:'wrap'}}>{(agent
+          <div className="myz-suggest-chips-row">{(agent
             ? ['Проверь документ','Перепиши формально','Добавь реквизиты','Сократи','Добавь ссылки на КР']
             : ['Срок исковой давности','Подсудность спора','Расчёт госпошлины','Алгоритм взыскания долга','Судебная практика по…']
-          ).map(c=><button key={c} className="btn myz-suggest-chip" onClick={()=>setInp(c)} style={{background:'var(--hover)'}}>{c}</button>)}</div>
-          </>
+          ).map(c=><button key={c} className="btn myz-suggest-chip" onClick={()=>setInp(c)}>{c}</button>)}</div>
         )}
         {attachments.length > 0 && (
-          <div style={{display:'flex',flexWrap:'wrap',gap:'var(--s-1h)',marginBottom:'var(--s-1h)'}}>
+          <div className="myz-attach-row">
             {attachments.map(a=>{
               const loading=a.status==='loading', err=a.status==='error';
               return (
-                <div key={a.id} title={a.name} style={{display:'inline-flex',alignItems:'center',gap:'var(--s-2)',padding:'var(--s-1h) var(--s-2)',border:'1px solid '+(err?'var(--red)':loading?'var(--accent)':'var(--border)'),background:err?'var(--red-soft)':loading?'var(--accent-dim)':'var(--bg-editor)',borderRadius:'var(--radius)',maxWidth:240,fontSize:'var(--text-sm)',fontFamily:'var(--font-sans)',animation:'fadeInScale .18s ease'}}>
+                <div key={a.id} title={a.name} className="myz-attach-pill" style={{border:'1px solid '+(err?'var(--red)':loading?'var(--accent)':'var(--border)'),background:err?'var(--red-soft)':loading?'var(--accent-dim)':'var(--bg-editor)'}}>
                   {a.isImage && a.dataUrl
                     ? <img src={a.dataUrl} alt="" style={{width:28,height:28,borderRadius:'var(--radius-sm)',objectFit:'cover',flexShrink:0,border:'1px solid var(--border)'}}/>
                     : <span style={{width:28,height:28,display:'inline-flex',alignItems:'center',justifyContent:'center',background:err?'var(--red-soft)':'var(--accent-dim)',color:err?'var(--red)':'var(--accent)',borderRadius:'var(--radius-sm)',flexShrink:0,fontSize:'var(--text-base)',animation:loading?'spin 1s linear infinite':'none'}}>
@@ -8598,7 +8594,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         {/* Быстрые пресеты — заполняют поле ввода (без авто-отправки, юрист проверяет).
             Контекст: с документом (agent) — разбор/упрощение; без — типовые юр-запросы. */}
         {!inp.trim() && !thinking && (
-          <div style={{display:'flex',gap:'var(--s-1h)',marginBottom:'var(--s-1h)',flexWrap:'wrap'}}>
+          <div className="myz-suggest-chips-row">
             {(agent
               ? [
                   ['📝 Краткое резюме', 'Сделай краткое резюме этого документа: суть, стороны, ключевые условия и сроки.'],
@@ -8619,14 +8615,14 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             ))}
           </div>
         )}
-        <div style={{display:'flex', alignItems:'center', gap:'var(--s-2h)', marginBottom:'var(--s-1h)', flexWrap:'wrap'}}>
-          <label style={{display:'flex',alignItems:'center',gap:'var(--s-1h)',fontSize:'var(--text-sm)',color:'var(--muted)',cursor:'pointer',fontFamily:'var(--font-sans)'}}>
+        <div className="myz-incognito-row">
+          <label className="myz-incognito-label">
             <input type="checkbox" checked={incognito} onChange={e=>setIncognito(e.target.checked)} style={{accentColor:'var(--accent)',cursor:'pointer',width:13,height:13}} />
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={incognito?'var(--accent)':'currentColor'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
             Анонимизировать (скрыть ФИО, даты, реквизиты)
           </label>
         </div>
-        <div className="myz-input-ring" style={{position:'relative',display:'flex',alignItems:'flex-end',gap:'var(--s-1h)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',background:'var(--bg-input)',transition:'border-color .25s, box-shadow .25s',padding:'var(--s-2h) var(--s-3)'}}>
+        <div className="myz-input-ring">
           <button
             onClick={()=>fileInputRef.current?.click()}
             className="btn myz-input-icon-btn"
@@ -8641,7 +8637,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             rows={1}
             onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}
             placeholder={agent ? ((getDocSnapshot() && getDocSnapshot().selection) ? tr('ws_ph_selection') : tr('ws_ph_doc')) : tr('ws_ph_legal')}
-            style={{flex:1,minHeight:24,maxHeight:140,background:'transparent',border:'none',outline:'none',resize:'none',color:'var(--text-main)',fontSize:'var(--text-md)',fontWeight:500,fontFamily:'var(--font-sans)',lineHeight:'var(--lh-normal)',padding:'var(--s-1) var(--s-1)',display:'block',overflowY:'auto'}}
+            className="myz-chat-textarea"
           />
           <button
             onClick={toggleVoice}
@@ -8713,14 +8709,14 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
 /* ═══ Status Bar ═══ */
 const StatusBar=({dark,tabCount,unsaved,activeName})=>{
   return (
-    <div style={{height:24,flexShrink:0,background:dark?'var(--bg-panel)':'var(--primary)',borderTop:dark?'1px solid var(--border-color)':'none',display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 var(--s-3)',fontSize:'var(--text-xs)',userSelect:'none',color:dark?'var(--text-muted)':'#ffffff',transition:'background-color .3s, color .3s, border-color .3s',fontFamily:'var(--font-sans)'}}>
-      <div style={{display:'flex',alignItems:'center',gap:'var(--s-3h)'}}>
-        <span style={{display:'flex',alignItems:'center',gap:'var(--s-1h)'}}><StatusDot/><span className={dark?'gt':undefined} style={{fontWeight:500}}>Подключено</span></span>
+    <div className={`myz-status-bar ${dark?'myz-status-bar--dark':'myz-status-bar--light'}`}>
+      <div className="myz-status-bar-left">
+        <span className="myz-status-bar-item"><StatusDot/><span className={dark?'gt':undefined} style={{fontWeight:500}}>Подключено</span></span>
         <span style={{opacity:.65}}>Вкладок: {tabCount||0}{unsaved>0 && <span style={{color:dark?'var(--orange)':'#fff',fontWeight:600}}> · {unsaved} •</span>}</span>
         {activeName && <span style={{opacity:.6,fontFamily:'var(--font-mono)',maxWidth:280,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{activeName}</span>}
       </div>
-      <div style={{display:'flex',alignItems:'center',gap:'var(--s-3h)'}}>
-        <span style={{display:'flex',alignItems:'center',gap:'var(--s-1)'}}><Ico k="zap" sz={12} col={dark?'var(--accent)':'rgba(255,255,255,.7)'} grad={dark} glow={dark}/>Gemini Flash</span>
+      <div className="myz-status-bar-right">
+        <span className="myz-status-bar-item"><Ico k="zap" sz={12} col={dark?'var(--accent)':'rgba(255,255,255,.7)'} grad={dark} glow={dark}/>Gemini Flash</span>
       </div>
     </div>
   );

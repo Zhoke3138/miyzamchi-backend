@@ -36,6 +36,8 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --font-sans: "IBM Plex Sans", "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "IBM Plex Serif", Georgia, serif;
+  --font-long: "Newsreader", "IBM Plex Serif", Georgia, serif;
 }
 
 body.light-mode {
@@ -1125,10 +1127,12 @@ body.mode-thinking .brand-logo svg {
 }
 
 .welcome-title {
+  font-family: var(--font-display);
   font-size: 56px;
-  line-height: 1.1;
-  letter-spacing: -0.03em;
+  line-height: 1.08;
+  letter-spacing: -0.025em;
   font-weight: 600;
+  font-style: italic;
 }
 
 .welcome-subtitle {
@@ -1851,6 +1855,7 @@ button.mic-btn,
   border-radius: var(--radius-lg);
   padding: 14px 18px;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.65;
 }
@@ -1974,8 +1979,11 @@ body.light-mode .bot-message::before {
 }
 
 .message-content {
+  font-family: var(--font-long);
   font-size: 16px;
-  line-height: 1.72;
+  line-height: 1.78;
+  font-feature-settings: "liga" 1, "calt" 1, "kern" 1;
+  -webkit-font-smoothing: antialiased;
 }
 
 .message-content p { margin-bottom: 14px; }
