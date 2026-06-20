@@ -1992,7 +1992,7 @@ const ArticleModal=({article,onClose,onInsert})=>{
           </div>
           <div style={{display:'flex',alignItems:'center',gap:'var(--s-2)',flexShrink:0}}>
             <span style={{fontSize:'var(--text-2xs)',fontFamily:'var(--font-mono)',color:'var(--muted)',padding:'var(--s-half) var(--s-1h)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',letterSpacing:'.04em'}}>ESC</span>
-            <button onClick={onClose} className="btn" title="Закрыть" style={{background:'var(--hover)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',width:32,height:32,padding:0,cursor:'pointer',color:'var(--text)',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>{e.currentTarget.style.background='var(--accent-dim)';e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.color='var(--accent-strong)'}} onMouseLeave={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.color='var(--text)'}}>
+            <button onClick={onClose} className="btn myz-modal-close" title="Закрыть">
               <Ico k="x" sz={16}/>
             </button>
           </div>
@@ -2970,9 +2970,7 @@ const EmptyIllust=()=>(
     <div style={{fontSize:13.5,color:'var(--muted)',textAlign:'center',maxWidth:300,lineHeight:1.7}}>
       Создавайте документы, проверяйте на ошибки, находите ссылки на НПА — всё в одном месте
     </div>
-    <div style={{width:280,height:100,border:'2px dashed var(--border)',borderRadius:14,display:'flex',alignItems:'center',justifyContent:'center',gap:12,transition:'all .2s',cursor:'pointer'}}
-      onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.background='var(--accent-dim)';e.currentTarget.style.borderStyle='solid'}}
-      onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.background='transparent';e.currentTarget.style.borderStyle='dashed'}}>
+    <div className="myz-drop-zone">
       <Ico k="explorer" sz={28} col="var(--accent)" />
       <div>
         <div style={{fontSize:13,fontWeight:500,color:'var(--text)'}}>Перетащите файл сюда</div>
@@ -3149,7 +3147,7 @@ const DocOutline=({onClose})=>{
       </div>
       <div style={{flex:1,overflowY:'auto',padding:'6px 0'}}>
         {items.map((it,i)=>(
-          <div key={i} style={{padding:(it.l===0?'4px':'6px')+' 12px '+(it.l===0?'4px':'6px')+' '+(12+it.l*14)+'px',cursor:'pointer',fontSize:it.l===1?12.5:12,color:it.l===1?'var(--text)':'var(--muted)',fontWeight:it.l===1?600:400,borderLeft:it.l===1?'2px solid var(--accent)':'2px solid transparent',transition:'background .1s'}} onMouseEnter={e=>e.currentTarget.style.background='var(--hover)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <div key={i} className="myz-outline-item" style={{padding:(it.l===0?'4px':'6px')+' 12px '+(it.l===0?'4px':'6px')+' '+(12+it.l*14)+'px',fontSize:it.l===1?12.5:12,color:it.l===1?'var(--text)':'var(--muted)',fontWeight:it.l===1?600:400,borderLeft:it.l===1?'2px solid var(--accent)':'2px solid transparent'}}>
             <span style={{fontFamily:'var(--font-mono)',fontSize:10,opacity:.35,marginRight:8}}>{it.n}</span>{it.t}
           </div>
         ))}
@@ -3312,10 +3310,10 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
             {open===m && menus[m] && (
               <div onClick={e=>e.stopPropagation()} style={{position:'absolute',top:'100%',left:0,marginTop:'var(--s-half)',background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-lg)',zIndex:2000,minWidth:190,padding:'var(--s-1h) 0',animation:'fadeInScale .1s ease',fontFamily:'var(--font-sans)'}}>
                 {menus[m].map((it,i)=>it.s?<div key={'s'+i} style={{height:1,background:'var(--border)',margin:'var(--s-1) 0'}}/> : (
-                  <div key={i} onClick={()=>{setOpen(null);it.a&&it.a()}} style={{padding:'var(--s-1h) var(--s-3h)',fontSize:'var(--text-sm)',color:'var(--text)',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',transition:'background .1s'}} onMouseEnter={e=>e.currentTarget.style.background='var(--hover)'} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                  <button key={i} type="button" className="myz-menu-item" onClick={()=>{setOpen(null);it.a&&it.a()}}>
                     <span>{it.l}</span>
                     {it.h && <span style={{fontSize:'var(--text-2xs)',color:'var(--muted)',fontFamily:'var(--font-mono)'}}>{it.h}</span>}
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -3349,20 +3347,16 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
         )}
         <div role="group" aria-label="Тил / Язык / Language" style={{display:'flex',alignItems:'center',gap:2,padding:2,border:'1px solid var(--border)',borderRadius:8,marginRight:'var(--s-1)'}}>
           {LANGS.map(l=>(
-            <button key={l} type="button" onClick={()=>setLang(l)} className="btn"
-              style={{padding:'3px 7px',border:'none',borderRadius:6,cursor:'pointer',fontSize:10.5,fontWeight:700,letterSpacing:'.04em',fontFamily:'inherit',background:lang===l?'var(--accent-dim)':'transparent',color:lang===l?'var(--accent)':'var(--muted)',transition:'all .15s'}}
-              onMouseEnter={e=>{if(lang!==l)e.currentTarget.style.color='var(--text)'}}
-              onMouseLeave={e=>{if(lang!==l)e.currentTarget.style.color='var(--muted)'}}>
+            <button key={l} type="button" onClick={()=>setLang(l)}
+              className={`btn myz-lang-btn${lang===l ? ' myz-lang-btn--active' : ''}`}>
               {l.toUpperCase()}
             </button>
           ))}
         </div>
-        {!isMobile && <a href="/chat.html" className="btn" style={{display:'flex',alignItems:'center',gap:6,padding:'4px 10px',background:'transparent',border:'1px solid var(--border)',borderRadius:'8px',cursor:'pointer',color:'var(--muted)',fontSize:11.5,fontFamily:'inherit',textDecoration:'none'}}
-          onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--text)'}}
-          onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>
+        {!isMobile && <a href="/chat.html" className="btn myz-to-chat-link">
           <span style={{fontSize:13}}>💬</span><span>{tr('to_chat')}</span>
         </a>}
-        {!isMobile && <button onClick={onPalette} className="btn" style={{display:'flex',alignItems:'center',gap:5,padding:'4px 9px',background:'var(--hover)',border:'1px solid var(--border)',borderRadius:'6px',cursor:'pointer',color:'var(--muted)',fontSize:11.5,fontFamily:'inherit'}} onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.color='var(--text)'}} onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.color='var(--muted)'}}>
+        {!isMobile && <button onClick={onPalette} className="btn myz-palette-btn">
           <Ico k="cmd" sz={12}/><span>Ctrl+P</span>
         </button>}
         <div style={{position:'relative'}}>
@@ -4490,19 +4484,13 @@ const FileTreeNode = ({ node, depth = 0, onOpenFile }) => {
 
   return (
     <div>
-      <div 
+      <div
         onClick={(e) => {
            if (isDir) toggleOpen(e);
            else onOpenFile(node);
         }}
-        style={{
-          padding: `6px 10px 6px ${16 + depth * 14}px`,
-          cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)',
-          display: 'flex', alignItems: 'center', gap: 8,
-          transition: 'background .1s'
-        }}
-        onMouseEnter={e => {e.currentTarget.style.background = 'var(--hover)'; e.currentTarget.style.color = 'var(--text)'}}
-        onMouseLeave={e => {e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'}}
+        className="myz-filetree-item"
+        style={{ paddingLeft: `${16 + depth * 14}px` }}
       >
         {isDir ? (
            <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: isLoading ? 0.5 : 1, width: '100%' }}>
@@ -5394,17 +5382,11 @@ const TipTapPageBreakOverlay = ({ pages }) => {
 const NpaHeaderActions=({onCollapse,onClose})=>(
   <div style={{display:'flex',alignItems:'center',gap:1}}>
     {onCollapse && (
-      <button type="button" onClick={onCollapse} title="Свернуть НПА" aria-label="Свернуть НПА"
-        style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--muted)',display:'flex',alignItems:'center',justifyContent:'center',width:18,height:18,borderRadius:4,padding:0}}
-        onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--text)'}}
-        onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>
+      <button type="button" onClick={onCollapse} title="Свернуть НПА" aria-label="Свернуть НПА" className="myz-panel-icon-btn">
         <span style={{display:'block',width:8,height:1.3,background:'currentColor',borderRadius:1}}/>
       </button>
     )}
-    <button type="button" onClick={onClose} title="Закрыть панель" aria-label="Закрыть панель"
-      style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--muted)',display:'flex',alignItems:'center',justifyContent:'center',width:18,height:18,borderRadius:4,padding:0}}
-      onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--text)'}}
-      onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>
+    <button type="button" onClick={onClose} title="Закрыть панель" aria-label="Закрыть панель" className="myz-panel-icon-btn">
       <Ico k="x" sz={11}/>
     </button>
   </div>
@@ -5665,7 +5647,7 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
 
   if(isOldNpa){
     const d=NPA[art];if(!d)return null;
-    return(<div style={{height:'100%',display:'flex',flexDirection:'column',background:'var(--bg-panel)'}}><div style={{padding:'8px 12px',borderBottom:'1px solid var(--border)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}><div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Ico k="book" sz={16} col="var(--accent)" /><span style={{fontSize:11,fontWeight:600,color:'var(--muted)',letterSpacing:'.06em',textTransform:'uppercase'}}>Просмотр НПА</span></div><div style={{display:'flex',alignItems:'center',gap:6,minWidth:0}}><Ico k="book" sz={13} col="var(--accent)" grad glow/><span style={{fontSize:12,fontWeight:600,color:'var(--accent)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:140}}>{d.title}</span><NpaHeaderActions onCollapse={onCollapse} onClose={onClose}/></div></div><div style={{flex:1,overflowY:'auto',padding:'14px 16px'}}><div style={{fontSize:12.5,fontWeight:700,color:'var(--text)',marginBottom:12,lineHeight:1.4}}>{d.full}</div><div style={{fontSize:12,color:'var(--text)',lineHeight:1.75,fontFamily:"'JetBrains Mono',monospace",whiteSpace:'pre-wrap',opacity:.9}}>{d.text}</div></div><div style={{padding:'8px 12px',borderTop:'1px solid var(--border)',display:'flex',gap:6,flexShrink:0}}>{[['← Пред.',d.prev],['След. →',d.next]].map(([l,t])=><button key={l} onClick={()=>t&&onNav(t)} disabled={!t} style={{flex:1,padding:'5px 8px',border:'1px solid var(--border)',borderRadius:5,background:'transparent',cursor:t?'pointer':'not-allowed',color:t?'var(--text)':'var(--muted)',fontSize:11.5,fontFamily:'inherit'}} onMouseEnter={e=>{if(t)e.currentTarget.style.background='var(--hover)'}} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>{l}</button>)}</div></div>);
+    return(<div style={{height:'100%',display:'flex',flexDirection:'column',background:'var(--bg-panel)'}}><div style={{padding:'8px 12px',borderBottom:'1px solid var(--border)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}><div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Ico k="book" sz={16} col="var(--accent)" /><span style={{fontSize:11,fontWeight:600,color:'var(--muted)',letterSpacing:'.06em',textTransform:'uppercase'}}>Просмотр НПА</span></div><div style={{display:'flex',alignItems:'center',gap:6,minWidth:0}}><Ico k="book" sz={13} col="var(--accent)" grad glow/><span style={{fontSize:12,fontWeight:600,color:'var(--accent)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:140}}>{d.title}</span><NpaHeaderActions onCollapse={onCollapse} onClose={onClose}/></div></div><div style={{flex:1,overflowY:'auto',padding:'14px 16px'}}><div style={{fontSize:12.5,fontWeight:700,color:'var(--text)',marginBottom:12,lineHeight:1.4}}>{d.full}</div><div style={{fontSize:12,color:'var(--text)',lineHeight:1.75,fontFamily:"'JetBrains Mono',monospace",whiteSpace:'pre-wrap',opacity:.9}}>{d.text}</div></div><div style={{padding:'8px 12px',borderTop:'1px solid var(--border)',display:'flex',gap:6,flexShrink:0}}>{[['← Пред.',d.prev],['След. →',d.next]].map(([l,t])=><button key={l} onClick={()=>t&&onNav(t)} disabled={!t} className="myz-npa-nav-btn" style={{cursor:t?'pointer':'not-allowed',color:t?'var(--text)':'var(--muted)'}}>{l}</button>)}</div></div>);
   }
   
   if (isMinjustDoc) {
@@ -8459,19 +8441,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                   aria-selected={active}
                   onClick={() => setChatMode(opt.k)}
                   title={opt.title}
-                  style={{
-                    display:'inline-flex',alignItems:'center',gap:'var(--s-1)',
-                    padding:'var(--s-1) var(--s-2h)',
-                    borderRadius:'var(--radius-pill)',
-                    border:'none',cursor:'pointer',
-                    background: active ? 'var(--primary)' : 'transparent',
-                    color: active ? '#fff' : 'var(--text-muted)',
-                    fontSize:'var(--text-base)',fontWeight:700,
-                    transition:'background .15s, color .15s',
-                    fontFamily:'var(--font-sans)'
-                  }}
-                  onMouseEnter={e=>{ if(!active){ e.currentTarget.style.color='var(--text-main)'; } }}
-                  onMouseLeave={e=>{ if(!active){ e.currentTarget.style.color='var(--text-muted)'; } }}
+                  className={`myz-chat-mode-tab${active ? ' myz-chat-mode-tab--active' : ' myz-chat-mode-tab--inactive'}`}
                 >
                   <Ico k={opt.icon} sz={13} col={active ? '#fff' : 'currentColor'}/>
                   {tr(opt.labelKey)}
@@ -8608,7 +8578,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           <div style={{display:'flex',gap:'var(--s-1h)',marginBottom:'var(--s-2)',flexWrap:'wrap'}}>{(agent
             ? ['Проверь документ','Перепиши формально','Добавь реквизиты','Сократи','Добавь ссылки на КР']
             : ['Срок исковой давности','Подсудность спора','Расчёт госпошлины','Алгоритм взыскания долга','Судебная практика по…']
-          ).map(c=><button key={c} className="btn" onClick={()=>setInp(c)} style={{fontSize:'var(--text-xs)',color:'var(--muted)',background:'var(--hover)',border:'1px solid var(--border)',borderRadius:'var(--radius-pill)',padding:'var(--s-1) var(--s-2h)',cursor:'pointer',fontFamily:'var(--font-sans)',transition:'color .15s, border-color .15s'}} onMouseEnter={e=>{e.currentTarget.style.color='var(--text)';e.currentTarget.style.borderColor='var(--accent)'}} onMouseLeave={e=>{e.currentTarget.style.color='var(--muted)';e.currentTarget.style.borderColor='var(--border)'}}>{c}</button>)}</div>
+          ).map(c=><button key={c} className="btn myz-suggest-chip" onClick={()=>setInp(c)} style={{background:'var(--hover)'}}>{c}</button>)}</div>
           </>
         )}
         {attachments.length > 0 && (
@@ -8626,7 +8596,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                     <span style={{fontWeight:500,color:'var(--text)',fontSize:'var(--text-sm)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:160}}>{a.name}</span>
                     <span style={{fontSize:'var(--text-xs)',color:'var(--muted)',whiteSpace:'nowrap'}}>{loading?'Извлечение…':err?(a.error||'Ошибка'):(a.isImage?fmtSizeAtt(a.size):fmtSizeAtt(a.size)+' · '+(a.text?Math.round(a.text.length/100)/10+'k симв.':'—'))}</span>
                   </div>
-                  <button onClick={()=>removeAttachment(a.id)} title="Удалить" style={{width:22,height:22,border:'none',background:'transparent',color:'var(--muted)',cursor:'pointer',borderRadius:'var(--radius-sm)',fontSize:'var(--text-base)',lineHeight:1,display:'inline-flex',alignItems:'center',justifyContent:'center',padding:0,flexShrink:0,transition:'color .15s, background .15s'}} onMouseEnter={e=>{e.currentTarget.style.background='var(--red-soft)';e.currentTarget.style.color='var(--red)'}} onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>×</button>
+                  <button onClick={()=>removeAttachment(a.id)} title="Удалить" className="myz-attach-remove">×</button>
                 </div>
               );
             })}
@@ -8667,11 +8637,8 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         <div className="myz-input-ring" style={{position:'relative',display:'flex',alignItems:'flex-end',gap:'var(--s-1h)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',background:'var(--bg-input)',transition:'border-color .3s, box-shadow .3s',padding:'var(--s-2h) var(--s-3)'}} onFocusCapture={e=>{e.currentTarget.style.borderColor='var(--primary)';e.currentTarget.style.boxShadow='0 0 0 3px var(--accent-dim)'}} onBlurCapture={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.boxShadow='none'}}>
           <button
             onClick={()=>fileInputRef.current?.click()}
-            className="btn"
+            className="btn myz-input-icon-btn"
             title="Прикрепить файл (PDF / DOCX / TXT / изображение)"
-            style={{flexShrink:0,width:28,height:28,border:'none',background:'transparent',cursor:'pointer',color:'var(--text-muted)',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'var(--radius-sm)',transition:'color .15s, background .15s'}}
-            onMouseEnter={e=>{e.currentTarget.style.color='var(--primary)';e.currentTarget.style.background='var(--hover)'}}
-            onMouseLeave={e=>{e.currentTarget.style.color='var(--text-muted)';e.currentTarget.style.background='transparent'}}
           >
             <Ico k="clip" sz={16}/>
           </button>
@@ -8686,11 +8653,9 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           />
           <button
             onClick={toggleVoice}
-            className={`btn ${listening ? 'mic-listening' : ''}`}
+            className={`btn myz-input-icon-btn${listening ? ' mic-listening' : ''}`}
             title={listening?'Остановить запись':'Голосовой ввод (Web Speech API)'}
-            style={{flexShrink:0,width:28,height:28,border:'none',background:listening?'var(--red)':'transparent',cursor:'pointer',color:listening?'#fff':'var(--text-muted)',display:'flex',alignItems:'center',justifyContent:'center',borderRadius:'var(--radius-sm)',transition:'color .15s, background .15s',boxShadow:listening?'0 0 0 3px var(--red-soft)':'none',animation:listening?'mic-pulse 1.4s ease-in-out infinite':'none'}}
-            onMouseEnter={e=>{ if(!listening){e.currentTarget.style.color='var(--primary)';e.currentTarget.style.background='var(--hover)'} }}
-            onMouseLeave={e=>{ if(!listening){e.currentTarget.style.color='var(--text-muted)';e.currentTarget.style.background='transparent'} }}
+            style={listening ? {background:'var(--red)',color:'#fff',boxShadow:'0 0 0 3px var(--red-soft)',animation:'mic-pulse 1.4s ease-in-out infinite'} : undefined}
           >
             <Ico k="mic" sz={14}/>
           </button>
@@ -9330,19 +9295,12 @@ const App=()=>{
                   aria-label={'Акцент '+c}
                   aria-pressed={tweaks.accent===c?'true':'false'}
                   onClick={()=>changeTweak('accent',c)}
+                  className="myz-color-swatch"
                   style={{
-                    width:22,
-                    height:22,
-                    borderRadius:'var(--radius-circle)',
                     background:c,
-                    cursor:'pointer',
-                    padding:0,
                     border:tweaks.accent===c?'2px solid var(--text)':'2px solid transparent',
                     boxShadow:tweaks.accent===c?'0 0 10px '+c+'44':'none',
-                    transition:'transform .1s'
                   }}
-                  onMouseEnter={e=>e.currentTarget.style.transform='scale(1.15)'}
-                  onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}
                 />
               ))}
             </div>
