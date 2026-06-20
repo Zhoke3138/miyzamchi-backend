@@ -2340,11 +2340,12 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
    ════════════════════════════════════════════════════════════════════ */
 .npa-viewer-content{
   font-family:var(--font-long);
-  font-size:14.5px;line-height:1.65;
-  text-align:justify;color:#1a1a1a;
-  padding:18px 24px;
+  font-size:15px;line-height:1.76;
+  text-align:justify;color:var(--text-main);
+  padding:18px 24px 32px;
   hyphens:auto;
-  background:#fefefb;
+  -webkit-font-smoothing:antialiased;
+  background:var(--bg-panel);
 }
 .npa-viewer-content p{text-indent:1.25cm;margin-top:0;margin-bottom:6px}
 .npa-viewer-content h3{
@@ -5159,6 +5160,65 @@ body.dk .analyze-accordion-content {
   transition: background-color .3s ease, border-color .3s ease;
 }
 
+/* NPA panel header + title area */
+.myz-npa-panel-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.myz-npa-panel-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.myz-npa-panel-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.myz-npa-panel-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  font-family: var(--font-sans);
+}
+.myz-npa-title-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  font-family: var(--font-sans);
+}
+
+/* NPA empty state */
+.myz-npa-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.myz-npa-empty-text {
+  font-size: 15px;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 240px;
+  font-family: var(--font-display);
+  font-style: italic;
+}
+
 /* ════════════════════════════════════════════════════════════════════
    WELCOME TITLE — gradient text for the greeting heading
    ════════════════════════════════════════════════════════════════════ */
@@ -5865,10 +5925,120 @@ body.dk .analyze-accordion-content {
   background: transparent;
   font-size: 11.5px;
   font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
   transition: background .12s;
 }
 .myz-npa-nav-btn:not(:disabled):hover { background: var(--hover); }
-.myz-npa-nav-btn:disabled { cursor: not-allowed; }
+.myz-npa-nav-btn:disabled { cursor: not-allowed; color: var(--muted); }
+
+/* Old (non-Minjust) NPA viewer */
+.myz-old-npa-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+.myz-old-npa-full-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 12px;
+  line-height: 1.4;
+  font-family: var(--font-display);
+}
+.myz-old-npa-text {
+  font-size: 13.5px;
+  color: var(--text);
+  line-height: 1.75;
+  font-family: var(--font-long);
+  white-space: pre-wrap;
+  opacity: .9;
+}
+.myz-old-npa-footer {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* NPA minjust scroll body + metadata */
+.myz-npa-scroll-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 14px 24px;
+  background: var(--bg-panel);
+  scroll-behavior: smooth;
+  transition: background-color 0.3s ease;
+}
+.myz-npa-docmeta {
+  padding: 4px 0 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 850px;
+  margin: 0 auto 8px;
+}
+.myz-npa-docmeta-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.myz-npa-status-badge {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-family: var(--font-sans);
+}
+.myz-npa-code-badge {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  background: var(--hover);
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.myz-npa-edition-select {
+  margin-left: auto;
+  font-size: 10px;
+  font-family: var(--font-sans);
+  background: var(--bg-editor);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  cursor: pointer;
+  outline: none;
+  max-width: 120px;
+  min-width: 78px;
+  height: 20px;
+}
+.myz-npa-loading-label {
+  font-size: 9.5px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.myz-npa-doc-title {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.35;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  font-family: var(--font-sans);
+}
+.myz-npa-state-msg {
+  text-align: center;
+  padding: 40px;
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
 
 /* ════════════════════════════════════════════════════════════════════
    DROP ZONE — drag-and-drop area in welcome / empty states
@@ -6215,4 +6385,109 @@ body.dk .analyze-accordion-content {
   font-size: var(--text-sm);
   font-family: var(--font-sans);
   animation: fadeInScale .18s ease;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   AI MESSAGE BODY + CONTENT
+   ════════════════════════════════════════════════════════════════════ */
+.myz-ai-body {
+  font-size: var(--text-base);
+  color: var(--text);
+  line-height: 1.68;
+  font-family: var(--font-sans);
+}
+.myz-ai-content {
+  min-width: 0;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   THINKING BOX — agent steps + skeleton loader
+   ════════════════════════════════════════════════════════════════════ */
+.myz-thinking-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-2);
+}
+.myz-thinking-label {
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: var(--s-1h);
+}
+.myz-stop-btn {
+  font-size: var(--text-2xs);
+  padding: var(--s-half) var(--s-1h);
+}
+.myz-thinking-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-half);
+}
+.myz-thinking-step {
+  opacity: 0.65;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1h);
+}
+.myz-thinking-step--last { opacity: 1; }
+.myz-thinking-arrow {
+  color: var(--muted);
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+.myz-thinking-arrow--active { color: var(--accent); }
+
+/* Skeleton loader row */
+.myz-skel-row {
+  display: flex;
+  gap: var(--s-2h);
+  align-items: flex-start;
+}
+.myz-skel-logo {
+  flex-shrink: 0;
+  margin-top: var(--s-half);
+}
+.myz-spin {
+  animation: spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Agent edit indicator */
+.myz-applying-edits {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+  font-family: var(--font-sans);
+}
+.myz-applying-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Agent command list */
+.myz-commands-list {
+  margin-top: 10px;
+}
+.myz-commands-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.myz-commands-label {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  font-family: var(--font-sans);
 }

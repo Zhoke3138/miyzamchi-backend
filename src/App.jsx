@@ -5623,23 +5623,46 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
 
   if(!art) return (
     <div className="myz-npa-panel">
-      <div style={{padding:'8px 12px',borderBottom:'1px solid var(--border)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
+      <div className="myz-npa-panel-header">
+        <div className="myz-npa-panel-header-left">
           <Ico k="book" sz={16} col="var(--accent)" />
-          <span style={{fontSize:11,fontWeight:600,color:'var(--muted)',letterSpacing:'.06em',textTransform:'uppercase'}}>Просмотр НПА</span>
+          <span className="myz-npa-panel-label">Просмотр НПА</span>
         </div>
         <NpaHeaderActions onCollapse={onCollapse} onClose={onClose}/>
       </div>
-      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,padding:24,textAlign:'center'}}>
+      <div className="myz-npa-empty">
         <Ico k="book" sz={36} col="var(--accent-edge)"/>
-        <span style={{fontSize:15,color:'var(--muted)',lineHeight:1.55,maxWidth:240,fontFamily:"'Instrument Serif', Georgia, serif",fontStyle:'italic'}}>{'\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u041d\u041f\u0410 \u0438\u043b\u0438 \u0441\u0442\u0430\u0442\u044c\u044e \u0432 \u043c\u0435\u043d\u044e \u0441\u043b\u0435\u0432\u0430 \u0434\u043b\u044f \u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440\u0430'}</span>
+        <span className="myz-npa-empty-text">{'\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u041d\u041f\u0410 \u0438\u043b\u0438 \u0441\u0442\u0430\u0442\u044c\u044e \u0432 \u043c\u0435\u043d\u044e \u0441\u043b\u0435\u0432\u0430 \u0434\u043b\u044f \u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440\u0430'}</span>
       </div>
     </div>
   );
 
   if(isOldNpa){
     const d=NPA[art];if(!d)return null;
-    return(<div style={{height:'100%',display:'flex',flexDirection:'column',background:'var(--bg-panel)'}}><div style={{padding:'8px 12px',borderBottom:'1px solid var(--border)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}><div style={{display:'flex',alignItems:'center',gap:8,minWidth:0}}><Ico k="book" sz={16} col="var(--accent)" /><span style={{fontSize:11,fontWeight:600,color:'var(--muted)',letterSpacing:'.06em',textTransform:'uppercase'}}>Просмотр НПА</span></div><div style={{display:'flex',alignItems:'center',gap:6,minWidth:0}}><Ico k="book" sz={13} col="var(--accent)" grad glow/><span style={{fontSize:12,fontWeight:600,color:'var(--accent)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:140}}>{d.title}</span><NpaHeaderActions onCollapse={onCollapse} onClose={onClose}/></div></div><div style={{flex:1,overflowY:'auto',padding:'14px 16px'}}><div style={{fontSize:12.5,fontWeight:700,color:'var(--text)',marginBottom:12,lineHeight:1.4}}>{d.full}</div><div style={{fontSize:12,color:'var(--text)',lineHeight:1.75,fontFamily:"'JetBrains Mono',monospace",whiteSpace:'pre-wrap',opacity:.9}}>{d.text}</div></div><div style={{padding:'8px 12px',borderTop:'1px solid var(--border)',display:'flex',gap:6,flexShrink:0}}>{[['← Пред.',d.prev],['След. →',d.next]].map(([l,t])=><button key={l} onClick={()=>t&&onNav(t)} disabled={!t} className="myz-npa-nav-btn" style={{cursor:t?'pointer':'not-allowed',color:t?'var(--text)':'var(--muted)'}}>{l}</button>)}</div></div>);
+    return(
+      <div className="myz-npa-panel">
+        <div className="myz-npa-panel-header" style={{gap:8}}>
+          <div className="myz-npa-panel-header-left" style={{minWidth:0}}>
+            <Ico k="book" sz={16} col="var(--accent)" />
+            <span className="myz-npa-panel-label">Просмотр НПА</span>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0}}>
+            <Ico k="book" sz={13} col="var(--accent)" grad glow/>
+            <span style={{fontSize:12,fontWeight:600,color:'var(--accent)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:140}}>{d.title}</span>
+            <NpaHeaderActions onCollapse={onCollapse} onClose={onClose}/>
+          </div>
+        </div>
+        <div className="myz-old-npa-body">
+          <div className="myz-old-npa-full-title">{d.full}</div>
+          <div className="myz-old-npa-text">{d.text}</div>
+        </div>
+        <div className="myz-old-npa-footer">
+          {[['← Пред.',d.prev],['След. →',d.next]].map(([l,t])=>
+            <button key={l} onClick={()=>t&&onNav(t)} disabled={!t} className="myz-npa-nav-btn">{l}</button>
+          )}
+        </div>
+      </div>
+    );
   }
   
   if (isMinjustDoc) {
@@ -5684,30 +5707,18 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
           </div>
 
         {/* ── Тело документа (реквизиты теперь ВНУТРИ — уходят вверх при скролле) ── */}
-        <div ref={scrollRef} style={{flex: 1, overflowY: 'auto', padding: '8px 14px', background: 'var(--bg-panel)', scrollBehavior: 'smooth', transition:'background-color 0.3s ease'}}>
+        <div ref={scrollRef} className="myz-npa-scroll-body">
           {/* ── Реквизиты документа: статус, код, редакция, название ── */}
           {(docMeta.title || docMeta.status || docMeta.documentCode) && (
-            <div style={{
-              padding: '4px 0 8px',
-              marginBottom: '6px',
-              borderBottom: '1px solid var(--border)',
-              display: 'flex', flexDirection: 'column', gap: '4px',
-              maxWidth: '850px', margin: '0 auto 8px'
-            }}>
-              <div style={{display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap'}}>
+            <div className="myz-npa-docmeta">
+              <div className="myz-npa-docmeta-row">
                 {docMeta.status && (
-                  <span style={{
-                    padding: '1px 6px', borderRadius: '3px', fontSize: '10px', fontWeight: 700,
-                    background: statusStyle.bg, color: statusStyle.color, letterSpacing: '0.02em'
-                  }}>
+                  <span className="myz-npa-status-badge" style={{background: statusStyle.bg, color: statusStyle.color}}>
                     {statusStyle.label}
                   </span>
                 )}
                 {docMeta.documentCode && (
-                  <span style={{
-                    padding: '1px 6px', borderRadius: '3px', fontSize: '10px', fontWeight: 500,
-                    background: 'var(--hover)', color: 'var(--muted)', fontFamily: 'var(--font-mono)'
-                  }}>
+                  <span className="myz-npa-code-badge">
                     {docMeta.documentCode}
                   </span>
                 )}
@@ -5722,13 +5733,7 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
                     }}
                     disabled={isLoading || isLoadingEditions}
                     title="Выбрать редакцию"
-                    style={{
-                      marginLeft: 'auto', fontSize: '10px', fontFamily: 'var(--font-body)',
-                      background: 'var(--bg-editor)', color: 'var(--text)',
-                      border: '1px solid var(--border)', borderRadius: '4px',
-                      padding: '1px 4px', cursor: 'pointer', outline: 'none',
-                      maxWidth: '120px', minWidth: '78px', height: '20px'
-                    }}
+                    className="myz-npa-edition-select"
                   >
                     {editions.map(ed => (
                       <option key={ed.id} value={ed.id}>
@@ -5738,14 +5743,11 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
                   </select>
                 )}
                 {isLoadingEditions && !editions.length && (
-                  <span style={{fontSize:'9.5px', color:'var(--muted)', marginLeft:'auto'}}>⏳ редакции...</span>
+                  <span className="myz-npa-loading-label">⏳ редакции...</span>
                 )}
               </div>
               {docMeta.title && (
-                <div style={{
-                  fontSize: '11px', color: 'var(--text)', lineHeight: '1.35',
-                  fontWeight: 500, letterSpacing: '-0.01em'
-                }}>
+                <div className="myz-npa-doc-title">
                   {docMeta.title}
                 </div>
               )}
@@ -5753,12 +5755,12 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
           )}
 
           {isLoading ? (
-            <div style={{textAlign: 'center', padding: '40px', color: 'var(--muted)', fontFamily: 'sans-serif', fontSize: '14px'}}>
+            <div className="myz-npa-state-msg">
               <div style={{ marginBottom: '12px', fontSize: '20px' }}>⏳</div>
               Загрузка документа...
             </div>
           ) : error ? (
-            <div style={{textAlign: 'center', padding: '40px', color: 'var(--red)', fontFamily: 'sans-serif', fontSize: '14px'}}>
+            <div className="myz-npa-state-msg" style={{color: 'var(--red)'}}>
               Ошибка загрузки: {error}
             </div>
           ) : content ? (
@@ -5768,7 +5770,7 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
               dangerouslySetInnerHTML={{ __html: content }}
             />
           ) : (
-            <div style={{textAlign: 'center', padding: '40px', color: 'var(--muted)', fontFamily: 'sans-serif', fontSize: '14px'}}>
+            <div className="myz-npa-state-msg">
               Документ не найден или текст отсутствует
             </div>
           )}
@@ -5900,25 +5902,29 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
           }
 
           .npa-content-academic {
-            font-family: "Times New Roman", Times, serif;
-            font-size: 14px;
-            line-height: 1.5;
+            font-family: var(--font-long);
+            font-size: 15px;
+            line-height: 1.76;
             text-align: justify;
             color: var(--text-main);
             max-width: 850px;
             margin: 0 auto;
+            hyphens: auto;
+            -webkit-font-smoothing: antialiased;
           }
-          .npa-content-academic p { text-indent: 1.5em; margin-bottom: 0.5em; margin-top: 0; }
+          .npa-content-academic p { text-indent: 1.5em; margin-bottom: 0.6em; margin-top: 0; }
           .npa-content-academic h1, .npa-content-academic h2,
           .npa-content-academic h3, .npa-content-academic h4 {
-            text-align: center; text-indent: 0; font-weight: bold;
-            margin-top: 1em; margin-bottom: 0.5em;
-            line-height: 1.35;
+            text-align: center; text-indent: 0; font-weight: 700;
+            font-family: var(--font-display);
+            margin-top: 1.2em; margin-bottom: 0.6em;
+            line-height: 1.3;
+            letter-spacing: -0.015em;
           }
-          .npa-content-academic h1 { font-size: 17px; }
-          .npa-content-academic h2 { font-size: 15.5px; }
-          .npa-content-academic h3 { font-size: 14px; }
-          .npa-content-academic h4 { font-size: 13px; }
+          .npa-content-academic h1 { font-size: 18px; }
+          .npa-content-academic h2 { font-size: 16px; }
+          .npa-content-academic h3 { font-size: 14.5px; }
+          .npa-content-academic h4 { font-size: 13.5px; }
           .article-anchor { scroll-margin-top: 24px; }
 
           /* ── Интерактивные ссылки Минюста ── */
@@ -5947,7 +5953,7 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
             padding-top: 24px;
             border-top: 1.5px solid var(--border);
             padding-bottom: 32px;
-            font-family: "Times New Roman", Times, serif;
+            font-family: var(--font-sans);
           }
           .npa-related-title {
             font-size: 12px;
@@ -6029,21 +6035,21 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
   const npaTitle = items[0].metadata?.npa_title || 'Документ';
 
   return (
-    <div style={{height:'100%',display:'flex',flexDirection:'column',background:'var(--bg-panel)'}}>
-      <div style={{padding:'8px 12px',borderBottom:'1px solid var(--border)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-        <div style={{display:'flex',alignItems:'center',gap:8}}>
+    <div className="myz-npa-panel">
+      <div className="myz-npa-panel-header">
+        <div className="myz-npa-panel-header-left">
           <Ico k="book" sz={16} col="var(--accent)" />
-          <span style={{fontSize:11,fontWeight:600,color:'var(--muted)',letterSpacing:'.06em',textTransform:'uppercase'}}>Просмотр НПА</span>
+          <span className="myz-npa-panel-label">Просмотр НПА</span>
         </div>
-        <div style={{display:'flex',alignItems:'center',gap:6, minWidth:0}}>
+        <div className="myz-npa-panel-header-right">
           <Ico k="book" sz={13} col="var(--accent)" grad glow/>
-          <span style={{fontSize:12,fontWeight:600,color:'var(--accent)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:160}} title={npaTitle}>
+          <span className="myz-npa-title-text" title={npaTitle}>
             {npaTitle}
           </span>
           <NpaHeaderActions onCollapse={onCollapse} onClose={onClose}/>
         </div>
       </div>
-      <div ref={scrollRef} style={{flex:1,overflowY:'auto',background:'var(--bg-panel)',padding:'12px 14px',transition:'background-color 0.3s ease'}} className="npa-viewer-content npa-content-academic">
+      <div ref={scrollRef} className="npa-viewer-content npa-content-academic">
         {items.map((item, idx) => {
           const rawText = item.content?.full_text || '';
           const lines = rawText.split('\n').filter(l => l.trim());
@@ -6051,8 +6057,8 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
           const paragraphs = lines.slice(1);
           return (
             <div key={idx} style={{marginBottom: items.length > 1 ? 40 : 0}} id={`article-${item.metadata?.article_display || idx}`}>
-              {titleLine && <h3 style={{textAlign:'center',fontFamily:'"Times New Roman", Times, serif',fontWeight:'bold',marginBottom:'1em'}}>{titleLine}</h3>}
-              {paragraphs.map((p, i) => <p key={i} style={{textIndent:'1.5em',fontFamily:'"Times New Roman", Times, serif',fontSize:'16px',textAlign:'justify',color:'var(--text-main)',lineHeight:'1.5',marginBottom:'0.5em',marginTop:0}}>{p}</p>)}
+              {titleLine && <h3 style={{textAlign:'center',fontWeight:'bold',marginBottom:'1em'}}>{titleLine}</h3>}
+              {paragraphs.map((p, i) => <p key={i} style={{textIndent:'1.5em',marginBottom:'0.6em',marginTop:0}}>{p}</p>)}
               {idx < items.length - 1 && <hr style={{border: 'none', borderTop: '1px dashed var(--border)', margin: '40px 0 0'}} />}
             </div>
           );
@@ -8340,7 +8346,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
     const conf = m.confidence;
     const hasThink = Array.isArray(m.thinkSteps) && m.thinkSteps.length > 0;
     return(
-      <div style={{fontSize:'var(--text-base)',color:'var(--text)',lineHeight:1.65,fontFamily:'var(--font-sans)'}}>
+      <div className="myz-ai-body">
         {/* Thinking Box — коллапсируемый степпер "мыслей" для analyze-document */}
         {hasThink && (
           <ThinkingBox
@@ -8361,18 +8367,18 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         {isAgent ? (
           <>
             {m.applyingEdits && (
-              <div style={{display:'flex',alignItems:'center',gap:8,margin:'6px 0',fontSize:11,color:'var(--accent)',fontWeight:600}}>
-                <span className="dot-pulse" style={{width:7,height:7,borderRadius:'50%',background:'var(--accent)',flexShrink:0}}/>
+              <div className="myz-applying-edits">
+                <span className="myz-applying-dot dot-pulse"/>
                 <span>✍️ Применяю правки в документ…</span>
               </div>
             )}
             {parsed.analysis && <div className="ai-md" dangerouslySetInnerHTML={{__html:renderMarkdown(parsed.analysis)}}/>}
             {!parsed.analysis && !parsed.commands.length && m.text && <div className="ai-md" dangerouslySetInnerHTML={{__html:renderMarkdown(m.text)}}/>}
             {parsed.commands.length>0 && (
-              <div style={{marginTop:10}}>
-                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
+              <div className="myz-commands-list">
+                <div className="myz-commands-header">
                   <Ico k="sparkles" sz={11} col="var(--accent)" grad/>
-                  <span style={{fontSize:10.5,color:'var(--muted)',fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase'}}>Предложенные правки ({parsed.commands.length})</span>
+                  <span className="myz-commands-label">Предложенные правки ({parsed.commands.length})</span>
                 </div>
                 {parsed.commands.map((cmd,idx)=>renderCommandCard(cmd,idx,m.id,(m.appliedCmds||{})[idx]))}
               </div>
@@ -8501,29 +8507,29 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                 </span>
                 <span className="myz-ai-brand-name">Мыйзамчы</span>
               </div>
-              <div style={{minWidth:0}}>{renderAi(ex.ai)}</div>
+              <div className="myz-ai-content">{renderAi(ex.ai)}</div>
             </div>)}
             {ei<exchanges.length-1 && <div className="myz-exchange-sep"/>}
           </div>
         ))}
         {chatMode !== 'documents' && agentSteps.length > 0 && (
           <div className="myz-thinking-box">
-            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'var(--s-2)'}}>
-              <div style={{fontWeight:600, color:'var(--text)', display:'flex', alignItems:'center', gap:'var(--s-1h)'}}>
-                <Ico k="loader" sz={14} col="var(--accent)" style={{animation:'spin 1s linear infinite'}} />
+            <div className="myz-thinking-head">
+              <div className="myz-thinking-label">
+                <Ico k="loader" sz={14} col="var(--accent)" />
                 <span>Анализ документа…</span>
               </div>
-              <button onClick={stop} className="btn myz-chat-header-clear" style={{fontSize:'var(--text-2xs)',padding:'var(--s-half) var(--s-1h)'}}>Стоп</button>
+              <button onClick={stop} className="btn myz-chat-header-clear myz-stop-btn">Стоп</button>
             </div>
-            <div style={{display:'flex', flexDirection:'column', gap:'var(--s-half)'}}>
+            <div className="myz-thinking-steps">
               {agentSteps.map((s, i) => {
                 const {glyph, body} = splitGlyph(s);
                 const isLast = i === agentSteps.length - 1;
                 return (
-                  <div key={i} style={{opacity: isLast ? 1 : 0.65, display:'flex', alignItems:'center', gap:'var(--s-1h)'}}>
+                  <div key={i} className={`myz-thinking-step${isLast ? ' myz-thinking-step--last' : ''}`}>
                     {glyph
                       ? <Glyph type={glyph} sz={13}/>
-                      : <span style={{color:isLast?'var(--accent)':'var(--muted)', flexShrink:0, fontFamily:'var(--font-mono)'}}>›</span>}
+                      : <span className={`myz-thinking-arrow${isLast ? ' myz-thinking-arrow--active' : ''}`}>›</span>}
                     <span>{body}</span>
                   </div>
                 );
@@ -8532,15 +8538,15 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           </div>
         )}
         {thinking && agentSteps.length === 0 && (
-          <div style={{display:'flex',gap:'var(--s-2h)',alignItems:'flex-start'}}>
-            <div style={{flexShrink:0,marginTop:'var(--s-half)'}}>
+          <div className="myz-skel-row">
+            <div className="myz-skel-logo">
               <span className="myz-brand-logo myz-ai-brand-logo">
                 <img src="../logo/Logo.png" alt="" draggable="false"/>
               </span>
             </div>
-            <div className="msg-skel" style={{flex:1}}>
+            <div className="msg-skel">
               <div className="msg-skel-head">
-                <svg width="12" height="12" viewBox="0 0 24 24" style={{animation:'spin 0.9s linear infinite',flexShrink:0}} aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" className="myz-spin" aria-hidden="true">
                   <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeOpacity=".22"/>
                   <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/>
                 </svg>
