@@ -1,37 +1,34 @@
 @echo off
 chcp 65001 >nul
+title Miyzamchi Telegram Bot
 
-:: ---- Telegram state dir (ASCII path, no Cyrillic) ----
 set TELEGRAM_STATE_DIR=%USERPROFILE%\.claude\channels\telegram
+set BOT_TOKEN_FILE=%USERPROFILE%\.claude\channels\telegram\.env
 
-:: ---- Copy token from project .telegram-state to default location ----
+:: Copy token from project folder to state dir
 set SRC_ENV=%~dp0.telegram-state\.env
-set DST_ENV=%USERPROFILE%\.claude\channels\telegram\.env
-
 if not exist "%USERPROFILE%\.claude\channels\telegram" mkdir "%USERPROFILE%\.claude\channels\telegram"
-copy /Y "%SRC_ENV%" "%DST_ENV%" >nul 2>&1
+copy /Y "%SRC_ENV%" "%BOT_TOKEN_FILE%" >nul 2>&1
 
-:: ---- Check token is set ----
-findstr /c:"ВСТАВЬ_ТОКЕН_СЮДА" "%DST_ENV%" >nul 2>&1
+:: Check token
+findstr /r "ВСТАВЬ" "%BOT_TOKEN_FILE%" >nul 2>&1
 if %errorlevel%==0 (
-    echo.
-    echo ERROR: Bot token not set!
-    echo Open file: .telegram-state\.env
-    echo Replace ВСТАВЬ_ТОКЕН_СЮДА with your BotFather token.
-    echo.
+    echo ERROR: Open .telegram-state\.env and replace the placeholder with your BotFather token.
     pause
     exit /b 1
 )
 
-:: ---- Launch Claude Code ----
-cd /d "%~dp0"
+set PLUGIN_DIR=%USERPROFILE%\.claude\plugins\cache\claude-plugins-official\telegram\0.0.6
+
 echo.
-echo [Miyzamchi] Claude Code + Telegram started.
-echo Send any message to your bot in Telegram.
-echo It will reply with a 6-letter pairing code.
-echo Enter that code here when Claude asks.
+echo  [Telegram Bot] Starting bot server...
+echo  Bot: @miyzamchi_work_bot
+echo  1. Write any message to the bot in Telegram.
+echo  2. Bot replies with: /telegram:access pair XXXXXX
+echo  3. Type that command in VS Code Claude Code chat.
 echo.
-echo Press Ctrl+C to stop.
+echo  Keep this window open while you work. Ctrl+C to stop.
 echo.
 
-claude
+:: IMPORTANT: --shell=bun is required so that "&&" in the start script works on Windows
+"%USERPROFILE%\.bun\bin\bun.exe" run --cwd "%PLUGIN_DIR%" --shell=bun start
