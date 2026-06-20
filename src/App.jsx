@@ -8626,7 +8626,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             Анонимизировать (скрыть ФИО, даты, реквизиты)
           </label>
         </div>
-        <div className="myz-input-ring" style={{position:'relative',display:'flex',alignItems:'flex-end',gap:'var(--s-1h)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',background:'var(--bg-input)',transition:'border-color .3s, box-shadow .3s',padding:'var(--s-2h) var(--s-3)'}} onFocusCapture={e=>{e.currentTarget.style.borderColor='var(--primary)';e.currentTarget.style.boxShadow='0 0 0 3px var(--accent-dim)'}} onBlurCapture={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.boxShadow='none'}}>
+        <div className="myz-input-ring" style={{position:'relative',display:'flex',alignItems:'flex-end',gap:'var(--s-1h)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',background:'var(--bg-input)',transition:'border-color .25s, box-shadow .25s',padding:'var(--s-2h) var(--s-3)'}}>
           <button
             onClick={()=>fileInputRef.current?.click()}
             className="btn myz-input-icon-btn"
@@ -8654,11 +8654,10 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           <button
             onClick={send}
             disabled={(!inp.trim()&&attachments.filter(a=>a.status==='ready').length===0)||thinking||attachments.some(a=>a.status==='loading')}
-            className="btn"
+            className="btn myz-send-btn"
             title={attachments.some(a=>a.status==='loading')?'Подождите, файлы обрабатываются…':'Отправить (Enter)'}
-            style={{flexShrink:0,width:32,height:32,borderRadius:'var(--radius-sm)',border:'none',cursor:((inp.trim()||attachments.filter(a=>a.status==='ready').length>0)&&!thinking&&!attachments.some(a=>a.status==='loading'))?'pointer':'not-allowed',background:((inp.trim()||attachments.filter(a=>a.status==='ready').length>0)&&!thinking&&!attachments.some(a=>a.status==='loading'))?'var(--primary)':'var(--border-color)',color:((inp.trim()||attachments.filter(a=>a.status==='ready').length>0)&&!thinking)?'#fff':'var(--text-muted)',display:'flex',alignItems:'center',justifyContent:'center',transition:'background .2s, color .2s, box-shadow .2s',boxShadow:((inp.trim()||attachments.filter(a=>a.status==='ready').length>0)&&!thinking&&!attachments.some(a=>a.status==='loading'))?'0 1px 3px var(--accent-glow)':'none'}}
           >
-            <Ico k="send" sz={16} col={((inp.trim()||attachments.filter(a=>a.status==='ready').length>0)&&!thinking)?'#fff':'var(--text-muted)'}/>
+            <Ico k="send" sz={16} col="currentColor"/>
           </button>
         </div>
         <div style={{textAlign:'center',marginTop:'var(--s-1h)',fontSize:'var(--text-xs)',color:'var(--text-muted)',fontFamily:'var(--font-sans)'}}>Перед использованием в производстве сверяйте нормы с <a href="https://cbd.minjust.gov.kg" target="_blank" rel="noopener noreferrer" style={{color:'var(--accent)',textDecoration:'none'}}>cbd.minjust.gov.kg</a>.</div>
