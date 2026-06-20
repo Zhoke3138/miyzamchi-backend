@@ -1,11 +1,9 @@
 @echo off
 chcp 65001 >nul
-title Miyzamchi Telegram Bot
+title Miyzamchi Claude Code + Telegram
 
-set TELEGRAM_STATE_DIR=%USERPROFILE%\.claude\channels\telegram
+:: Ensure token is in the default state dir (where the plugin looks by default)
 set BOT_TOKEN_FILE=%USERPROFILE%\.claude\channels\telegram\.env
-
-:: Copy token from project folder to state dir
 set SRC_ENV=%~dp0.telegram-state\.env
 if not exist "%USERPROFILE%\.claude\channels\telegram" mkdir "%USERPROFILE%\.claude\channels\telegram"
 copy /Y "%SRC_ENV%" "%BOT_TOKEN_FILE%" >nul 2>&1
@@ -18,17 +16,14 @@ if %errorlevel%==0 (
     exit /b 1
 )
 
-set PLUGIN_DIR=%USERPROFILE%\.claude\plugins\cache\claude-plugins-official\telegram\0.0.6
-
 echo.
-echo  [Telegram Bot] Starting bot server...
-echo  Bot: @miyzamchi_work_bot
-echo  1. Write any message to the bot in Telegram.
-echo  2. Bot replies with: /telegram:access pair XXXXXX
-echo  3. Type that command in VS Code Claude Code chat.
+echo  Claude Code + Telegram bot starting...
+echo  The bot @miyzamchi_work_bot will be ready in ~5 seconds.
 echo.
-echo  Keep this window open while you work. Ctrl+C to stop.
+echo  IMPORTANT: Leave this window open when you leave the office.
+echo  Messages from Telegram will appear here and Claude will respond.
 echo.
 
-:: IMPORTANT: --shell=bun is required so that "&&" in the start script works on Windows
-"%USERPROFILE%\.bun\bin\bun.exe" run --cwd "%PLUGIN_DIR%" --shell=bun start
+:: Run claude CLI — it auto-starts the telegram MCP plugin as subprocess
+:: The plugin already has --shell=bun in its .mcp.json config
+claude
