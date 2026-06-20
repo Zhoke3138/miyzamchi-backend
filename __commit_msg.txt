@@ -1,1 +1,0 @@
-﻿fix(telegram): add --shell=bun flag so start script && works on Windows
