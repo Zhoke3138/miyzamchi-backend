@@ -5622,7 +5622,7 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
   }, [art, isMinjustDoc]);
 
   if(!art) return (
-    <div style={{height:'100%',display:'flex',flexDirection:'column',background:'var(--bg-panel)'}}>
+    <div className="myz-npa-panel">
       <div style={{padding:'8px 12px',borderBottom:'1px solid var(--border)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           <Ico k="book" sz={16} col="var(--accent)" />
@@ -5652,7 +5652,7 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
       { bg: 'var(--hover)', color: 'var(--muted)', label: docMeta.status || 'Неизвестно' };
 
     return (
-      <div style={{height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-panel)', borderRadius: 6, border: '1px solid var(--border-color)', overflow: 'hidden', transition:'background-color 0.3s ease, border-color 0.3s ease'}}>
+      <div className="myz-npa-panel">
           {/* Хедер: полоса вкладок открытых НПА + кнопки [—]/[✕] */}
           <div className="npa-tabstrip">
             <div className="npa-tabstrip-tabs">
@@ -8991,7 +8991,7 @@ const App=()=>{
   }, []);
 
   return(
-    <div className={(dark?'dk ':'')+(tt?'tt ':'')+'grain'} style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',backgroundColor:'var(--bg-editor)',backgroundImage:'var(--grad-mesh)',color:'var(--text)',overflow:'hidden',fontFamily:'var(--font-sans)',letterSpacing:'-.01em'}}>
+    <div className={`myz-app-root${dark?' dk':''}${tt?' tt':''} grain`}>
       <MenuBar dark={dark} onToggle={toggleTheme} onPalette={()=>setShowPalette(p=>!p)} showNotif={showNotif} onToggleNotif={()=>setShowNotif(p=>!p)} onAction={handleAction} rightOpen={rightOpen} onToggleRight={()=>setRightOpen(p=>!p)} isMobile={isMobile} unsavedCount={unsavedCount} hasActiveDoc={tabs.length > 0}/>
       {({}).visible && (
         <div id="inline-prompt-menu" style={{
@@ -9164,7 +9164,7 @@ const App=()=>{
           )}
         </div>
       )}
-      <div style={{flex:1,display:'flex',overflow:'hidden',position:'relative'}}>
+      <div className="myz-workspace-row">
         <ActBar active={actPanel} onSet={handleActPanel}/>
         {/* LEFT PANEL — desktop: inline-flex; mobile: fixed overlay */}
         <div style={isMobile
@@ -9174,7 +9174,7 @@ const App=()=>{
         </div>
         {leftOpen && !isMobile && <Handle onMD={startDrag('l')}/>}
         {/* EDITOR — always full width on mobile */}
-        <div id="superdoc-wrapper" className="superdoc-workspace-wrapper" style={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+        <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
           {useMemo(() => {
             const currentTab = tabs.find(t => t.id === activeTab);
             const isValidDocx = currentTab?.buffer && currentTab.buffer instanceof ArrayBuffer;
@@ -9201,7 +9201,7 @@ const App=()=>{
           ? {position:'fixed',top:0,right:0,bottom:0,width:'min(420px, 100vw)',background:'var(--bg-app)',borderLeft:'1px solid var(--border)',transform:rightOpen?'translateX(0)':'translateX(110%)',transition:'transform .25s ease',zIndex:1100,boxShadow:rightOpen?'-4px 0 24px rgba(0,0,0,.25)':'none',overflow:'hidden'}
           : {width:rightOpen?rightW:0,flexShrink:0,overflow:'hidden',background:'var(--bg-app)',borderLeft:rightOpen?'1px solid var(--border)':'none',transition:'none'}}>
           {rightOpen && (
-            <div id="rp" style={{height:'100%',display:'flex',flexDirection:'column',padding:4,gap:4,boxSizing:'border-box',zoom:0.85}}>
+            <div id="rp" className="myz-right-panel-inner">
               {/* Шрифт правой панели масштабируется через CSS `zoom` — управляется ResizeObserver в App */}
               {/* Tab-strip to RESTORE collapsed NPA (если NPA свёрнут) */}
               {npaCollapsed && (

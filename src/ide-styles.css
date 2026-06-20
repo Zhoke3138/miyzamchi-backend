@@ -5103,6 +5103,81 @@ body.dk .analyze-accordion-content {
 .flex-spacer { flex: 1; }
 
 /* ════════════════════════════════════════════════════════════════════
+   APP ROOT — top-level workspace container
+   ════════════════════════════════════════════════════════════════════ */
+.myz-app-root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-editor);
+  background-image: var(--grad-mesh);
+  color: var(--text);
+  overflow: hidden;
+  font-family: var(--font-sans);
+  letter-spacing: -.01em;
+}
+
+/* ── Workspace row (below menubar) ──────────────────────────────── */
+.myz-workspace-row {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Editor wrapper ─────────────────────────────────────────────── */
+.myz-editor-wrapper {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* ── Right panel inner — NPA + Chat stacked ─────────────────────── */
+.myz-right-panel-inner {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  gap: 4px;
+  box-sizing: border-box;
+  zoom: 0.85;
+}
+
+/* ── NPA panel shell ────────────────────────────────────────────── */
+.myz-npa-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  transition: background-color .3s ease, border-color .3s ease;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   WELCOME TITLE — gradient text for the greeting heading
+   ════════════════════════════════════════════════════════════════════ */
+.myz-welcome-title {
+  background: linear-gradient(135deg, var(--text-main) 0%, var(--primary) 60%, var(--secondary) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Dark mode — brighter gradient so it's visible on dark bg */
+.dk .myz-welcome-title {
+  background: linear-gradient(135deg, var(--text-main) 0%, #8B9EFF 50%, var(--secondary) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ════════════════════════════════════════════════════════════════════
    CREATE DOC MODE — interview chat bubbles
    ════════════════════════════════════════════════════════════════════ */
 .myz-create-bubble {
