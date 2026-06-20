@@ -1599,7 +1599,7 @@ const CreateDocMode = ({ onToast }) => {
           <h3 className="myz-section-title">Создание документа</h3>
           <p className="myz-section-sub">Выберите тип — затем опишите ситуацию, ИИ задаст уточняющие вопросы и соберёт досье.</p>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+        <div className="myz-doc-type-list">
           {DOC_TYPES.map(d => (
             <button key={d.k} type="button" disabled={!d.active} className={`myz-doc-type-btn${d.active?'':' myz-doc-type-btn--dim'}`}
               onClick={() => d.active && pickType(d.k)}>
@@ -1619,27 +1619,27 @@ const CreateDocMode = ({ onToast }) => {
   // ── ШАГ 2: диалог-досье ──
   const tplLabel = (DOC_TYPES.find(d => d.k === docType) || {}).label || 'Документ';
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 0 var(--s-2) 0', borderBottom: '1px solid var(--border-color)' }}>
-        <span style={{ fontWeight: 600, fontSize: 'var(--text-sm)', color: 'var(--text-main)' }}>{tplLabel}</span>
-        <button type="button" onClick={restart} style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '3px 8px', cursor: 'pointer' }}>Сменить тип</button>
+    <div className="myz-create-dialog">
+      <div className="myz-create-dialog-header">
+        <span className="myz-create-dialog-type">{tplLabel}</span>
+        <button type="button" onClick={restart} className="myz-create-back-btn">Сменить тип</button>
       </div>
-      <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: 'var(--s-2h) 0', display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+      <div ref={listRef} className="myz-create-msg-list">
         {messages.map((m, i) => (
           <div key={i} className={`myz-create-bubble${m.role==='user'?' myz-create-bubble--user':' myz-create-bubble--ai'}`}>{m.text}</div>
         ))}
         {busy && (
-          <div className="myz-create-bubble myz-create-bubble--ai" style={{ display:'flex', alignItems:'center', gap:'var(--s-1h)' }}>
+          <div className="myz-create-bubble myz-create-bubble--ai myz-create-thinking">
             <span className="gen-dots"><span/><span/><span/></span>
-            <span style={{ fontSize:'var(--text-xs)', color:'var(--muted)' }}>Интервьюер думает…</span>
+            <span className="myz-create-thinking-label">Интервьюер думает…</span>
           </div>
         )}
       </div>
       {ready && (
-        <div style={{ margin: 'var(--s-2) 0', display: 'flex', flexDirection: 'column', gap: 'var(--s-1h)' }}>
+        <div className="myz-create-ready-section">
           {/* Прогресс генерации / патча */}
           {genBusy && genStatus && (
-            <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', padding: '0 var(--s-1)', display: 'flex', alignItems: 'center' }}>
+            <div className="myz-gen-status">
               <span className="gen-dots"><span/><span/><span/></span>
               <span>{genStatus}</span>
             </div>
@@ -1655,7 +1655,7 @@ const CreateDocMode = ({ onToast }) => {
           {/* После генерации: скачать → замечания → Доработать */}
           {genDone && !genBusy && (
             <>
-              <div style={{ display: 'flex', gap: 'var(--s-1h)' }}>
+              <div className="myz-create-download-row">
                 <button type="button" onClick={downloadDoc} className="myz-gen-download-btn">⬇ .docx</button>
                 <button type="button" onClick={downloadPdf} className="myz-gen-download-btn">⬇ PDF</button>
               </div>
@@ -1704,7 +1704,7 @@ const CreateDocMode = ({ onToast }) => {
           💡 Пример: {DOC_EXAMPLES[docType].length > 64 ? DOC_EXAMPLES[docType].slice(0, 64) + '…' : DOC_EXAMPLES[docType]}
         </button>
       )}
-      <div style={{ display: 'flex', gap: 'var(--s-1h)', alignItems: 'flex-end', borderTop: '1px solid var(--border-color)', paddingTop: 'var(--s-2)' }}>
+      <div className="myz-create-input-row">
         <textarea value={input} onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
           rows={Math.min(5, Math.max(1, input.split('\n').length))}
@@ -3053,25 +3053,25 @@ const DocxPreview=({buffer,name,onClose})=>{
 
 /* ═══ Shortcut Overlay ═══ */
 const ShortcutOverlay=({onClose})=>(
-  <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:1800,background:'rgba(17,24,39,.45)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',animation:'fadeIn .15s ease'}}>
-    <div onClick={e=>e.stopPropagation()} style={{width:520,maxHeight:'70vh',background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',boxShadow:'var(--shadow-lg)',overflow:'hidden',animation:'fadeInScale .18s ease',fontFamily:'var(--font-sans)'}}>
-      <div style={{padding:'var(--s-4) var(--s-5)',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-        <div style={{display:'flex',alignItems:'center',gap:'var(--s-2h)'}}>
-          <Ico k="cmd" sz={20} col="var(--accent)" /><span style={{fontSize:'var(--text-md)',fontWeight:600,color:'var(--text)'}}>Горячие клавиши</span>
+  <div onClick={onClose} className="myz-shortcut-overlay">
+    <div onClick={e=>e.stopPropagation()} className="myz-shortcut-panel">
+      <div className="myz-shortcut-head">
+        <div className="myz-shortcut-head-left">
+          <Ico k="cmd" sz={20} col="var(--accent)" /><span className="myz-shortcut-title">Горячие клавиши</span>
         </div>
-        <button onClick={onClose} style={{background:'var(--hover)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'var(--s-1) var(--s-2h)',cursor:'pointer',color:'var(--muted)',fontSize:'var(--text-sm)',fontFamily:'var(--font-sans)'}}>ESC</button>
+        <button onClick={onClose} className="myz-shortcut-close">ESC</button>
       </div>
-      <div style={{overflowY:'auto',padding:'var(--s-2) 0',maxHeight:'calc(70vh - 56px)'}}>
+      <div className="myz-shortcut-body">
         {[{s:'Общие',i:[['Ctrl+P','Палитра команд'],['Ctrl+/','Горячие клавиши'],['Ctrl+\\','Split editor']]},{s:'Панели',i:[['Ctrl+B','Левая панель'],['Ctrl+J','AI панель']]},{s:'Файлы',i:[['Ctrl+N','Новый документ'],['Ctrl+S','Сохранить'],['Ctrl+W','Закрыть вкладку']]},{s:'Редактор',i:[['Ctrl+F','Найти'],['Ctrl+H','Заменить']]}].map((sec,si)=>(
           <div key={si}>
-            <div style={{padding:'var(--s-2) var(--s-5) var(--s-1)',fontSize:'var(--text-2xs)',fontWeight:600,color:'var(--muted)',letterSpacing:'.07em',textTransform:'uppercase'}}>{sec.s}</div>
+            <div className="myz-shortcut-section-label">{sec.s}</div>
             {sec.i.map(([k,d])=>(
-              <div key={k} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--s-1h) var(--s-5)',fontSize:'var(--text-sm)',color:'var(--text)'}}>
+              <div key={k} className="myz-shortcut-row">
                 <span>{d}</span>
-                <span style={{display:'inline-flex',alignItems:'center',justifyContent:'center',minWidth:28,height:24,padding:'0 var(--s-2)',background:'var(--hover)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:'var(--text)',fontWeight:500}}>{k}</span>
+                <span className="myz-shortcut-key">{k}</span>
               </div>
             ))}
-            {si<3 && <div style={{height:1,background:'var(--border)',margin:'var(--s-1h) var(--s-4)'}}/>}
+            {si<3 && <div className="myz-shortcut-divider"/>}
           </div>
         ))}
       </div>
@@ -3084,14 +3084,14 @@ const FindBar=({onClose,onToast})=>{
   const[q,setQ]=useState('');const ref=useRef(null);
   useEffect(()=>{ref.current&&ref.current.focus()},[]);
   return(
-    <div style={{position:'absolute',top:0,right:56,left:0,zIndex:50,background:'var(--bg-panel)',borderBottom:'1px solid var(--border)',boxShadow:'var(--shadow)',padding:'var(--s-2) var(--s-3)',animation:'fadeIn .15s ease',fontFamily:'var(--font-sans)'}}>
-      <div style={{display:'flex',alignItems:'center',gap:'var(--s-2)'}}>
-        <div style={{flex:1,display:'flex',alignItems:'center',gap:'var(--s-1h)',background:'var(--bg-editor)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'0 var(--s-2)'}}>
+    <div className="myz-find-bar">
+      <div className="myz-find-bar-inner">
+        <div className="myz-find-bar-input-wrap">
           <Ico k="search" sz={14} col="var(--muted)"/>
-          <input ref={ref} value={q} onChange={e=>setQ(e.target.value)} placeholder="Найти…" aria-label="Поиск в документе" style={{flex:1,background:'transparent',border:'none',outline:'none',fontSize:'var(--text-sm)',color:'var(--text)',fontFamily:'var(--font-sans)',padding:'var(--s-1h) 0'}}/>
-          {q && <span style={{fontSize:'var(--text-sm)',color:'var(--accent)',fontFamily:'var(--font-mono)',fontWeight:500}}>3</span>}
+          <input ref={ref} value={q} onChange={e=>setQ(e.target.value)} placeholder="Найти…" aria-label="Поиск в документе" className="myz-find-bar-input"/>
+          {q && <span className="myz-find-bar-count">3</span>}
         </div>
-        <button onClick={onClose} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--muted)',display:'flex',padding:'var(--s-half)'}}><Ico k="x" sz={14}/></button>
+        <button onClick={onClose} className="myz-find-bar-close"><Ico k="x" sz={14}/></button>
       </div>
     </div>
   );
@@ -3105,20 +3105,20 @@ const Notifications=({onClose})=>{
     {icon:'book',title:'Обновление НПА',text:'Ст. 288 — новая редакция',time:'1 ч',unread:false,bg:'var(--hover)'},
   ];
   return(
-    <div style={{position:'absolute',top:'100%',right:0,width:360,background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',boxShadow:'var(--shadow-lg)',zIndex:100,overflow:'hidden',animation:'fadeInScale .15s ease',marginTop:'var(--s-1h)',fontFamily:'var(--font-sans)'}}>
-      <div style={{padding:'var(--s-3) var(--s-3h)',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-        <div style={{display:'flex',alignItems:'center',gap:'var(--s-2)'}}><Ico k="bell" sz={18} col="var(--accent)" /><span style={{fontSize:'var(--text-sm)',fontWeight:600,color:'var(--text)'}}>Уведомления</span></div>
-        <span style={{fontSize:'var(--text-xs)',color:'var(--accent)',cursor:'pointer',fontWeight:500}}>Прочитать все</span>
+    <div className="myz-notif-panel">
+      <div className="myz-notif-head">
+        <div className="myz-notif-head-left"><Ico k="bell" sz={18} col="var(--accent)" /><span className="myz-notif-head-title">Уведомления</span></div>
+        <span className="myz-notif-mark-all">Прочитать все</span>
       </div>
-      <div style={{maxHeight:260,overflowY:'auto'}}>
+      <div className="myz-notif-list">
         {items.map((n,i)=>(
-          <div key={i} style={{padding:'var(--s-2h) var(--s-3h)',borderBottom:i<items.length-1?'1px solid var(--border)':'none',display:'flex',gap:'var(--s-2h)',cursor:'pointer',background:n.unread?'var(--accent-dim)':'transparent',transition:'background .1s'}} onMouseEnter={e=>e.currentTarget.style.background='var(--hover)'} onMouseLeave={e=>e.currentTarget.style.background=n.unread?'var(--accent-dim)':'transparent'}>
+          <div key={i} className={`myz-notif-item${n.unread?' myz-notif-item--unread':''}${i<items.length-1?' myz-notif-item--border':''}`}>
             <Ico k={n.icon} sz={20} col="var(--accent)" />
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:'var(--text-sm)',fontWeight:n.unread?600:400,color:'var(--text)',marginBottom:'var(--s-half)'}}>{n.title}</div>
-              <div style={{fontSize:'var(--text-xs)',color:'var(--muted)',lineHeight:'var(--lh-snug)'}}>{n.text}</div>
+            <div className="myz-notif-body">
+              <div className={`myz-notif-title${n.unread?' myz-notif-title--unread':''}`}>{n.title}</div>
+              <div className="myz-notif-text">{n.text}</div>
             </div>
-            <span style={{fontSize:'var(--text-2xs)',color:'var(--muted)',flexShrink:0,marginTop:'var(--s-half)'}}>{n.time}</span>
+            <span className="myz-notif-time">{n.time}</span>
           </div>
         ))}
       </div>
@@ -3130,15 +3130,15 @@ const Notifications=({onClose})=>{
 const DocOutline=({onClose})=>{
   const items=[{l:1,t:'Исковое заявление',n:1},{l:2,t:'о прекращении права собственности',n:2},{l:0,t:'Истец: Иванов А.А.',n:5},{l:0,t:'Ответчик: ОсОО «Мээрим»',n:6},{l:1,t:'Прошу суд:',n:9},{l:0,t:'1. Признать незаконными',n:10},{l:0,t:'2. Взыскать неустойку',n:11},{l:0,t:'3. Применить ст. 289',n:12},{l:0,t:'4. Обязать устранить',n:13},{l:0,t:'5. Взыскать расходы',n:14}];
   return(
-    <div style={{height:'100%',background:'var(--bg-panel)',display:'flex',flexDirection:'column',overflow:'hidden'}}>
-      <div style={{padding:'9px 12px 8px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-        <div style={{display:'flex',alignItems:'center',gap:8}}><Ico k="outline" sz={13} col="var(--accent)" grad/><span style={{fontSize:10.5,fontWeight:600,color:'var(--muted)',letterSpacing:'.08em',textTransform:'uppercase'}}>Структура</span></div>
-        <button onClick={onClose} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--muted)',display:'flex'}}><Ico k="x" sz={13}/></button>
+    <div className="myz-outline-panel">
+      <div className="myz-outline-head">
+        <div className="myz-outline-head-left"><Ico k="outline" sz={13} col="var(--accent)" grad/><span className="myz-outline-head-label">Структура</span></div>
+        <button onClick={onClose} className="myz-outline-close"><Ico k="x" sz={13}/></button>
       </div>
-      <div style={{flex:1,overflowY:'auto',padding:'6px 0'}}>
+      <div className="myz-outline-body">
         {items.map((it,i)=>(
-          <div key={i} className="myz-outline-item" style={{padding:(it.l===0?'4px':'6px')+' 12px '+(it.l===0?'4px':'6px')+' '+(12+it.l*14)+'px',fontSize:it.l===1?12.5:12,color:it.l===1?'var(--text)':'var(--muted)',fontWeight:it.l===1?600:400,borderLeft:it.l===1?'2px solid var(--accent)':'2px solid transparent'}}>
-            <span style={{fontFamily:'var(--font-mono)',fontSize:10,opacity:.35,marginRight:8}}>{it.n}</span>{it.t}
+          <div key={i} className={`myz-outline-item myz-outline-item--l${it.l}`} style={{paddingLeft:(12+it.l*14)+'px'}}>
+            <span className="myz-outline-lnum">{it.n}</span>{it.t}
           </div>
         ))}
       </div>
@@ -3157,18 +3157,18 @@ const TOUR_STEPS=[
 const TourStep=({step,total,onNext,onClose})=>{
   if(!step) return null;
   return(
-    <div style={{position:'fixed',zIndex:3000,animation:'fadeInScale .3s ease',...step.pos}}>
-      <div style={{background:'var(--bg-panel)',border:'1px solid var(--accent)',borderRadius:12,boxShadow:'0 0 0 4px var(--accent-dim),var(--shadow-lg)',padding:'16px 20px',maxWidth:320}}>
-        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+    <div className="myz-tour-positioner" style={step.pos}>
+      <div className="myz-tour-card">
+        <div className="myz-tour-head">
           <Ico k="law" sz={24} col="var(--accent)" />
-          <div style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>{step.title}</div>
+          <div className="myz-tour-title">{step.title}</div>
         </div>
-        <div style={{fontSize:13,color:'var(--muted)',lineHeight:1.6,marginBottom:14,marginLeft:34}}>{step.text}</div>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-          <div style={{display:'flex',gap:4}}>{Array.from({length:total},(_,i)=><div key={i} style={{width:6,height:6,borderRadius:'50%',background:i<=step.idx?'var(--accent)':'var(--border)',transition:'background .3s'}}/>)}</div>
-          <div style={{display:'flex',gap:8}}>
-            <button onClick={onClose} style={{fontSize:12,color:'var(--muted)',background:'transparent',border:'none',cursor:'pointer'}}>Пропустить</button>
-            <button onClick={onNext} className="btn" style={{fontSize:12,color:'#fff',background:'var(--accent)',border:'none',borderRadius:6,padding:'5px 14px',cursor:'pointer',fontWeight:500}}>{step.idx<total-1?'Далее':'Начать'}</button>
+        <div className="myz-tour-text">{step.text}</div>
+        <div className="myz-tour-foot">
+          <div className="myz-tour-dots">{Array.from({length:total},(_,i)=><div key={i} className={`myz-tour-dot${i<=step.idx?' myz-tour-dot--active':''}`}/>)}</div>
+          <div className="myz-tour-actions">
+            <button onClick={onClose} className="myz-tour-skip">Пропустить</button>
+            <button onClick={onNext} className="myz-tour-next">{step.idx<total-1?'Далее':'Начать'}</button>
           </div>
         </div>
       </div>
@@ -3210,30 +3210,30 @@ const Palette=({onClose,dark,onAction})=>{
   useEffect(()=>setSel(0),[q]);
   useEffect(()=>{const h=e=>{if(e.key==='ArrowDown'){e.preventDefault();setSel(s=>Math.min(s+1,items.length-1))}if(e.key==='ArrowUp'){e.preventDefault();setSel(s=>Math.max(s-1,0))}if(e.key==='Enter'&&items[sel]){items[sel].action&&items[sel].action();onClose()}};window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h)},[items,sel,onClose]);
   return(
-    <div onClick={onClose} role="presentation" style={{position:'fixed',inset:0,zIndex:1000,background:'rgba(17,24,39,.45)',backdropFilter:'blur(4px)',display:'flex',alignItems:'flex-start',justifyContent:'center',paddingTop:'var(--s-16)'}}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Командная палитра" onClick={e=>e.stopPropagation()} style={{width:560,background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',boxShadow:'var(--shadow-lg)',animation:'fadeInScale .14s ease',maxHeight:'72vh',display:'flex',flexDirection:'column',overflow:'hidden',fontFamily:'var(--font-sans)'}}>
-        <div style={{display:'flex',alignItems:'center',gap:'var(--s-2h)',padding:'var(--s-3) var(--s-3h)',borderBottom:'1px solid var(--border)',flexShrink:0}}>
+    <div onClick={onClose} role="presentation" className="myz-palette-overlay">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Командная палитра" onClick={e=>e.stopPropagation()} className="myz-palette-panel">
+        <div className="myz-palette-search-row">
           <Ico k="search" sz={16} col="var(--muted)"/>
-          <input ref={ref} value={q} onChange={e=>setQ(e.target.value)} placeholder="Поиск команд, файлов, статей…" aria-label="Командная палитра" style={{flex:1,background:'transparent',border:'none',outline:'none',color:'var(--text)',fontSize:'var(--text-md)',fontFamily:'var(--font-sans)'}}/>
-          <kbd style={{color:'var(--muted)',fontSize:'var(--text-xs)',background:'var(--hover)',padding:'var(--s-half) var(--s-1h)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',fontFamily:'var(--font-mono)'}}>ESC</kbd>
+          <input ref={ref} value={q} onChange={e=>setQ(e.target.value)} placeholder="Поиск команд, файлов, статей…" aria-label="Командная палитра" className="myz-palette-input"/>
+          <kbd className="myz-palette-esc">ESC</kbd>
         </div>
-        <div style={{overflowY:'auto'}}>
+        <div className="myz-palette-list">
           {items.map((it,i)=>{
             const isS=i===Math.min(sel,items.length-1);
             return(
-              <div key={i} onClick={()=>{it.action&&it.action();onClose()}} onMouseEnter={()=>setSel(i)} style={{display:'flex',alignItems:'center',gap:'var(--s-2h)',padding:'var(--s-2) var(--s-3h)',cursor:'pointer',background:isS?'var(--hover)':'transparent'}}>
-                <div style={{width:28,height:28,borderRadius:'var(--radius-sm)',flexShrink:0,background:isS?'var(--accent-dim)':'var(--bg-bar)',border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <div key={i} onClick={()=>{it.action&&it.action();onClose()}} onMouseEnter={()=>setSel(i)} className={`myz-palette-item${isS?' myz-palette-item--sel':''}`}>
+                <div className={`myz-palette-icon${isS?' myz-palette-icon--sel':''}`}>
                   <Ico k={it.icon} sz={14} col={isS?'var(--accent)':'var(--muted)'} {...(isS&&it.icon==='law'?{grad:true,glow:true}:{})}/>
                 </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:'var(--text-sm)',color:'var(--text)',fontWeight:isS?500:400,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{it.label}</div>
-                  <div style={{fontSize:'var(--text-xs)',color:'var(--muted)',marginTop:1}}>{it.sub}</div>
+                <div className="myz-palette-item-body">
+                  <div className={`myz-palette-item-label${isS?' myz-palette-item-label--sel':''}`}>{it.label}</div>
+                  <div className="myz-palette-item-sub">{it.sub}</div>
                 </div>
-                {it.hint && <kbd style={{fontSize:'var(--text-2xs)',color:'var(--muted)',background:'var(--bg-bar)',border:'1px solid var(--border)',padding:'var(--s-half) var(--s-1h)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-mono)',flexShrink:0}}>{it.hint}</kbd>}
+                {it.hint && <kbd className="myz-palette-hint">{it.hint}</kbd>}
               </div>
             );
           })}
-          {q&&items.length===0 && <div style={{padding:'var(--s-6)',textAlign:'center',color:'var(--muted)',fontSize:'var(--text-sm)'}}><Ico k="search" sz={20} col="var(--muted)" /><div style={{marginTop:'var(--s-2)'}}>Ничего не найдено</div></div>}
+          {q&&items.length===0 && <div className="myz-palette-empty"><Ico k="search" sz={20} col="var(--muted)" /><div className="myz-palette-empty-text">Ничего не найдено</div></div>}
         </div>
       </div>
     </div>
@@ -3295,8 +3295,8 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
           <span className="myz-menubar-brand-name">Мыйзамчы</span>
         </div>
         {!isMobile && ['Файл','Правка','Вид','Перейти','Черновик','Право','Справка'].map(m=>(
-          <div key={m} style={{position:'relative'}}>
-            <button type="button" className="btn" aria-haspopup="menu" aria-expanded={open===m?'true':'false'} onClick={(e)=>{e.stopPropagation();setOpen(open===m?null:m)}} style={{padding:'var(--s-1) var(--s-2h)',borderRadius:'var(--radius-sm)',border:'none',cursor:'pointer',fontSize:'var(--text-sm)',color:'var(--text)',background:hov===m||open===m?'var(--hover)':'transparent',fontFamily:'var(--font-sans)',letterSpacing:'-.005em'}} onMouseEnter={()=>setHov(m)} onMouseLeave={()=>setHov(null)}>{MENU_LABELS[m]||m}</button>
+          <div key={m} className="myz-menu-trigger-wrap">
+            <button type="button" className={`btn myz-menu-trigger${hov===m||open===m?' myz-menu-trigger--active':''}`} aria-haspopup="menu" aria-expanded={open===m?'true':'false'} onClick={(e)=>{e.stopPropagation();setOpen(open===m?null:m)}} onMouseEnter={()=>setHov(m)} onMouseLeave={()=>setHov(null)}>{MENU_LABELS[m]||m}</button>
             {open===m && menus[m] && (
               <div onClick={e=>e.stopPropagation()} className="myz-menu-dropdown">
                 {menus[m].map((it,i)=>it.s?<div key={'s'+i} className="myz-menu-sep"/> : (
@@ -3344,12 +3344,12 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
           ))}
         </div>
         {!isMobile && <a href="/chat.html" className="btn myz-to-chat-link">
-          <span style={{fontSize:13}}>💬</span><span>{tr('to_chat')}</span>
+          <span className="myz-to-chat-ico">💬</span><span>{tr('to_chat')}</span>
         </a>}
         {!isMobile && <button onClick={onPalette} className="btn myz-palette-btn">
           <Ico k="cmd" sz={12}/><span>Ctrl+P</span>
         </button>}
-        <div style={{position:'relative'}}>
+        <div className="myz-notif-trigger">
           <button onClick={onToggleNotif} className="btn myz-menubar-icon-btn" title="Уведомления">
             <Ico k="bell" sz={14}/>
           </button>
@@ -4576,16 +4576,15 @@ const LeftPanel=({mode,actPanel,onClose,onCtx,onToast,onOpenFile,fsHandle,fsFile
   if(actPanel==='law' || mode==='law') return <NPALibraryTree onClose={onClose} onSelectArticle={(art)=>onAction('openNPA', art)} />;
 
   return(
-    <div className="file-explorer" style={{height:'100%',background:'var(--bg-panel)',display:'flex',flexDirection:'column',overflowY:'auto',position:'relative',fontFamily:'var(--font-sans)'}}>
-      <style>{`.btn-new-document { background-color: var(--primary); color: #ffffff; border: none; border-radius: var(--radius-sm); padding: var(--s-2h) var(--s-4); width: calc(100% - var(--s-8)); margin: var(--s-2) var(--s-4) var(--s-6) var(--s-4); font-weight: 600; display: flex; align-items: center; justify-content: center; gap: var(--s-2); cursor: pointer; font-size: var(--text-sm); font-family: var(--font-sans); transition: background-color 0.2s ease; } .btn-new-document:hover { background-color: var(--primary-hover); } .btn-open-document { background-color: transparent; color: var(--text); border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: var(--s-2h) var(--s-4); width: calc(100% - var(--s-8)); margin: 0 var(--s-4) 0 var(--s-4); font-weight: 500; display: flex; align-items: center; justify-content: center; gap: var(--s-2); cursor: pointer; font-size: var(--text-sm); font-family: var(--font-sans); transition: all 0.2s ease; } .btn-open-document:hover { background-color: var(--hover); border-color: var(--text-muted); }`}</style>
+    <div className="file-explorer">
 
-      <div style={{padding: 'var(--s-6) var(--s-4) var(--s-3) var(--s-4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
-        <div style={{fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em'}}>МОИ ФАЙЛЫ</div>
-        <button onClick={onClose} style={{background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--muted)', display: 'flex'}}><Ico k="x" sz={14}/></button>
+      <div className="myz-left-panel-header">
+        <div className="myz-left-panel-title">МОИ ФАЙЛЫ</div>
+        <button onClick={onClose} className="myz-left-panel-close"><Ico k="x" sz={14}/></button>
       </div>
 
       <button className="btn-open-document" onClick={()=>onAction('openFromDisk')}>
-        <span style={{fontSize: 14}}>📁</span>
+        <span className="myz-open-doc-ico">📁</span>
         <span>Открыть документ</span>
       </button>
 
@@ -4594,31 +4593,7 @@ const LeftPanel=({mode,actPanel,onClose,onCtx,onToast,onOpenFile,fsHandle,fsFile
         <span>Новый документ</span>
       </button>
 
-      <style>{`
-        .myz-nav-row { display:flex; align-items:center; gap:var(--s-3); padding:var(--s-2) var(--s-3); cursor:pointer; border-radius:var(--radius-sm); color:var(--muted); transition: background .15s, color .15s; }
-        .myz-nav-row:hover { background: var(--hover); color: var(--text); }
-        .myz-nav-row.is-open { color: var(--text); background: var(--hover); }
-        .myz-nav-row .myz-nav-badge { margin-left:auto; font-size:var(--text-2xs); color:var(--muted); background:var(--hover); padding:var(--s-half) var(--s-1h); border-radius:var(--radius-pill); font-weight:600; }
-        .myz-nav-row.is-open .myz-nav-badge { background: var(--bg-panel); }
-        .myz-recent-list { padding: var(--s-1) var(--s-2) var(--s-2) var(--s-8); display:flex; flex-direction:column; gap:var(--s-half); }
-        .myz-recent-item { display:flex; align-items:center; gap:var(--s-2); padding:var(--s-1h) var(--s-2); border-radius:var(--radius-xs); cursor:pointer; font-size:var(--text-sm); color:var(--text); transition: background .12s; }
-        .myz-recent-item:hover { background: var(--hover); }
-        .myz-recent-item.is-closed { color: var(--muted); }
-        .myz-recent-item .myz-recent-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .myz-recent-item .myz-recent-date { flex-shrink:0; font-size:var(--text-2xs); color:var(--muted); }
-        .myz-recent-empty { padding: var(--s-2) var(--s-2) var(--s-2) var(--s-8); font-size:var(--text-xs); color:var(--muted); font-style:italic; }
-        .myz-file-row { display:flex; align-items:center; gap:var(--s-2); padding:var(--s-1h) var(--s-3); cursor:pointer; border-radius:var(--radius-xs); transition: background .12s; color:var(--text); }
-        .myz-file-row:hover { background: var(--hover); }
-        .myz-file-row.is-active { background: var(--accent-soft); color: var(--primary); font-weight: 600; }
-        .myz-file-row .myz-file-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--text-sm); }
-        .myz-file-row .myz-file-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); opacity:0; flex-shrink:0; }
-        .myz-file-row.is-mod .myz-file-dot { opacity:1; }
-        .myz-file-row .myz-file-close { opacity:0; background:transparent; border:none; cursor:pointer; color:var(--muted); padding:var(--s-half); border-radius:var(--radius-xs); display:flex; }
-        .myz-file-row:hover .myz-file-close { opacity:1; }
-        .myz-file-row .myz-file-close:hover { background:var(--border); color:var(--text); }
-      `}</style>
-
-      <div style={{display: 'flex', flexDirection: 'column', gap: 'var(--s-half)', padding: '0 var(--s-2)', marginBottom: 'var(--s-4)'}}>
+      <div className="myz-left-nav-list">
         {navItems.map(it => {
           const isOpen = expandedNav === it.id;
           const badge = it.id === 'recent' ? recentFiles.length : null;
@@ -4629,7 +4604,7 @@ const LeftPanel=({mode,actPanel,onClose,onCtx,onToast,onOpenFile,fsHandle,fsFile
                 onClick={() => setExpandedNav(isOpen ? null : it.id)}
               >
                 <Ico k={it.icon} sz={16} col="currentColor" />
-                <span style={{fontSize: 'var(--text-sm)', fontWeight: 500}}>{it.label}</span>
+                <span className="myz-nav-row-label">{it.label}</span>
                 {badge != null && badge > 0 && <span className="myz-nav-badge">{badge}</span>}
               </div>
               {isOpen && it.id === 'recent' && (
@@ -4662,24 +4637,7 @@ const LeftPanel=({mode,actPanel,onClose,onCtx,onToast,onOpenFile,fsHandle,fsFile
 
       {/* ── 2026-05-30: блок "АНАЛИЗ" — live-телеметрия пайплайна ── */}
       {showAnalysisBlock && (
-        <div style={{padding: '0 var(--s-4)', marginBottom: 'var(--s-4)'}}>
-          <style>{`
-            .myz-tele-block { background: var(--hover); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--s-2h) var(--s-3); display: flex; flex-direction: column; gap: var(--s-1h); }
-            .myz-tele-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-1); }
-            .myz-tele-title { font-size: var(--text-xs); font-weight: 700; color: var(--muted); letterSpacing: 0.06em; }
-            .myz-tele-pulse { width: 8px; height: 8px; border-radius: 50%; background: #10b981; animation: myzPulse 1.2s infinite ease-in-out; }
-            .myz-tele-pulse--idle { background: #9ca3af; animation: none; }
-            @keyframes myzPulse { 0%,100% { opacity: 0.4; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.1); } }
-            .myz-tele-row { display: flex; align-items: center; gap: var(--s-2); font-size: var(--text-sm); color: var(--text); }
-            .myz-tele-ico { font-size: 13px; opacity: 0.75; }
-            .myz-tele-val { font-variant-numeric: tabular-nums; font-weight: 600; }
-            .myz-tele-unit { font-size: var(--text-2xs); color: var(--muted); }
-            .myz-tele-sep { color: var(--muted); margin: 0 2px; }
-            .myz-tele-last { font-size: var(--text-2xs); color: var(--muted); border-top: 1px solid var(--border); padding-top: var(--s-1h); margin-top: var(--s-1); display: flex; flex-direction: column; gap: 2px; }
-            .myz-tele-last b { color: var(--text); font-weight: 600; }
-            .myz-tele-search { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-xs); padding: var(--s-1h) var(--s-2); margin-top: var(--s-1h); font-size: var(--text-2xs); color: var(--text); animation: fadeInScale .15s ease; line-height: 1.4; }
-            .myz-tele-search-label { color: #10b981; font-weight: 700; margin-right: 4px; }
-          `}</style>
+        <div className="myz-tele-wrap">
           <div className="myz-tele-block">
             <div className="myz-tele-head">
               <span className="myz-tele-title">АНАЛИЗ</span>
@@ -4710,27 +4668,27 @@ const LeftPanel=({mode,actPanel,onClose,onCtx,onToast,onOpenFile,fsHandle,fsFile
               <div className="myz-tele-last">
                 <span>Последний:</span>
                 {pipelineTele.lastModel && <span><b>{pipelineTele.lastModel}</b></span>}
-                {pipelineTele.lastLabel && <span style={{opacity:0.75}}>{pipelineTele.lastLabel}</span>}
+                {pipelineTele.lastLabel && <span className="myz-tele-last-label">{pipelineTele.lastLabel}</span>}
               </div>
             )}
             {searchVisible && lastAgentSearch && (
               <div className="myz-tele-search" title={lastAgentSearch.reason || ''}>
                 <span className="myz-tele-search-label">🔎 Агент ищет:</span>
                 «{lastAgentSearch.query}»
-                {lastAgentSearch.segmentRef && <div style={{opacity:0.7, marginTop:2}}>· {lastAgentSearch.segmentRef}</div>}
+                {lastAgentSearch.segmentRef && <div className="myz-tele-search-ref">· {lastAgentSearch.segmentRef}</div>}
               </div>
             )}
           </div>
         </div>
       )}
 
-      <div style={{padding: '0 var(--s-4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--s-2)'}}>
-        <div style={{fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--muted)', letterSpacing: '0.06em'}}>ФАЙЛЫ</div>
+      <div className="myz-left-files-header">
+        <div className="myz-left-panel-title">ФАЙЛЫ</div>
       </div>
 
-      <div style={{flex: 1, paddingBottom: 'var(--s-4)', padding: '0 var(--s-2)'}}>
+      <div className="myz-left-files-list">
         {tabs.length === 0 ? (
-          <div style={{padding: '0 var(--s-2)', fontSize: 'var(--text-sm)', color: 'var(--muted)', fontStyle: 'italic'}}>Нет открытых файлов.</div>
+          <div className="myz-left-files-empty">Нет открытых файлов.</div>
         ) : (
           tabs.map(tab => (
             <div
@@ -8293,34 +8251,31 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
     const applied=status==='applied';
     const rejected=status==='rejected';
     const previewing=status==='previewing';
+    const cardState = applied?'applied':rejected?'rejected':previewing?'previewing':'pending';
     return(
-      <div key={idx} style={{marginTop:6,border:'1px solid '+(applied?'var(--green)':rejected?'var(--border)':previewing?'var(--accent)':'var(--border)'),borderRadius:7,overflow:'hidden',background:'var(--bg-panel)',opacity:rejected?.55:1,transition:'all .2s',boxShadow:previewing?'0 0 0 2px var(--accent-dim)':'none'}}>
-        <div style={{padding:'5px 9px',display:'flex',alignItems:'center',gap:6,background:applied?'rgba(31,158,90,.10)':rejected?'transparent':'var(--accent-dim)',borderBottom:'1px solid var(--border)'}}>
+      <div key={idx} className={`myz-cmd-card myz-cmd-card--${cardState}`}>
+        <div className="myz-cmd-card-head">
           <Ico k={applied?'check':previewing?'sparkles':meta.icon} sz={11} col={applied?'var(--green)':previewing?'var(--accent)':meta.color} grad={previewing} glow={previewing}/>
-          <span style={{fontSize:10.5,fontWeight:600,color:'var(--text)',flex:1}}>{meta.label}</span>
-          {applied && <span style={{fontSize:9.5,color:'var(--green)',fontWeight:700,letterSpacing:'.04em'}}>ПРИМЕНЕНО</span>}
-          {rejected && <span style={{fontSize:9.5,color:'var(--muted)',fontWeight:700,letterSpacing:'.04em'}}>ОТКЛОНЕНО</span>}
-          {previewing && <span style={{fontSize:9.5,color:'var(--accent)',fontWeight:700,letterSpacing:'.04em'}}>В РЕДАКТОРЕ →</span>}
+          <span className="myz-cmd-card-label">{meta.label}</span>
+          {applied && <span className="myz-cmd-card-status myz-cmd-card-status--applied">ПРИМЕНЕНО</span>}
+          {rejected && <span className="myz-cmd-card-status myz-cmd-card-status--rejected">ОТКЛОНЕНО</span>}
+          {previewing && <span className="myz-cmd-card-status myz-cmd-card-status--previewing">В РЕДАКТОРЕ →</span>}
         </div>
-        <div style={{padding:'6px 10px',fontSize:11.5,color:'var(--text)',lineHeight:1.45,background:'var(--bg-editor)',maxHeight:120,overflowY:'auto',whiteSpace:'pre-wrap'}}>
+        <div className="myz-cmd-card-body">
           {cmd.type==='replace_smart' && cmd.oldText
-            ? (<span><span style={{textDecoration:'line-through',color:'var(--muted)'}}>{cmd.oldText}</span>{'  →  '}<span style={{color:'var(--green)',fontWeight:600}}>{cmd.text}</span></span>)
+            ? (<span><span className="myz-cmd-old">{cmd.oldText}</span>{'  →  '}<span className="myz-cmd-new">{cmd.text}</span></span>)
             : cmd.type==='comment'
-            ? (<span><span style={{color:'var(--muted)'}}>На «{String(cmd.anchor||'').slice(0,50)}»:</span>{' '}<span style={{fontStyle:'italic'}}>{cmd.text}</span></span>)
+            ? (<span><span className="myz-cmd-anchor">На «{String(cmd.anchor||'').slice(0,50)}»:</span>{' '}<span className="myz-cmd-italic">{cmd.text}</span></span>)
             : cmd.type==='format'
-            ? (<span><span style={{color:'var(--muted)'}}>«{String(cmd.anchor||'').slice(0,50)}»</span>{' → '}<span style={{fontWeight:600}}>{Object.keys(cmd.marks||{}).join(', ')}</span></span>)
+            ? (<span><span className="myz-cmd-anchor">«{String(cmd.anchor||'').slice(0,50)}»</span>{' → '}<span className="myz-cmd-marks">{Object.keys(cmd.marks||{}).join(', ')}</span></span>)
             : cmd.text}
         </div>
         {!applied && !rejected && (
-          <div style={{display:'flex',gap:6,padding:'6px 9px',borderTop:'1px solid var(--border)',background:'var(--bg-panel)'}}>
-            <button
-              onClick={()=>handleApplyCmd(msgId,idx,cmd)}
-              style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'5px 8px',fontSize:11,fontWeight:600,color:'#fff',background:'var(--accent)',border:'none',borderRadius:5,cursor:'pointer'}}>
+          <div className="myz-cmd-card-foot">
+            <button onClick={()=>handleApplyCmd(msgId,idx,cmd)} className="myz-cmd-apply-btn">
               <Ico k="check" sz={11} col="#fff"/> {tr('apply')}
             </button>
-            <button
-              onClick={()=>handleRejectCmd(msgId,idx)}
-              style={{display:'flex',alignItems:'center',justifyContent:'center',gap:5,padding:'5px 10px',fontSize:11,fontWeight:600,color:'var(--muted)',background:'transparent',border:'1px solid var(--border)',borderRadius:5,cursor:'pointer'}}>
+            <button onClick={()=>handleRejectCmd(msgId,idx)} className="myz-cmd-reject-btn">
               {tr('reject')}
             </button>
           </div>
@@ -9161,9 +9116,9 @@ const App=()=>{
             }}
           />
           {({}).streamStartPos !== null && !({}).isStreaming && (
-            <div className="myz-badge-fade" style={{display:'flex', gap:4, whiteSpace:'nowrap'}}>
-              <span style={{fontSize: 11, color: 'var(--text)', background: 'var(--accent-dim)', padding: '3px 6px', borderRadius: 4, border: '1px solid var(--accent)'}}>Tab - Принять</span>
-              <span style={{fontSize: 11, color: 'var(--text)', background: 'var(--bg-editor)', padding: '3px 6px', borderRadius: 4, border: '1px solid var(--border)'}}>Esc - Отменить</span>
+            <div className="myz-badge-fade myz-badge-fade--row">
+              <span className="myz-autocomplete-badge myz-autocomplete-badge--accent">Tab - Принять</span>
+              <span className="myz-autocomplete-badge myz-autocomplete-badge--neutral">Esc - Отменить</span>
             </div>
           )}
         </div>
@@ -9171,9 +9126,8 @@ const App=()=>{
       <div className="myz-workspace-row">
         <ActBar active={actPanel} onSet={handleActPanel}/>
         {/* LEFT PANEL — desktop: inline-flex; mobile: fixed overlay */}
-        <div style={isMobile
-          ? {position:'fixed',top:0,left:48,bottom:0,width:'min(360px, calc(100vw - 60px))',background:'var(--bg-panel)',borderRight:'1px solid var(--border)',transform:leftOpen?'translateX(0)':'translateX(-110%)',transition:'transform .25s ease',zIndex:1100,boxShadow:leftOpen?'4px 0 24px rgba(0,0,0,.25)':'none',overflow:'hidden'}
-          : {width:leftOpen?leftW:0,flexShrink:0,overflow:'hidden',borderRight:leftOpen?'1px solid var(--border)':'none',background:'var(--bg-panel)',transition:'none'}}>
+        <div className={`myz-panel-left${isMobile?' myz-panel-left--mobile':''}${leftOpen?' myz-panel-left--open':''}`}
+          style={!isMobile ? {width:leftOpen?leftW:0} : undefined}>
           {leftOpen && <LeftPanel mode={sideMode} actPanel={actPanel} onClose={()=>{setLeftOpen(false);setActPanel(null)}} onCtx={(x,y,items)=>setCtxMenu({x,y,items})} onToast={addToast} onOpenFile={name=>handleAction('openFile',name)} fsHandle={fsHandle} fsFiles={fsFiles} onOpenFolder={openFolder} onPickFile={()=>handleAction('openFromDisk')} onAction={handleAction} tabs={tabs} activeTab={activeTab} onSwitchTab={switchTab} onCloseTab={closeTab} recentFiles={recentFiles}/>}
         </div>
         {leftOpen && !isMobile && <Handle onMD={startDrag('l')}/>}
@@ -9201,9 +9155,8 @@ const App=()=>{
         </div>
         {rightOpen && !isMobile && <Handle onMD={startDrag('r')}/>}
         {/* RIGHT PANEL — desktop: inline-flex; mobile: fixed overlay */}
-        <div style={isMobile
-          ? {position:'fixed',top:0,right:0,bottom:0,width:'min(420px, 100vw)',background:'var(--bg-app)',borderLeft:'1px solid var(--border)',transform:rightOpen?'translateX(0)':'translateX(110%)',transition:'transform .25s ease',zIndex:1100,boxShadow:rightOpen?'-4px 0 24px rgba(0,0,0,.25)':'none',overflow:'hidden'}
-          : {width:rightOpen?rightW:0,flexShrink:0,overflow:'hidden',background:'var(--bg-app)',borderLeft:rightOpen?'1px solid var(--border)':'none',transition:'none'}}>
+        <div className={`myz-panel-right${isMobile?' myz-panel-right--mobile':''}${rightOpen?' myz-panel-right--open':''}`}
+          style={!isMobile ? {width:rightOpen?rightW:0} : undefined}>
           {rightOpen && (
             <div id="rp" className="myz-right-panel-inner">
               {/* Шрифт правой панели масштабируется через CSS `zoom` — управляется ResizeObserver в App */}
@@ -9243,7 +9196,7 @@ const App=()=>{
 
               {/* Chat section */}
               {!chatCollapsed && (
-                <div style={{flex:'1 1 0', overflow:'hidden', minHeight:0}}>
+                <div className="myz-chat-pane">
                   <AIChat onToast={addToast} onCollapse={collapseChat} onOpenArticle={(art)=>{setNpa(art);setHilite(art);setRightOpen(true);setNpaCollapsed(false);setTimeout(()=>setHilite(null),2200);addToast('book','Ст. '+art);}}/>
                 </div>
               )}
@@ -9262,23 +9215,23 @@ const App=()=>{
         </div>
         {/* Mobile backdrop — close panels on tap outside */}
         {isMobile && (leftOpen||rightOpen) && (
-          <div onClick={()=>{setLeftOpen(false);setRightOpen(false);setActPanel(null)}} style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:1050,backdropFilter:'blur(2px)',animation:'fadeIn .2s ease'}}/>
+          <div onClick={()=>{setLeftOpen(false);setRightOpen(false);setActPanel(null)}} className="myz-mobile-backdrop"/>
         )}
       </div>
       {showPalette && <Palette onClose={()=>setShowPalette(false)} dark={dark} onAction={handleAction}/>}
       {showShortcuts && <ShortcutOverlay onClose={()=>setShowShortcuts(false)}/>}
       {showOriginal && (()=>{const tt=tabs.find(t=>t.id===activeTab);return tt&&tt.buffer?<DocxPreview buffer={tt.buffer} name={tt.name} onClose={()=>setShowOriginal(false)}/>:null})()}
       {showTweaks && (
-        <div style={{position:'fixed',bottom:40,right:16,width:220,background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:'10px',boxShadow:'var(--shadow-lg)',zIndex:500,overflow:'hidden',animation:'fadeInScale .2s ease'}}>
-          <div style={{padding:'8px 12px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style={{fontSize:11,fontWeight:600,color:'var(--muted)',letterSpacing:'.06em',textTransform:'uppercase'}}>Параметры</span>
-            <button onClick={()=>setShowTweaks(false)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--muted)'}}>
+        <div className="myz-tweaks-panel">
+          <div className="myz-tweaks-head">
+            <span className="myz-tweaks-title">Параметры</span>
+            <button onClick={()=>setShowTweaks(false)} className="myz-tweaks-close">
               <Ico k="x" sz={13}/>
             </button>
           </div>
-          <div style={{padding:'10px 12px'}}>
-            <div style={{fontSize:11,color:'var(--muted)',marginBottom:5}}>Акцент</div>
-            <div style={{display:'flex',gap:6,marginTop:4}}>
+          <div className="myz-tweaks-body">
+            <div className="myz-tweaks-label">Акцент</div>
+            <div className="myz-tweaks-swatches">
               {['#D97757','#5B8DEF','#2EA043','#A855F7','#E8505B'].map(c=>(
                 <button
                   key={c}
@@ -9299,6 +9252,7 @@ const App=()=>{
         </div>
       )}
       <ToastContainer toasts={toasts} onRemove={removeToast}/>
+
       {ctxMenu && <CtxMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={()=>setCtxMenu(null)}/>}
       {tourStep!==null && <TourStep step={TOUR_STEPS[tourStep]} total={TOUR_STEPS.length} onNext={nextTour} onClose={closeTour}/>}
     </div>
