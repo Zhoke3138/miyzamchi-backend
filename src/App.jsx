@@ -2942,7 +2942,7 @@ const GradBadge=({children,shimmer})=>(
 
 const AvatarRing=({children,size=32})=>(
   <div className="avatar-ring" style={{width:size+4,height:size+4}}>
-    <div style={{width:size,height:size,borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',fontSize:size*.42,fontWeight:700,color:'#fff',background:'linear-gradient(135deg,var(--accent),var(--accent2))'}}>
+    <div className="myz-avatar-inner" style={{width:size,height:size,fontSize:size*.42}}>
       {children}
     </div>
   </div>
@@ -2950,21 +2950,21 @@ const AvatarRing=({children,size=32})=>(
 
 /* ═══ Empty State Illustration ═══ */
 const EmptyIllust=()=>(
-  <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:16}}>
-    <div className="emoji emoji-float" style={{fontSize:56}}>
-      <span className="welcome-screen-logo-container" style={{display:'inline-flex',width:128,height:128,alignItems:'center',justifyContent:'center',borderRadius:28,background:'linear-gradient(135deg,var(--accent-dim),var(--accent-soft))',border:'1px solid var(--accent-edge)'}}>
+  <div className="myz-empty-illust">
+    <div className="emoji emoji-float">
+      <span className="welcome-screen-logo-container myz-welcome-logo">
         <LogoIcon sz={100} glow/>
       </span>
     </div>
-    <div style={{fontSize:20,fontWeight:600,color:'var(--text)',letterSpacing:'-.02em'}}>Мыйзамчы Legal IDE</div>
-    <div style={{fontSize:13.5,color:'var(--muted)',textAlign:'center',maxWidth:300,lineHeight:1.7}}>
+    <div className="myz-welcome-title">Мыйзамчы Legal IDE</div>
+    <div className="myz-welcome-subtitle">
       Создавайте документы, проверяйте на ошибки, находите ссылки на НПА — всё в одном месте
     </div>
     <div className="myz-drop-zone">
       <Ico k="explorer" sz={28} col="var(--accent)" />
       <div>
-        <div style={{fontSize:13,fontWeight:500,color:'var(--text)'}}>Перетащите файл сюда</div>
-        <div style={{fontSize:11.5,color:'var(--muted)'}}>или используйте Ctrl+N</div>
+        <div className="myz-drop-zone-title">Перетащите файл сюда</div>
+        <div className="myz-drop-zone-hint">или используйте Ctrl+N</div>
       </div>
     </div>
   </div>
@@ -2974,11 +2974,11 @@ const EmptyIllust=()=>(
 const ToastContainer=({toasts,onRemove})=>(
   <div role="status" aria-live="polite" aria-atomic="false" className="myz-toast-wrap">
     {toasts.map(t=>(
-      <div key={t.id} onClick={()=>onRemove(t.id)} className="myz-toast" style={{animation:t.leaving?'toastOut .25s ease forwards':'toastIn .3s ease'}}>
+      <div key={t.id} onClick={()=>onRemove(t.id)} className={`myz-toast${t.leaving?' myz-toast--out':''}`}>
         {t.icon && (typeof ICONS[t.icon]==='function'
           ? <Ico k={t.icon} sz={18} col="var(--accent)" />
-          : <span style={{fontSize:16,lineHeight:1}}>{t.icon}</span>)}
-        <span style={{flex:1,lineHeight:1.4}}>{t.text}</span>
+          : <span className="myz-toast-emoji">{t.icon}</span>)}
+        <span className="myz-toast-text">{t.text}</span>
       </div>
     ))}
   </div>
@@ -2989,15 +2989,15 @@ const CtxMenu=({x,y,items,onClose})=>{
   const ref=useRef(null);
   useEffect(()=>{const h=e=>{if(!ref.current||!ref.current.contains(e.target))onClose()};document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h)},[onClose]);
   return(
-    <div ref={ref} role="menu" aria-label="Контекстное меню" style={{position:'fixed',left:Math.min(x,window.innerWidth-220),top:Math.min(y,window.innerHeight-items.length*34-16),zIndex:'var(--z-modal)',background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:'var(--radius)',boxShadow:'var(--shadow-lg)',padding:'4px',minWidth:210,animation:'fadeInScale .12s ease'}}>
+    <div ref={ref} role="menu" aria-label="Контекстное меню" className="myz-ctx-menu" style={{left:Math.min(x,window.innerWidth-220),top:Math.min(y,window.innerHeight-items.length*34-16)}}>
       {items.map((it,i)=>{
-        if(it.sep) return <div key={i} role="separator" style={{height:1,background:'var(--border)',margin:'4px 8px'}}/>;
+        if(it.sep) return <div key={i} role="separator" className="myz-ctx-sep"/>;
         return(
           <button key={i} type="button" role="menuitem" disabled={it.disabled}
             onClick={()=>{it.action&&it.action();onClose()}}
-            className="myz-menu-item" style={{opacity:it.disabled?.4:1,cursor:it.disabled?'not-allowed':'pointer'}}>
-            <span style={{display:'flex',alignItems:'center',gap:8}}>{it.icon&&<Ico k={it.icon} sz={14} col="var(--muted)"/>}{it.label}</span>
-            {it.shortcut && <kbd style={{fontSize:10.5,color:'var(--muted)',fontFamily:'var(--font-mono)'}}>{it.shortcut}</kbd>}
+            className={`myz-menu-item${it.disabled?' myz-menu-item--disabled':''}`}>
+            <span className="myz-ctx-item-left">{it.icon&&<Ico k={it.icon} sz={14} col="var(--muted)"/>}{it.label}</span>
+            {it.shortcut && <kbd className="myz-ctx-shortcut">{it.shortcut}</kbd>}
           </button>
         );
       })}
@@ -3031,20 +3031,20 @@ const DocxPreview=({buffer,name,onClose})=>{
     }catch(e){setErr(e.message||String(e));setLoading(false)}
   },[buffer]);
   return(
-    <div onClick={onClose} role="presentation" style={{position:'fixed',inset:0,zIndex:'var(--z-modal-overlay)',background:'rgba(0,0,0,.55)',backdropFilter:'blur(4px)',display:'flex',alignItems:'center',justifyContent:'center',animation:'fadeIn .15s ease'}}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={'Оригинал DOCX: '+(name||'')} onClick={e=>e.stopPropagation()} style={{width:'min(900px, 92vw)',height:'90vh',background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',boxShadow:'var(--shadow-lg)',overflow:'hidden',display:'flex',flexDirection:'column',animation:'fadeInScale .18s ease'}}>
-        <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
-          <div style={{display:'flex',alignItems:'center',gap:10}}>
+    <div onClick={onClose} role="presentation" className="myz-docx-overlay">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={'Оригинал DOCX: '+(name||'')} onClick={e=>e.stopPropagation()} className="myz-docx-panel">
+        <div className="myz-docx-head">
+          <div className="myz-docx-head-left">
             <Ico k="file" sz={18} col="var(--accent)" grad/>
-            <span style={{fontSize:14,fontWeight:600,color:'var(--text)'}}>Оригинал документа</span>
-            <span style={{fontSize:12,color:'var(--muted)'}}>{name}</span>
+            <span className="myz-docx-head-title">Оригинал документа</span>
+            <span className="myz-docx-head-name">{name}</span>
           </div>
-          <button onClick={onClose} style={{background:'var(--hover)',border:'1px solid var(--border)',borderRadius:6,padding:'4px 10px',cursor:'pointer',color:'var(--muted)',fontSize:12}}>ESC</button>
+          <button onClick={onClose} className="myz-docx-close">ESC</button>
         </div>
-        <div style={{flex:1,overflowY:'auto',background:'#e8e8e8',padding:'20px'}}>
-          {loading && <div style={{textAlign:'center',color:'var(--muted)',padding:40,fontSize:13}}>Рендер оригинала…</div>}
-          {err && <div style={{padding:16,background:'var(--red)',color:'#fff',borderRadius:8,fontSize:12}}>Ошибка превью: {err}</div>}
-          <div ref={containerRef} style={{background:'var(--bg-panel)',color:'var(--text-main)'}}/>
+        <div className="myz-docx-body">
+          {loading && <div className="myz-docx-loading">Рендер оригинала…</div>}
+          {err && <div className="myz-docx-error">Ошибка превью: {err}</div>}
+          <div ref={containerRef} className="myz-docx-container"/>
         </div>
       </div>
     </div>
@@ -4068,12 +4068,10 @@ const NPALibraryTree = ({ onClose, onSelectArticle }) => {
         .npa-fav-sort:hover { color: var(--text); border-color: var(--accent-edge); }
         .npa-fav-sort:focus { border-color: var(--accent-edge, var(--accent)); }
       `}</style>
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-panel)' }}>
-        <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Реестр НПА
-          </span>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--muted)', display: 'flex' }}>
+      <div className="myz-npa-lib-root">
+        <div className="myz-npa-lib-head">
+          <span className="myz-npa-lib-title">Реестр НПА</span>
+          <button onClick={onClose} className="myz-left-panel-close">
             <Ico k="x" sz={14} />
           </button>
         </div>
@@ -4116,7 +4114,7 @@ const NPALibraryTree = ({ onClose, onSelectArticle }) => {
           </div>
         </form>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '6px 2px' }}>
+        <div className="myz-npa-lib-body">
           {searchResults !== null ? (
             <div>
               <div className="npa-results-header">
