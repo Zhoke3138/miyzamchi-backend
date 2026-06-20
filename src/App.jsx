@@ -1686,45 +1686,6 @@ const CreateDocMode = ({ onToast }) => {
                 </div>
               )}
 
-              {/* ── Кнопка «Глубокий анализ» ── */}
-              <button type="button" onClick={runDeepCheck} disabled={deepBusy || genBusy}
-                style={{ width: '100%', padding: 'var(--s-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: deepBusy ? 'var(--hover)' : 'var(--bg-app)', color: deepBusy ? 'var(--muted)' : 'var(--text-main)', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: (deepBusy || genBusy) ? 'default' : 'pointer', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 'var(--s-1h)' }}>
-                {deepBusy
-                  ? <><span className="gen-dots"><span/><span/><span/></span><span>Анализирую…</span></>
-                  : '🔬 Глубокий анализ документа'}
-              </button>
-
-              {/* ── Карточка результатов глубокой проверки ── */}
-              {deepReview && (
-                <div style={{ padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
-                  {/* Заголовок с оценкой */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--s-1h)' }}>
-                    <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: 'var(--text-main)' }}>🔬 Глубокий анализ</span>
-                    <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700, padding: '2px 8px', borderRadius: 'var(--radius-pill)',
-                      background: deepReview.score >= 85 ? 'rgba(16,163,127,.15)' : deepReview.score >= 60 ? 'rgba(217,119,6,.15)' : 'rgba(239,68,68,.15)',
-                      color: deepReview.score >= 85 ? 'var(--green,#10a37f)' : deepReview.score >= 60 ? 'var(--orange,#d97706)' : '#ef4444' }}>
-                      {deepReview.score}/100
-                    </span>
-                  </div>
-                  {/* Итог */}
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: deepReview.findings && deepReview.findings.length ? 'var(--s-1h)' : 0, lineHeight: 1.45 }}>
-                    {deepReview.summary}
-                  </div>
-                  {/* Список замечаний */}
-                  {(deepReview.findings || []).map((f, i) => (
-                    <div key={i} style={{ borderTop: '1px solid var(--border-color)', paddingTop: 'var(--s-1)', marginTop: 'var(--s-1)', display: 'flex', gap: 'var(--s-1)', fontSize: 'var(--text-xs)', lineHeight: 1.45 }}>
-                      <span style={{ flexShrink: 0 }}>{f.severity === 'high' ? '🔴' : f.severity === 'medium' ? '🟡' : '🔵'}</span>
-                      <div>
-                        <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{f.claim}</div>
-                        {f.location && <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>📍 {f.location}</div>}
-                        {f.article_hint && <div style={{ color: 'var(--accent,#2563eb)', marginTop: 2 }}>⚖️ {f.article_hint}</div>}
-                        {f.reason && <div style={{ color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic' }}>{f.reason}</div>}
-                        {f.category && <span style={{ display: 'inline-block', marginTop: 3, fontSize: 10, padding: '1px 6px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--border-color)', color: 'var(--muted)' }}>{f.category}</span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
 
               {/* Кнопка «Доработать документ» / «Исправить замечания» — всегда снизу */}
               {(() => {
@@ -1745,10 +1706,8 @@ const CreateDocMode = ({ onToast }) => {
       )}
       {/* Пример для старта — заполняет поле ввода (только в начале диалога). */}
       {messages.length <= 1 && !input.trim() && !ready && DOC_EXAMPLES[docType] && (
-        <button type="button" onClick={() => setInput(DOC_EXAMPLES[docType])}
-          style={{ alignSelf: 'flex-start', marginBottom: 'var(--s-1h)', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', background: 'var(--bg-app)', border: '1px dashed var(--border-color)', borderRadius: 'var(--radius-pill)', padding: 'var(--s-1) var(--s-2)', cursor: 'pointer', fontFamily: 'var(--font-sans)', textAlign: 'left', maxWidth: '100%' }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-color)'; }}>
+        <button type="button" className="myz-suggest-chip" onClick={() => setInput(DOC_EXAMPLES[docType])}
+          style={{ alignSelf: 'flex-start', marginBottom: 'var(--s-1h)', textAlign: 'left', maxWidth: '100%', whiteSpace: 'normal', borderStyle: 'dashed' }}>
           💡 Пример: {DOC_EXAMPLES[docType].length > 64 ? DOC_EXAMPLES[docType].slice(0, 64) + '…' : DOC_EXAMPLES[docType]}
         </button>
       )}
@@ -1804,8 +1763,7 @@ const DeadlineCalculator = () => {
       </div>
       <div style={{ display: 'flex', gap: 'var(--s-1h)', flexWrap: 'wrap' }}>
         {SROK_PRESETS.map(([label, a, u]) => (
-          <button key={label} type="button" onClick={() => { setAmount(a); setUnit(u); }}
-            style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-pill)', padding: 'var(--s-1) var(--s-2)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
+          <button key={label} type="button" className={`myz-preset-chip${amount === a && unit === u ? ' myz-preset-chip--active' : ''}`} onClick={() => { setAmount(a); setUnit(u); }}>
             {label}
           </button>
         ))}
@@ -1825,11 +1783,11 @@ const DeadlineCalculator = () => {
           <option value="years">лет</option>
         </select>
       </div>
-      <div style={{ padding: 'var(--s-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
-        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>Крайний срок</div>
-        <div style={{ fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--text-main)', fontFamily: 'var(--font-display)' }}>{_fmtDate(end)}</div>
+      <div className="myz-calc-result">
+        <div className="myz-calc-result-label">Крайний срок</div>
+        <div className="myz-calc-result-value">{_fmtDate(end)}</div>
         {daysLeft != null && (
-          <div style={{ fontSize: 'var(--text-sm)', color: tone, marginTop: 4, fontWeight: 600 }}>
+          <div style={{ fontSize: 'var(--text-sm)', color: tone, marginTop: 4, fontWeight: 600, fontFamily: 'var(--font-sans)' }}>
             {daysLeft < 0 ? `Срок истёк ${Math.abs(daysLeft)} дн. назад` : daysLeft === 0 ? 'Срок истекает сегодня' : `Осталось ${daysLeft} дн.`}
           </div>
         )}
@@ -1861,8 +1819,7 @@ const GosposhlinaCalculator = () => {
       </div>
       <div style={{ display: 'flex', gap: 'var(--s-1h)', flexWrap: 'wrap' }}>
         {GOSP_PRESETS.filter(p => p[1] != null).map(([label, r]) => (
-          <button key={label} type="button" onClick={() => setRate(r)}
-            style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-pill)', padding: 'var(--s-1) var(--s-2)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
+          <button key={label} type="button" className={`myz-preset-chip${rate === r ? ' myz-preset-chip--active' : ''}`} onClick={() => setRate(r)}>
             {label}
           </button>
         ))}
@@ -1875,9 +1832,9 @@ const GosposhlinaCalculator = () => {
         Ставка, %
         <input type="number" min="0" step="0.1" value={rate} onChange={e => setRate(e.target.value)} style={inputStyle} />
       </label>
-      <div style={{ padding: 'var(--s-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
-        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>Госпошлина</div>
-        <div style={{ fontSize: 'var(--text-xl)', fontWeight: 700, color: 'var(--text-main)', fontFamily: 'var(--font-display)' }}>{_fmtSom(fee)} сом</div>
+      <div className="myz-calc-result">
+        <div className="myz-calc-result-label">Госпошлина</div>
+        <div className="myz-calc-result-value">{_fmtSom(fee)} сом</div>
       </div>
       <p style={{ fontSize: 'var(--text-2xs)', color: 'var(--muted)', lineHeight: 1.4 }}>
         ⚠️ Ориентировочно. Ставки утверждены ПП КР №159 (15.04.2019) и зависят от характера требования и расчётного показателя (возможна прогрессивная шкала и льготы). Точный расчёт — на официальном калькуляторе sot.kg.
@@ -1923,12 +1880,9 @@ const ClauseLibrary = ({ onToast }) => {
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-1h)' }}>
         {CLAUSES.map(([title, body]) => (
-          <button key={title} type="button" onClick={() => insertClause(title, body)}
-            style={{ textAlign: 'left', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-color)'; }}>
-            <span style={{ display: 'block', fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-main)' }}>{title}</span>
-            <span style={{ display: 'block', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{body.slice(0, 70)}…</span>
+          <button key={title} type="button" className="myz-clause-btn" onClick={() => insertClause(title, body)}>
+            <span className="myz-clause-btn-title">{title}</span>
+            <span className="myz-clause-btn-preview">{body.slice(0, 70)}…</span>
           </button>
         ))}
       </div>
@@ -1951,7 +1905,7 @@ const DocumentsMode = ({ onToast }) => {
   const [tab, setTab] = useState('analyze');
   const tabBtn = (k, label) => (
     <button key={k} type="button" onClick={() => setTab(k)}
-      style={{ flex: 1, padding: 'var(--s-1h) var(--s-2)', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 'var(--text-sm)', fontWeight: 600, fontFamily: 'var(--font-sans)', background: tab === k ? 'var(--primary)' : 'transparent', color: tab === k ? '#fff' : 'var(--text-muted)', transition: 'background .15s, color .15s' }}>
+      className={`myz-docs-tab ${tab === k ? 'myz-docs-tab--active' : 'myz-docs-tab--inactive'}`}>
       {label}
     </button>
   );
@@ -3051,7 +3005,9 @@ const CtxMenu=({x,y,items,onClose})=>{
       {items.map((it,i)=>{
         if(it.sep) return <div key={i} role="separator" style={{height:1,background:'var(--border)',margin:'4px 8px'}}/>;
         return(
-          <button key={i} type="button" role="menuitem" disabled={it.disabled} onClick={()=>{it.action&&it.action();onClose()}} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:16,padding:'7px 10px',borderRadius:'var(--radius-sm)',border:'none',background:'transparent',width:'100%',textAlign:'left',cursor:it.disabled?'not-allowed':'pointer',fontSize:12.5,fontFamily:'inherit',color:it.disabled?'var(--muted)':'var(--text)',opacity:it.disabled?.4:1}} onMouseEnter={e=>{if(!it.disabled)e.currentTarget.style.background='var(--hover)'}} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+          <button key={i} type="button" role="menuitem" disabled={it.disabled}
+            onClick={()=>{it.action&&it.action();onClose()}}
+            className="myz-menu-item" style={{opacity:it.disabled?.4:1,cursor:it.disabled?'not-allowed':'pointer'}}>
             <span style={{display:'flex',alignItems:'center',gap:8}}>{it.icon&&<Ico k={it.icon} sz={14} col="var(--muted)"/>}{it.label}</span>
             {it.shortcut && <kbd style={{fontSize:10.5,color:'var(--muted)',fontFamily:'var(--font-mono)'}}>{it.shortcut}</kbd>}
           </button>
@@ -3410,16 +3366,16 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
           <Ico k="cmd" sz={12}/><span>Ctrl+P</span>
         </button>}
         <div style={{position:'relative'}}>
-          <button onClick={onToggleNotif} className="btn" title="Уведомления" style={{width:30,height:30,borderRadius:'7px',border:'1px solid var(--border)',background:'transparent',cursor:'pointer',color:'var(--muted)',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--text)'}} onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>
+          <button onClick={onToggleNotif} className="btn myz-menubar-icon-btn" title="Уведомления">
             <Ico k="bell" sz={14}/>
           </button>
           <div className="nbadge" style={{position:'absolute',top:-3,right:-3,minWidth:16,height:16,borderRadius:'8px',background:'var(--red)',color:'#fff',fontSize:9,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid var(--bg-bar)',padding:'0 3px',boxShadow:'0 0 8px var(--red-soft)'}}>2</div>
           {showNotif && <Notifications onClose={onToggleNotif}/>}
         </div>
-        <button onClick={onToggleRight} className="btn" title="Панель НПА и AI (Ctrl+J)" style={{width:30,height:30,borderRadius:'7px',border:'1px solid var(--border)',background:rightOpen?'var(--accent-dim)':'transparent',cursor:'pointer',color:rightOpen?'var(--accent)':'var(--muted)',display:'flex',alignItems:'center',justifyContent:'center',transition:'all .15s'}} onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--text)'}} onMouseLeave={e=>{e.currentTarget.style.background=rightOpen?'var(--accent-dim)':'transparent';e.currentTarget.style.color=rightOpen?'var(--accent)':'var(--muted)'}}>
+        <button onClick={onToggleRight} className={`btn myz-menubar-icon-btn${rightOpen?' myz-menubar-icon-btn--active':''}`} title="Панель НПА и AI (Ctrl+J)">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="15" y1="3" x2="15" y2="21"/>{rightOpen && <line x1="18" y1="9" x2="18" y2="9.01"/>}</svg>
         </button>
-        <button onClick={onToggle} className="btn" style={{width:30,height:30,borderRadius:'7px',border:'1px solid var(--border)',background:'transparent',cursor:'pointer',color:'var(--muted)',display:'flex',alignItems:'center',justifyContent:'center'}} onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--text)'}} onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>
+        <button onClick={onToggle} className="btn myz-menubar-icon-btn" title={dark?'Светлая тема':'Тёмная тема'}>
           <Ico k={dark?'sun':'moon'} sz={14}/>
         </button>
         {!isMobile && <div style={{width:1,height:16,background:'var(--border)',margin:'0 2px'}}/>}
@@ -3447,17 +3403,18 @@ const ActBar=({active,onSet})=>{
       {items.map(it=>{
         const on=active===it.id;
         return(
-          <button key={it.id} type="button" title={it.label} aria-label={it.label} aria-pressed={on?'true':'false'} onClick={()=>onSet(on?null:it.id)} className="btn" style={{width:34,height:34,borderRadius:7,border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',position:'relative',background:on?'var(--accent-soft)':'transparent',color:on?'var(--primary)':'var(--muted)',transition:'all .2s',padding:0}} onMouseEnter={e=>{if(!on){e.currentTarget.style.background='var(--hover)'; e.currentTarget.style.color='var(--primary-hover)'}}} onMouseLeave={e=>{if(!on){e.currentTarget.style.background='transparent'; e.currentTarget.style.color='var(--muted)'}}}>
+          <button key={it.id} type="button" title={it.label} aria-label={it.label} aria-pressed={on?'true':'false'} onClick={()=>onSet(on?null:it.id)}
+            className={`btn myz-actbar-item ${on?'myz-actbar-item--on':'myz-actbar-item--off'}`}>
             {on && <span style={{position:'absolute',left:0,top:'50%',transform:'translateY(-50%)',width:3,height:20,background:'var(--primary)',borderRadius:'0 3px 3px 0'}}/>}
             <Ico k={it.k} sz={17} />
           </button>
         );
       })}
       <div style={{flex:1}}/>
-      <button type="button" title="Пользователи" aria-label="Пользователи" className="btn" style={{width:34,height:34,borderRadius:7,border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--muted)',background:'transparent',transition:'all .15s',padding:0}} onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--primary)'}} onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>
+      <button type="button" title="Пользователи" aria-label="Пользователи" className="btn myz-actbar-item myz-actbar-item--off">
         <Ico k="users" sz={17}/>
       </button>
-      <button type="button" title="Настройки" aria-label="Настройки" className="btn" style={{width:34,height:34,borderRadius:7,border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:'var(--muted)',background:'transparent',transition:'all .15s',padding:0}} onMouseEnter={e=>{e.currentTarget.style.background='var(--hover)';e.currentTarget.style.color='var(--primary)'}} onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='var(--muted)'}}>
+      <button type="button" title="Настройки" aria-label="Настройки" className="btn myz-actbar-item myz-actbar-item--off">
         <Ico k="settings" sz={17}/>
       </button>
     </nav>
@@ -6328,9 +6285,10 @@ const ProtocolReport = ({ tableRows, purityIndex }) => {
             const expanded = !!expandedIds[i];
             const hasDetails = !!row.legal_rationale;
             const icon = row.status === 'ok' ? '✅' : row.status === 'warning' ? '⚠️' : '❌';
+            const statusCls = row.status === 'ok' ? 'analyze-row--ok' : row.status === 'warning' ? 'analyze-row--warn' : 'analyze-row--err';
             return (
               <React.Fragment key={i}>
-                <tr className={`analyze-row ${expanded ? 'expanded' : ''}`} onClick={() => hasDetails && toggleRow(i)}>
+                <tr className={`analyze-row ${statusCls} ${expanded ? 'expanded' : ''}`} onClick={() => hasDetails && toggleRow(i)}>
                   <td className="analyze-cell analyze-cell-icon">{icon}</td>
                   <td className="analyze-cell analyze-cell-num">{row.item_number}</td>
                   <td className="analyze-cell analyze-cell-verdict">{row.short_verdict}</td>
@@ -8523,10 +8481,9 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           </div>
         </div>
         <div style={{display:'flex',alignItems:'center',gap:'var(--s-1h)'}}>
-          <button className="btn" onClick={()=>{updateChatMessages(()=>[]);onToast&&onToast('trash','Очищено')}} title="Очистить чат" style={{fontSize:'var(--text-sm)',color:'var(--text-muted)',background:'transparent',border:'1px solid var(--border-color)',borderRadius:'var(--radius-sm)',padding:'var(--s-1) var(--s-3)',cursor:'pointer',fontWeight:500,fontFamily:'var(--font-sans)',transition:'color .2s, border-color .2s'}} onMouseEnter={e=>{e.currentTarget.style.color='var(--text-main)';e.currentTarget.style.borderColor='var(--text-main)'}} onMouseLeave={e=>{e.currentTarget.style.color='var(--text-muted)';e.currentTarget.style.borderColor='var(--border-color)'}}>Очистить</button>
+          <button className="btn myz-chat-header-clear" onClick={()=>{updateChatMessages(()=>[]);onToast&&onToast('trash','Очищено')}} title="Очистить чат">Очистить</button>
           {onCollapse && (
-            <button type="button" onClick={onCollapse} title="Свернуть чат" aria-label="Свернуть ИИ-чат" className="btn"
-              style={{background:'transparent',border:'none',borderRadius:'var(--radius-sm)',width:26,height:26,padding:0,cursor:'pointer',color:'var(--text-muted)',display:'flex',alignItems:'center',justifyContent:'center',transition:'color .2s, background .2s'}} onMouseEnter={e=>{e.currentTarget.style.color='var(--text-main)';e.currentTarget.style.background='var(--hover)'}} onMouseLeave={e=>{e.currentTarget.style.color='var(--text-muted)';e.currentTarget.style.background='transparent'}}>
+            <button type="button" onClick={onCollapse} title="Свернуть чат" aria-label="Свернуть ИИ-чат" className="myz-chat-header-close">
               <Ico k="x" sz={14} col="currentColor"/>
             </button>
           )}
@@ -8556,11 +8513,11 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                 {k:'scale',  t:'Подсудность и госпошлина', d:'Сроки давности, суд, расчёт пошлины.'},
                 {k:'sparkles', t:'Объяснить норму',        d:'Разбор статьи простыми словами.'}
               ]).map(c=>(
-                 <div key={c.t} className="myz-welcome-card" onClick={()=>setInp(c.t)} style={{background:'var(--bg-panel)',border:'1px solid var(--border-color)',borderRadius:'var(--radius)',padding:'var(--s-3)',cursor:'pointer',display:'flex',flexDirection:'column',gap:'var(--s-1h)',transition:'border-color .2s, background .2s, box-shadow .2s, transform .15s'}} onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--primary)';e.currentTarget.style.background='var(--accent-soft)'}} onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border-color)';e.currentTarget.style.background='var(--bg-panel)'}}>
+                 <div key={c.t} className="myz-welcome-card" onClick={()=>setInp(c.t)}>
                    <Ico k={c.k} sz={18} col="var(--primary)" />
                    <div style={{display:'flex',flexDirection:'column',gap:'var(--s-half)'}}>
-                     <span style={{fontFamily:'var(--font-sans)',fontWeight:600,fontSize:'var(--text-sm)',color:'var(--text-main)'}}>{c.t}</span>
-                     <span style={{fontFamily:'var(--font-sans)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--lh-snug)'}}>{c.d}</span>
+                     <span className="myz-welcome-card-title">{c.t}</span>
+                     <span className="myz-welcome-card-desc">{c.d}</span>
                    </div>
                  </div>
                ))}
@@ -8590,13 +8547,13 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           </div>
         ))}
         {chatMode !== 'documents' && agentSteps.length > 0 && (
-          <div style={{marginBottom:'var(--s-2h)', padding:'var(--s-2h) var(--s-3h)', background:'var(--bg-editor)', border:'1px solid var(--border-color)', borderRadius:'var(--radius-sm)', fontFamily:'var(--font-mono)', fontSize:'var(--text-xs)', color:'var(--text)', lineHeight:'var(--lh-normal)'}}>
+          <div className="myz-thinking-box">
             <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'var(--s-2)'}}>
               <div style={{fontWeight:600, color:'var(--text)', display:'flex', alignItems:'center', gap:'var(--s-1h)'}}>
                 <Ico k="loader" sz={14} col="var(--accent)" style={{animation:'spin 1s linear infinite'}} />
                 <span>Анализ документа…</span>
               </div>
-              <button onClick={stop} className="btn" style={{fontSize:'var(--text-2xs)',color:'var(--text-muted)',background:'transparent',border:'1px solid var(--border-color)',borderRadius:'var(--radius-sm)',padding:'var(--s-half) var(--s-1h)',cursor:'pointer',fontFamily:'var(--font-sans)'}}>Стоп</button>
+              <button onClick={stop} className="btn myz-chat-header-clear" style={{fontSize:'var(--text-2xs)',padding:'var(--s-half) var(--s-1h)'}}>Стоп</button>
             </div>
             <div style={{display:'flex', flexDirection:'column', gap:'var(--s-half)'}}>
               {agentSteps.map((s, i) => {

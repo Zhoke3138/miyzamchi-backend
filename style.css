@@ -3065,3 +3065,85 @@ body.light-mode .source-item-body {
 .sidebar-header {
   letter-spacing: -.015em;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   USER BUBBLE — branded gradient (matches workspace AIChat bubble)
+   ════════════════════════════════════════════════════════════════════ */
+.user-message .message-content {
+  background: linear-gradient(135deg, var(--mode-accent) 0%, color-mix(in srgb, var(--mode-accent) 80%, #000 20%) 100%);
+  border-color: rgba(255,255,255,.15);
+  color: #fff;
+  font-weight: 500;
+  letter-spacing: -.010em;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--mode-accent) 30%, transparent), 0 1px 3px rgba(0,0,0,.12);
+}
+
+/* Keep text selection visible on gradient */
+.user-message .message-content ::selection {
+  background: rgba(255,255,255,.30);
+  color: #fff;
+}
+
+/* Light mode: ensure gradient-text stays readable */
+body.light-mode .user-message .message-content {
+  background: linear-gradient(135deg, #5C66DE 0%, #4951C9 100%);
+  border-color: rgba(255,255,255,.22);
+  color: #fff;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   WELCOME CARDS — improved hover with accent glow
+   ════════════════════════════════════════════════════════════════════ */
+.welcome-card:hover {
+  border-color: var(--mode-accent) !important;
+  box-shadow: 0 0 0 1px var(--mode-accent), 0 4px 14px color-mix(in srgb, var(--mode-accent) 22%, transparent);
+  transform: translateY(-1px);
+  transition: all var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   NEW CHAT BUTTON — accent glow on hover
+   ════════════════════════════════════════════════════════════════════ */
+.new-chat-btn:hover {
+  background: var(--surface-3);
+  box-shadow: 0 2px 10px rgba(0,0,0,.1);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   HISTORY ITEMS — sharper active state
+   ════════════════════════════════════════════════════════════════════ */
+.history-item.active {
+  border-left: 2px solid var(--mode-accent) !important;
+  padding-left: calc(16px - 1px);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   BOT AVATAR — ring on streaming
+   ════════════════════════════════════════════════════════════════════ */
+.bot-message.bot-message--streaming::before {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mode-accent) 22%, transparent);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   CODE BLOCKS — themed background
+   ════════════════════════════════════════════════════════════════════ */
+.message-content pre {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.62;
+  overflow-x: auto;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   THINKING TIMELINE — slightly improved dot
+   ════════════════════════════════════════════════════════════════════ */
+.thinking-timeline-dot {
+  background: var(--mode-accent) !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   INPUT BOX — refined shadow on focus
+   ════════════════════════════════════════════════════════════════════ */
+.input-box:focus-within {
+  box-shadow: 0 0 0 3px var(--mode-accent-soft), 0 4px 20px rgba(0,0,0,.05) !important;
+}

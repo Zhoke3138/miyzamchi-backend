@@ -4674,12 +4674,42 @@ body.dk .analyze-accordion-content {
 
 /* ── Chat section tabs (the mini pill switcher ──────────────────── */
 
-/* ── Welcome grid cards — hover elevation ───────────────────────── */
-/* The cards already handle border + bg via JS onMouseEnter.
-   CSS adds box-shadow glow and subtle lift that JS can't do cleanly. */
+/* ── Welcome grid cards — full CSS class (replaces inline + JS hover) ── */
+.myz-welcome-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: var(--s-3);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1h);
+  transition: border-color .2s var(--ease), background .2s var(--ease),
+    box-shadow .2s var(--ease), transform .15s var(--ease-spring);
+  user-select: none;
+}
 .myz-welcome-card:hover {
+  border-color: var(--primary);
+  background: var(--accent-soft);
   box-shadow: 0 4px 18px var(--accent-glow), 0 1px 4px rgba(0,0,0,.05);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+}
+.myz-welcome-card:active {
+  transform: translateY(0) scale(.98);
+  transition-duration: .08s;
+}
+.myz-welcome-card-title {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text-main);
+  letter-spacing: -.008em;
+}
+.myz-welcome-card-desc {
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: var(--lh-snug);
 }
 
 /* ── Input wrapper — enhanced focus ring ────────────────────────── */
@@ -4906,3 +4936,286 @@ body.dk .analyze-accordion-content {
   box-shadow: 0 1px 8px var(--accent-glow);
   background: var(--accent-dim);
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   CHAT HEADER BUTTONS — clear + collapse (replaces JS onMouseEnter)
+   ════════════════════════════════════════════════════════════════════ */
+.myz-chat-header-clear {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: var(--s-1) var(--s-3);
+  cursor: pointer;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  transition: color .18s, border-color .18s, background .18s;
+}
+.myz-chat-header-clear:hover {
+  color: var(--text-main);
+  border-color: var(--text-main);
+  background: var(--hover);
+}
+
+.myz-chat-header-close {
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color .18s, background .18s;
+}
+.myz-chat-header-close:hover {
+  color: var(--text-main);
+  background: var(--hover);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   THINKING BOX — agent steps streaming log
+   ════════════════════════════════════════════════════════════════════ */
+.myz-thinking-box {
+  margin-bottom: var(--s-2h);
+  padding: var(--s-2h) var(--s-3h);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text);
+  line-height: var(--lh-normal);
+  position: relative;
+  overflow: hidden;
+}
+.myz-thinking-box::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--grad-accent);
+  opacity: .7;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   ANALYZE TABLE — status-specific row tints
+   ════════════════════════════════════════════════════════════════════ */
+.analyze-row--ok:hover  { background: rgba(16,185,129,.05) !important; }
+.analyze-row--warn:hover { background: rgba(245,158,11,.05) !important; }
+.analyze-row--err:hover  { background: rgba(239,68,68,.05) !important; }
+
+.analyze-row--ok.expanded  { background: rgba(16,185,129,.06) !important; }
+.analyze-row--warn.expanded { background: rgba(245,158,11,.06) !important; }
+.analyze-row--err.expanded  { background: rgba(239,68,68,.06) !important; }
+
+/* ════════════════════════════════════════════════════════════════════
+   CLAUSE LIBRARY BUTTONS — replace JS hover
+   ════════════════════════════════════════════════════════════════════ */
+.myz-clause-btn {
+  text-align: left;
+  padding: var(--s-2h);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-app);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: border-color .15s, background .15s, box-shadow .15s;
+  width: 100%;
+}
+.myz-clause-btn:hover {
+  border-color: var(--primary);
+  background: var(--accent-soft);
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+.myz-clause-btn-title {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-main);
+  letter-spacing: -.006em;
+}
+.myz-clause-btn-preview {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   DOCUMENTS MODE — tab switcher (Анализ | Создать | Инструменты)
+   ════════════════════════════════════════════════════════════════════ */
+.myz-docs-tab {
+  flex: 1;
+  padding: var(--s-1h) var(--s-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-family: var(--font-sans);
+  transition: background .15s, color .15s, box-shadow .15s;
+}
+.myz-docs-tab--active {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 2px 8px var(--accent-glow);
+}
+.myz-docs-tab--inactive {
+  background: transparent;
+  color: var(--text-muted);
+}
+.myz-docs-tab--inactive:hover {
+  background: var(--hover);
+  color: var(--text-main);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   TOOLS CALCULATOR — result box and preset chips
+   ════════════════════════════════════════════════════════════════════ */
+.myz-calc-result {
+  padding: var(--s-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: linear-gradient(135deg, var(--bg-app) 0%, var(--accent-soft) 100%);
+  position: relative;
+  overflow: hidden;
+}
+.myz-calc-result::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--grad-accent);
+}
+.myz-calc-result-label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+}
+.myz-calc-result-value {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--text-main);
+  font-family: var(--font-display);
+  letter-spacing: -.02em;
+  margin-top: var(--s-half);
+}
+
+.myz-preset-chip {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  padding: var(--s-1) var(--s-2);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: color .15s, border-color .15s, background .15s;
+  white-space: nowrap;
+}
+.myz-preset-chip:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--accent-soft);
+}
+.myz-preset-chip--active {
+  color: #fff;
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.myz-preset-chip--active:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  color: #fff;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   MENUBAR ICON BUTTONS — 30px square icon-only buttons
+   ════════════════════════════════════════════════════════════════════ */
+.myz-menubar-icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s, color .15s;
+  padding: 0;
+  flex-shrink: 0;
+}
+.myz-menubar-icon-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.myz-menubar-icon-btn--active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.myz-menubar-icon-btn--active:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   ACTIVITY BAR ITEMS — 34px icon buttons with active state
+   ════════════════════════════════════════════════════════════════════ */
+.myz-actbar-item {
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: background .18s, color .18s;
+  padding: 0;
+}
+.myz-actbar-item--off {
+  background: transparent;
+  color: var(--muted);
+}
+.myz-actbar-item--off:hover {
+  background: var(--hover);
+  color: var(--primary-hover);
+}
+.myz-actbar-item--on {
+  background: var(--accent-soft);
+  color: var(--primary);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   MENU ITEMS in dropdown — consistent hover
+   ════════════════════════════════════════════════════════════════════ */
+.myz-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--text);
+  transition: background .12s;
+}
+.myz-menu-item:hover { background: var(--hover); }
+.myz-menu-item:disabled { color: var(--muted); opacity: .4; cursor: not-allowed; }
