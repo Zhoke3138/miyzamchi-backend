@@ -835,6 +835,56 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
   background:var(--bg-bar);
 }
 
+/* Article modal header internals */
+.myz-art-modal-main {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+  flex: 1;
+}
+.myz-art-modal-meta {
+  min-width: 0;
+  flex: 1;
+}
+.myz-art-modal-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--text-xl);
+  color: var(--text);
+  letter-spacing: -.018em;
+  line-height: var(--lh-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.myz-art-modal-npa {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin-top: var(--s-half);
+  font-family: var(--font-mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.myz-art-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-shrink: 0;
+}
+.myz-kbd-esc {
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  color: var(--muted);
+  padding: var(--s-half) var(--s-1h);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  letter-spacing: .04em;
+}
+
 /* ════════════════════════════════════════════════════════════════════
    INLINE CITATIONS — clickable [1] [2] в AI-ответе. Скролл + подсветка
    соответствующего источника в SourceList. Журналистский паттерн.
@@ -5601,6 +5651,104 @@ body.dk .analyze-accordion-content {
   background: var(--primary-hover);
   border-color: var(--primary-hover);
   color: #fff;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   TOOLS / CALCULATORS — shared CSS classes for legal tools
+   ════════════════════════════════════════════════════════════════════ */
+.myz-legal-tools {
+  padding: var(--s-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.myz-tool-divider {
+  height: 1px;
+  background: var(--border-color);
+  flex-shrink: 0;
+}
+.myz-tool-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2h);
+}
+.myz-tool-heading {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  color: var(--text-main);
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -.02em;
+}
+.myz-tool-desc {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: var(--s-1);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+}
+.myz-tool-label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-sans);
+}
+.myz-tool-input {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--text-main);
+  font-size: var(--text-sm);
+  padding: var(--s-1h) var(--s-2);
+  font-family: var(--font-sans);
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color .18s;
+}
+.myz-tool-input:focus {
+  border-color: var(--primary);
+}
+.myz-tool-row {
+  display: flex;
+  gap: var(--s-1h);
+  align-items: flex-end;
+}
+.myz-tool-note {
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  line-height: 1.4;
+  font-family: var(--font-sans);
+}
+.myz-calc-days {
+  font-size: var(--text-sm);
+  margin-top: 4px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+}
+.myz-preset-chips-row {
+  display: flex;
+  gap: var(--s-1h);
+  flex-wrap: wrap;
+}
+.myz-clause-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1h);
+}
+
+/* Documents root layout */
+.myz-documents-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.myz-documents-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 /* ════════════════════════════════════════════════════════════════════

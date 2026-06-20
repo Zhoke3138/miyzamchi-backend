@@ -1746,30 +1746,29 @@ const DeadlineCalculator = () => {
     return Math.round((end.getTime() - today.getTime()) / 86400000);
   }, [end]);
   const tone = daysLeft == null ? 'var(--text-muted)' : daysLeft < 0 ? 'var(--red, #dc2626)' : daysLeft <= 30 ? 'var(--orange, #d97706)' : 'var(--green, #10a37f)';
-  const inputStyle = { border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: 'var(--text-sm)', padding: 'var(--s-1h) var(--s-2)', fontFamily: 'var(--font-sans)', outline: 'none' };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2h)' }}>
+    <div className="myz-tool-section">
       <div>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', color: 'var(--text-main)', margin: 0 }}>Калькулятор сроков</h3>
-        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 'var(--s-1)' }}>Дата события + период → крайний срок и сколько дней осталось.</p>
+        <h3 className="myz-tool-heading">Калькулятор сроков</h3>
+        <p className="myz-tool-desc">Дата события + период → крайний срок и сколько дней осталось.</p>
       </div>
-      <div style={{ display: 'flex', gap: 'var(--s-1h)', flexWrap: 'wrap' }}>
+      <div className="myz-preset-chips-row">
         {SROK_PRESETS.map(([label, a, u]) => (
           <button key={label} type="button" className={`myz-preset-chip${amount === a && unit === u ? ' myz-preset-chip--active' : ''}`} onClick={() => { setAmount(a); setUnit(u); }}>
             {label}
           </button>
         ))}
       </div>
-      <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label className="myz-tool-label">
         Дата события
-        <input type="date" value={start} onChange={e => setStart(e.target.value)} style={inputStyle} />
+        <input type="date" value={start} onChange={e => setStart(e.target.value)} className="myz-tool-input" />
       </label>
-      <div style={{ display: 'flex', gap: 'var(--s-1h)', alignItems: 'flex-end' }}>
-        <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+      <div className="myz-tool-row">
+        <label className="myz-tool-label" style={{flex:1}}>
           Период
-          <input type="number" min="0" value={amount} onChange={e => setAmount(e.target.value)} style={inputStyle} />
+          <input type="number" min="0" value={amount} onChange={e => setAmount(e.target.value)} className="myz-tool-input" />
         </label>
-        <select value={unit} onChange={e => setUnit(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
+        <select value={unit} onChange={e => setUnit(e.target.value)} className="myz-tool-input" style={{flex:1}}>
           <option value="days">дней</option>
           <option value="months">месяцев</option>
           <option value="years">лет</option>
@@ -1779,12 +1778,12 @@ const DeadlineCalculator = () => {
         <div className="myz-calc-result-label">Крайний срок</div>
         <div className="myz-calc-result-value">{_fmtDate(end)}</div>
         {daysLeft != null && (
-          <div style={{ fontSize: 'var(--text-sm)', color: tone, marginTop: 4, fontWeight: 600, fontFamily: 'var(--font-sans)' }}>
+          <div className="myz-calc-days" style={{color: tone}}>
             {daysLeft < 0 ? `Срок истёк ${Math.abs(daysLeft)} дн. назад` : daysLeft === 0 ? 'Срок истекает сегодня' : `Осталось ${daysLeft} дн.`}
           </div>
         )}
       </div>
-      <p style={{ fontSize: 'var(--text-2xs)', color: 'var(--muted)', lineHeight: 1.4 }}>
+      <p className="myz-tool-note">
         ⚠️ Ориентировочный расчёт. Порядок исчисления сроков (нерабочие дни, момент начала течения) уточняйте по НПА КР для конкретного случая.
       </p>
     </div>
@@ -1802,33 +1801,32 @@ const GosposhlinaCalculator = () => {
     const r = parseFloat(String(rate).replace(',', '.')) || 0;
     return c > 0 ? c * r / 100 : 0;
   }, [claim, rate]);
-  const inputStyle = { border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: 'var(--text-sm)', padding: 'var(--s-1h) var(--s-2)', fontFamily: 'var(--font-sans)', outline: 'none', width: '100%', boxSizing: 'border-box' };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2h)' }}>
+    <div className="myz-tool-section">
       <div>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', color: 'var(--text-main)', margin: 0 }}>Калькулятор госпошлины</h3>
-        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 'var(--s-1)' }}>Цена иска × ставка. Ставку можно изменить под конкретное требование.</p>
+        <h3 className="myz-tool-heading">Калькулятор госпошлины</h3>
+        <p className="myz-tool-desc">Цена иска × ставка. Ставку можно изменить под конкретное требование.</p>
       </div>
-      <div style={{ display: 'flex', gap: 'var(--s-1h)', flexWrap: 'wrap' }}>
+      <div className="myz-preset-chips-row">
         {GOSP_PRESETS.filter(p => p[1] != null).map(([label, r]) => (
           <button key={label} type="button" className={`myz-preset-chip${rate === r ? ' myz-preset-chip--active' : ''}`} onClick={() => setRate(r)}>
             {label}
           </button>
         ))}
       </div>
-      <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label className="myz-tool-label">
         Цена иска, сом
-        <input type="text" inputMode="decimal" value={claim} onChange={e => setClaim(e.target.value)} placeholder="например, 150000" style={inputStyle} />
+        <input type="text" inputMode="decimal" value={claim} onChange={e => setClaim(e.target.value)} placeholder="например, 150000" className="myz-tool-input" />
       </label>
-      <label style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label className="myz-tool-label">
         Ставка, %
-        <input type="number" min="0" step="0.1" value={rate} onChange={e => setRate(e.target.value)} style={inputStyle} />
+        <input type="number" min="0" step="0.1" value={rate} onChange={e => setRate(e.target.value)} className="myz-tool-input" />
       </label>
       <div className="myz-calc-result">
         <div className="myz-calc-result-label">Госпошлина</div>
         <div className="myz-calc-result-value">{_fmtSom(fee)} сом</div>
       </div>
-      <p style={{ fontSize: 'var(--text-2xs)', color: 'var(--muted)', lineHeight: 1.4 }}>
+      <p className="myz-tool-note">
         ⚠️ Ориентировочно. Ставки утверждены ПП КР №159 (15.04.2019) и зависят от характера требования и расчётного показателя (возможна прогрессивная шкала и льготы). Точный расчёт — на официальном калькуляторе sot.kg.
       </p>
     </div>
@@ -1865,12 +1863,12 @@ const ClauseLibrary = ({ onToast }) => {
     } catch (e) { onToast && onToast('warning', 'Не удалось вставить'); }
   };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+    <div className="myz-tool-section">
       <div>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-lg)', color: 'var(--text-main)', margin: 0 }}>Библиотека клауз</h3>
-        <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 'var(--s-1)' }}>Готовые формулировки — вставляются в открытый документ (прочерки заполните).</p>
+        <h3 className="myz-tool-heading">Библиотека клауз</h3>
+        <p className="myz-tool-desc">Готовые формулировки — вставляются в открытый документ (прочерки заполните).</p>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-1h)' }}>
+      <div className="myz-clause-list">
         {CLAUSES.map(([title, body]) => (
           <button key={title} type="button" className="myz-clause-btn" onClick={() => insertClause(title, body)}>
             <span className="myz-clause-btn-title">{title}</span>
@@ -1882,11 +1880,11 @@ const ClauseLibrary = ({ onToast }) => {
   );
 };
 const LegalToolsMode = ({ onToast }) => (
-  <div style={{ padding: 'var(--s-1)', display: 'flex', flexDirection: 'column', gap: 'var(--s-4)' }}>
+  <div className="myz-legal-tools">
     <DeadlineCalculator />
-    <div style={{ height: 1, background: 'var(--border-color)' }} />
+    <div className="myz-tool-divider" />
     <GosposhlinaCalculator />
-    <div style={{ height: 1, background: 'var(--border-color)' }} />
+    <div className="myz-tool-divider" />
     <ClauseLibrary onToast={onToast} />
   </div>
 );
@@ -1902,13 +1900,13 @@ const DocumentsMode = ({ onToast }) => {
     </button>
   );
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="myz-documents-root">
       <div className="myz-docs-tabbar">
         {tabBtn('analyze', tr('docs_tab_analyze'))}
         {tabBtn('create', tr('docs_tab_create'))}
         {tabBtn('tools', 'Инструменты')}
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div className="myz-documents-content">
         {tab === 'analyze' ? <AnalyzeDocsMode /> : tab === 'create' ? <CreateDocMode onToast={onToast} /> : <LegalToolsMode onToast={onToast} />}
       </div>
     </div>
@@ -1975,15 +1973,15 @@ const ArticleModal=({article,onClose,onInsert})=>{
     <div className="art-modal-overlay" onClick={onClose} role="presentation">
       <div className="art-modal" ref={modalRef} role="dialog" aria-modal="true" aria-label={'Статья: '+(article.article_title||'')} onClick={e=>e.stopPropagation()}>
         <div className="art-modal-head">
-          <div style={{display:'flex',alignItems:'center',gap:'var(--s-3)',minWidth:0,flex:1}}>
+          <div className="myz-art-modal-main">
             <Ico k="book" sz={20} col="var(--accent)" grad glow/>
-            <div style={{minWidth:0,flex:1}}>
-              <div style={{fontFamily:'var(--font-display)',fontStyle:'italic',fontSize:'var(--text-xl)',color:'var(--text)',letterSpacing:'-.018em',lineHeight:'var(--lh-tight)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{article.article_title||'Статья'}</div>
-              <div style={{fontSize:'var(--text-xs)',color:'var(--muted)',marginTop:'var(--s-half)',fontFamily:'var(--font-mono)',letterSpacing:'.04em',textTransform:'uppercase',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{article.npa_title||''}</div>
+            <div className="myz-art-modal-meta">
+              <div className="myz-art-modal-title">{article.article_title||'Статья'}</div>
+              <div className="myz-art-modal-npa">{article.npa_title||''}</div>
             </div>
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:'var(--s-2)',flexShrink:0}}>
-            <span style={{fontSize:'var(--text-2xs)',fontFamily:'var(--font-mono)',color:'var(--muted)',padding:'var(--s-half) var(--s-1h)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',letterSpacing:'.04em'}}>ESC</span>
+          <div className="myz-art-modal-actions">
+            <span className="myz-kbd-esc">ESC</span>
             <button onClick={onClose} className="btn myz-modal-close" title="Закрыть">
               <Ico k="x" sz={16}/>
             </button>
