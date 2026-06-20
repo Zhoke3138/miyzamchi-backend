@@ -1602,13 +1602,12 @@ const CreateDocMode = ({ onToast }) => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
           {DOC_TYPES.map(d => (
             <button key={d.k} type="button" disabled={!d.active} className={`myz-doc-type-btn${d.active?'':' myz-doc-type-btn--dim'}`}
-              onClick={() => d.active && pickType(d.k)}
-              style={{ textAlign: 'left', padding: 'var(--s-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: d.active ? 'var(--bg-app)' : 'var(--hover)', cursor: d.active ? 'pointer' : 'default', opacity: d.active ? 1 : 0.55, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--s-2)', fontFamily: 'var(--font-sans)' }}>
+              onClick={() => d.active && pickType(d.k)}>
               <span>
-                <span style={{ display: 'block', fontWeight: 600, fontSize: 'var(--text-base)', color: 'var(--text-main)' }}>{d.label}</span>
-                <span style={{ display: 'block', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>{d.blurb}</span>
+                <span className="myz-doc-type-btn-label">{d.label}</span>
+                <span className="myz-doc-type-btn-blurb">{d.blurb}</span>
               </span>
-              {!d.active && <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--muted)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-pill)', padding: '2px 8px' }}>скоро</span>}
+              {!d.active && <span className="myz-doc-type-soon">скоро</span>}
               {d.active && <span aria-hidden="true" style={{ color: 'var(--muted)', fontSize: 16 }}>→</span>}
             </button>
           ))}
@@ -1627,10 +1626,10 @@ const CreateDocMode = ({ onToast }) => {
       </div>
       <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: 'var(--s-2h) 0', display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
         {messages.map((m, i) => (
-          <div key={i} className={`myz-create-bubble${m.role==='user'?' myz-create-bubble--user':' myz-create-bubble--ai'}`} style={{ alignSelf: m.role==='user'?'flex-end':'flex-start', maxWidth:'88%', whiteSpace:'pre-wrap', fontSize:'var(--text-sm)', lineHeight:1.6, padding:'var(--s-1h) var(--s-2h)', borderRadius: m.role==='user'?'12px 12px 4px 12px':'12px 12px 12px 4px' }}>{m.text}</div>
+          <div key={i} className={`myz-create-bubble${m.role==='user'?' myz-create-bubble--user':' myz-create-bubble--ai'}`}>{m.text}</div>
         ))}
         {busy && (
-          <div className="myz-create-bubble myz-create-bubble--ai" style={{ alignSelf:'flex-start', maxWidth:'60%', padding:'var(--s-1h) var(--s-2h)', borderRadius:'12px 12px 12px 4px', display:'flex', alignItems:'center', gap:'var(--s-1h)' }}>
+          <div className="myz-create-bubble myz-create-bubble--ai" style={{ display:'flex', alignItems:'center', gap:'var(--s-1h)' }}>
             <span className="gen-dots"><span/><span/><span/></span>
             <span style={{ fontSize:'var(--text-xs)', color:'var(--muted)' }}>Интервьюер думает…</span>
           </div>
@@ -1648,8 +1647,7 @@ const CreateDocMode = ({ onToast }) => {
 
           {/* Кнопка первичной генерации — только до первого успешного результата */}
           {!genDone && (
-            <button type="button" onClick={generate} disabled={genBusy}
-              style={{ width: '100%', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: 'none', background: genBusy ? 'var(--hover)' : 'linear-gradient(135deg,var(--accent),var(--accent2))', color: genBusy ? 'var(--muted)' : '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: genBusy ? 'default' : 'pointer', fontFamily: 'var(--font-sans)' }}>
+            <button type="button" onClick={generate} disabled={genBusy} className="myz-gen-cta-btn">
               {genBusy ? 'Агенты работают…' : '⚖️ Сгенерировать документ'}
             </button>
           )}
@@ -1658,24 +1656,19 @@ const CreateDocMode = ({ onToast }) => {
           {genDone && !genBusy && (
             <>
               <div style={{ display: 'flex', gap: 'var(--s-1h)' }}>
-                <button type="button" onClick={downloadDoc}
-                  style={{ flex: 1, padding: 'var(--s-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
-                  ⬇ .docx
-                </button>
-                <button type="button" onClick={downloadPdf}
-                  style={{ flex: 1, padding: 'var(--s-2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)', color: 'var(--text-main)', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
-                  ⬇ PDF
-                </button>
+                <button type="button" onClick={downloadDoc} className="myz-gen-download-btn">⬇ .docx</button>
+                <button type="button" onClick={downloadPdf} className="myz-gen-download-btn">⬇ PDF</button>
               </div>
 
               {/* Карточка самопроверки */}
               {genReview && (
-                <div style={{ padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-app)' }}>
-                  <div style={{ fontSize: 'var(--text-xs)', fontWeight: 700, color: genReview.ok ? 'var(--green, #10a37f)' : 'var(--orange, #d97706)', marginBottom: (genReview.issues && genReview.issues.length) ? 'var(--s-1h)' : 0 }}>
+                <div className="myz-gen-review-card">
+                  <div className={`myz-gen-review-card-title${genReview.ok ? ' myz-gen-review-card-title--ok' : ' myz-gen-review-card-title--warn'}`}
+                    style={{ marginBottom: (genReview.issues && genReview.issues.length) ? 'var(--s-1h)' : 0 }}>
                     {genReview.ok ? '✓ Самопроверка: замечаний нет' : `⚠ Самопроверка: замечаний — ${genReview.issues.length}`}
                   </div>
                   {(genReview.issues || []).map((it, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 'var(--s-1)', fontSize: 'var(--text-xs)', lineHeight: 1.45, padding: '3px 0' }}>
+                    <div key={i} className="myz-gen-review-item">
                       <span style={{ flexShrink: 0 }}>{it.severity === 'high' ? '🔴' : it.severity === 'medium' ? '🟡' : '🔵'}</span>
                       <span style={{ color: it.severity === 'low' ? 'var(--accent, #2563eb)' : 'var(--text-muted)' }}>
                         {it.text}
@@ -1693,7 +1686,7 @@ const CreateDocMode = ({ onToast }) => {
                 return (
                   <button type="button"
                     onClick={fixable ? fixIssues : generate}
-                    style={{ width: '100%', padding: 'var(--s-2h)', borderRadius: 'var(--radius-sm)', border: 'none', background: 'linear-gradient(135deg,var(--accent),var(--accent2))', color: '#fff', fontWeight: 600, fontSize: 'var(--text-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)' }}>
+                    className="myz-gen-cta-btn">
                     {fixable
                       ? `✏️ Исправить замечания (${genReview.issues.filter(i => i.severity !== 'low').length})`
                       : '↺ Доработать документ'}
@@ -1716,9 +1709,8 @@ const CreateDocMode = ({ onToast }) => {
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
           rows={Math.min(5, Math.max(1, input.split('\n').length))}
           placeholder="Опишите ситуацию или ответьте на вопрос…"
-          style={{ flex: 1, resize: 'none', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-app)', color: 'var(--text-main)', fontSize: 'var(--text-sm)', lineHeight: 1.5, padding: 'var(--s-1h) var(--s-2)', fontFamily: 'var(--font-sans)', outline: 'none' }}/>
-        <button type="button" onClick={send} disabled={busy || !input.trim()}
-          style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 'var(--radius-sm)', border: 'none', background: (busy || !input.trim()) ? 'var(--hover)' : 'var(--primary)', color: (busy || !input.trim()) ? 'var(--muted)' : '#fff', cursor: (busy || !input.trim()) ? 'default' : 'pointer', fontSize: 15 }}>➤</button>
+          className="myz-create-textarea"/>
+        <button type="button" onClick={send} disabled={busy || !input.trim()} className="myz-create-send">➤</button>
       </div>
     </div>
   );
