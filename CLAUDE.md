@@ -3,6 +3,10 @@
 > 🗺️ **ПЕРЕД ЛЮБОЙ ПРАВКОЙ КОДА — сверься с [`claude_architecture.md`](claude_architecture.md)** (единая карта монорепо: активный фронт/бэк, AI-роутинг, что игнорировать).
 
 > 📝 **ПРАВИЛО ОБНОВЛЕНИЯ:** После добавления любой новой функции, маршрута (route), компонента или модуля — **сразу обновить этот файл**: добавить в таблицу файлов, описать пайплайн, обновить «Текущий статус» и «Открытые задачи». CLAUDE.md — живой документ, не допускать расхождения с кодом.
+>
+> 🔄 **ПРАВИЛО АРХИТЕКТУРЫ:** Любое изменение архитектуры (новый роут, новый компонент, новый DocBlock, новый MCP-сервер, изменение пайплайна) → **кратко но понятно** дописать в CLAUDE.md в соответствующий раздел. Структура и «Текущий статус» всегда синхронны с кодом.
+>
+> 📍 **ПРАВИЛО ЧЕКПОИНТА:** В конце каждой рабочей сессии (или при риске сброса контекста) — обновить секцию «Последняя сессия / где остановились» ниже, чтобы следующий Claude знал с чего начать.
 
 > 🚀 **ПРАВИЛО ДЕПЛОЯ:** После завершения каждой задачи с правками кода — **Claude сам делает `git add + git commit + git push origin main`** через PowerShell/Bash инструменты. Push в `main` → Render авто-деплоит **оба** сервиса (бэк + фронт). Сообщить пользователю какие файлы попали в коммит и дать ссылку на прод для проверки.
 
@@ -21,7 +25,7 @@
   - **DeepSeek V4 Pro** — heavy Final Judge
   - **Gemini 2.5 Flash** — fallback для агентов
   - **Gemini 3.1 Flash Lite + 2.5 Flash + DeepSeek V4 Flash** — каскад для лёгких задач Phase 3
-- **Frontend:** Vite + React 19 + SuperDoc. `src/App.jsx` (~9252 строк — ВСЯ логика IDE)
+- **Frontend:** Vite + React 19 + SuperDoc. `src/App.jsx` (~8659 строк — ВСЯ логика IDE, все inline `<style>` убраны в `src/ide-styles.css`)
 
 ---
 
@@ -96,6 +100,9 @@
 | `test_corpus/` | Тестовые документы TXT для тюнинга эвристик (собирает пользователь) |
 | `scratch/` | Черновики SDK-проб, игнорировать |
 | `.env` | Секреты: API-ключи, Pinecone config. **АБСОЛЮТНЫЙ ЗАПРЕТ** |
+| `запустить-телеграм.bat` | Лаунчер Telegram remote-control (копирует токен → запускает `claude`) |
+| `запустить-телеграм.ps1` | PowerShell-версия того же лаунчера |
+| `.telegram-state/` | **НЕ В GIT** — токен бота, паринг, inbox. Путь без кириллицы: `%USERPROFILE%\.claude\channels\telegram\` |
 
 ---
 
@@ -160,7 +167,11 @@
 
 **Последний блок работ (19.06.2026):**
 - `feat(contracts): two-column requisites via table block` — `requisites_table {left, right}` для реквизитов договоров
-- `feat(documents): full structure overhaul all 12 types` — полный пересмотр `lib/docTemplates.js`: форс-мажор как отдельный раздел, конфиденциальность, приёмка, предупреждение о суде в претензии, расчёт суммы, все spacer'ы; `routes/analyzeV2.js`: auto-spacer injection (streaming + fallback), усиленный промпт договора
+- `feat(documents): full structure overhaul all 12 types` — полный пересмотр `lib/docTemplates.js`
+
+**Блок работ (20.06.2026):**
+- `refactor(styles): move all inline <style> JSX blocks to ide-styles.css` — убраны 3 inline `<style>` из `App.jsx` (NPALibraryTree, NPA viewer, animation), CSS перенесён в `src/ide-styles.css`. App.jsx сократился с ~9252 до ~8659 строк.
+- `feat(telegram): Claude Code remote control via Telegram` — плагин `telegram@claude-plugins-official` (v0.0.6) установлен глобально. Бот: `@miyzamchi_work_bot`. Токен в `%USERPROFILE%\.claude\channels\telegram\.env`. Паринг: написать боту → ввести код командой `/telegram:access pair CODE` в VS Code сессии. Состояние хранится в `%USERPROFILE%\.claude\channels\telegram\`.
 
 ### Вкладка «Инструменты»
 - Калькулятор сроков/исковой давности
@@ -213,18 +224,34 @@
 
 ---
 
-## Текущий статус (июнь 2026)
+## Текущий статус (20 июня 2026)
 
 ✅ **В проде:** Selective Reasoning v2.0, все 4 фазы. Telemetry с cascade-секцией.
 ✅ **Режим Документы:** 12 типов, интервьюер + мультиагентная генерация + bilateral contract engine + самопроверка + экспорт .docx/.pdf
 ✅ **Инструменты:** калькулятор сроков, госпошлины, библиотека клауз
-✅ **Последнее:** `requisites_table` DocBlock для двусторонних договоров (19.06.2026)
+✅ **CSS рефактор:** все inline `style={}` и `<style>` блоки из `App.jsx` перенесены в `src/ide-styles.css`. Все UI-классы — `myz-*` префикс.
+✅ **Telegram remote-control:** плагин установлен, бот `@miyzamchi_work_bot` подключён к VS Code сессии. Паринг ещё не завершён.
 
-### Открытые задачи (по убыванию ROI)
+---
+
+## 📍 Последняя сессия / где остановились (20.06.2026)
+
+**Что сделано:**
+1. CSS-рефактор `src/App.jsx` → `src/ide-styles.css`: убраны все 3 inline `<style>` JSX-блока (NPALibraryTree, NPA viewer, keyframes). Классы: `npa-tree`, `npa-row`, `npa-tabstrip`, `npa-content-academic`, `npa-related-*`, `myz-npa-lib-*`, keyframes.
+2. Установлен Telegram-плагин `telegram@claude-plugins-official` v0.0.6. Бот `@miyzamchi_work_bot`.
+3. Токен в `%USERPROFILE%\.claude\channels\telegram\.env`.
+4. Плагин подключён к текущей VS Code сессии (проверено: `claude mcp list` → `√ Connected`).
+
+**Что НЕ сделано / следующий шаг:**
+- **Паринг Telegram**: пользователь должен написать боту `@miyzamchi_work_bot` любое сообщение → бот ответит кодом → в VS Code ввести `/telegram:access pair КОД`.
+- После паринга: пользователь пишет боту = управляет Claude Code с телефона.
+- При уходе из офиса: оставить VS Code открытым (бот работает в VS Code сессии).
+
+**Открытые задачи (по убыванию ROI):**
 1. **Параллельный Triage + Phase 3** — экономия 15-20с. Правка в `routes/analyze.js preparePipelineState`.
 2. **Smart-skip Phase 3** — regex-эвристика "документ содержит явные `ст. N`". Если нет → пропускаем Splitter, экономия ~24с.
 3. **Очистка CJK-артефактов в Final Judge** — DeepSeek вставляет китайские иероглифы. 5-строчная правка в server.js (с согласия).
-4. **Test corpus** — папка `test_corpus/` с шаблонами реальных кыргызских документов (TXT). После сбора — тюнинг marker regex и Splitter-промпта.
+4. **Test corpus** — папка `test_corpus/` с шаблонами реальных кыргызских документов (TXT).
 5. **Проверить UX-fix `wrapAsAnalyzeSegments`** на проде — должны быть `п.1...п.71` без дублей.
 
 ## Что НЕ надо предлагать
