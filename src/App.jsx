@@ -2974,9 +2974,9 @@ const EmptyIllust=()=>(
 
 /* ═══ Toast ═══ */
 const ToastContainer=({toasts,onRemove})=>(
-  <div role="status" aria-live="polite" aria-atomic="false" style={{position:'fixed',top:50,right:16,zIndex:2000,display:'flex',flexDirection:'column',gap:8,pointerEvents:'none'}}>
+  <div role="status" aria-live="polite" aria-atomic="false" className="myz-toast-wrap">
     {toasts.map(t=>(
-      <div key={t.id} onClick={()=>onRemove(t.id)} style={{pointerEvents:'auto',display:'flex',alignItems:'center',gap:10,padding:'10px 16px',background:'var(--bg-panel)',border:'1px solid var(--border)',borderRadius:10,boxShadow:'var(--shadow-lg)',animation:t.leaving?'toastOut .25s ease forwards':'toastIn .3s ease',cursor:'pointer',maxWidth:340,fontSize:13,color:'var(--text)'}}>
+      <div key={t.id} onClick={()=>onRemove(t.id)} className="myz-toast" style={{animation:t.leaving?'toastOut .25s ease forwards':'toastIn .3s ease'}}>
         {t.icon && (typeof ICONS[t.icon]==='function'
           ? <Ico k={t.icon} sz={18} col="var(--accent)" />
           : <span style={{fontSize:16,lineHeight:1}}>{t.icon}</span>)}
@@ -8660,7 +8660,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             <Ico k="send" sz={16} col="currentColor"/>
           </button>
         </div>
-        <div style={{textAlign:'center',marginTop:'var(--s-1h)',fontSize:'var(--text-xs)',color:'var(--text-muted)',fontFamily:'var(--font-sans)'}}>Перед использованием в производстве сверяйте нормы с <a href="https://cbd.minjust.gov.kg" target="_blank" rel="noopener noreferrer" style={{color:'var(--accent)',textDecoration:'none'}}>cbd.minjust.gov.kg</a>.</div>
+        <div className="myz-disclaimer">Перед использованием в производстве сверяйте нормы с <a href="https://cbd.minjust.gov.kg" target="_blank" rel="noopener noreferrer" className="myz-disclaimer-link">cbd.minjust.gov.kg</a>.</div>
       </div>
       {articleModal && <ArticleModal article={articleModal} onClose={()=>setArticleModal(null)} onInsert={handleInsertToQuill}/>}
       {!telemetryHidden && (

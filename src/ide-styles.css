@@ -5714,3 +5714,53 @@ body.dk .analyze-accordion-content {
   flex-direction: column;
   gap: var(--s-3);
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   TOAST NOTIFICATIONS — top-right floating stack
+   ════════════════════════════════════════════════════════════════════ */
+.myz-toast-wrap {
+  position: fixed;
+  top: 50px;
+  right: 16px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.myz-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg), 0 0 0 3px var(--accent-dim);
+  cursor: pointer;
+  max-width: 340px;
+  font-size: 13px;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  letter-spacing: -.005em;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   DISCLAIMER — small legal note below AI input
+   ════════════════════════════════════════════════════════════════════ */
+.myz-disclaimer {
+  text-align: center;
+  margin-top: var(--s-1h);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+}
+.myz-disclaimer-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+.myz-disclaimer-link:hover { text-decoration: underline; }
