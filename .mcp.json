@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "C:\\Users\\Professional\\.bun\\bin\\bun.exe",
+      "args": [
+        "run",
+        "--cwd",
+        "C:\\Users\\Professional\\.claude\\plugins\\cache\\claude-plugins-official\\telegram\\0.0.6",
+        "server.ts"
+      ],
+      "env": {
+        "TELEGRAM_STATE_DIR": "C:\\Users\\Professional\\.claude\\channels\\telegram"
+      }
+    }
+  }
+}
