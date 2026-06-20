@@ -5192,8 +5192,18 @@ body.dk .analyze-accordion-content {
 }
 
 /* ════════════════════════════════════════════════════════════════════
-   DOCUMENTS MODE — tab switcher (Анализ | Создать | Инструменты)
+   DOCUMENTS MODE — tab bar container + switcher (Анализ | Создать | Инструменты)
    ════════════════════════════════════════════════════════════════════ */
+.myz-docs-tabbar {
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-1h);
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
+  margin: 0 0 var(--s-2h) 0;
+  flex-shrink: 0;
+}
 .myz-docs-tab {
   flex: 1;
   padding: var(--s-1h) var(--s-2);
@@ -5625,4 +5635,54 @@ body.dk .analyze-accordion-content {
   border-color: var(--accent);
   border-style: solid;
   background: var(--accent-dim);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   INSERT BUTTON — gradient CTA for "Insert into editor" actions
+   ════════════════════════════════════════════════════════════════════ */
+.myz-insert-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1h);
+  padding: var(--s-1h) var(--s-3h);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: opacity .15s, transform .1s;
+}
+.myz-insert-btn:hover { opacity: .9; transform: translateY(-1px); }
+.myz-insert-btn:active { opacity: 1; transform: translateY(0); }
+
+/* ════════════════════════════════════════════════════════════════════
+   SECTION HEADINGS — reusable panel/step heading patterns
+   ════════════════════════════════════════════════════════════════════ */
+.myz-section-title {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  color: var(--text-main);
+  margin: 0;
+  letter-spacing: -.015em;
+  line-height: var(--lh-tight);
+}
+.myz-section-sub {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  margin-top: var(--s-1);
+  line-height: var(--lh-snug);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   CREATE PICK PANEL — type-selection step wrapper
+   ════════════════════════════════════════════════════════════════════ */
+.myz-create-pick {
+  padding: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
 }

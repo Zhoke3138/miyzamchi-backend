@@ -1594,10 +1594,10 @@ const CreateDocMode = ({ onToast }) => {
   // ── ШАГ 1: выбор типа ──
   if (step === 'pick') {
     return (
-      <div style={{ padding: 'var(--s-4)', display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
+      <div className="myz-create-pick">
         <div>
-          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--text-xl)', color: 'var(--text-main)', margin: 0 }}>Создание документа</h3>
-          <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginTop: 'var(--s-1)' }}>Выберите тип — затем опишите ситуацию, ИИ задаст уточняющие вопросы и соберёт досье.</p>
+          <h3 className="myz-section-title">Создание документа</h3>
+          <p className="myz-section-sub">Выберите тип — затем опишите ситуацию, ИИ задаст уточняющие вопросы и соберёт досье.</p>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
           {DOC_TYPES.map(d => (
@@ -1903,7 +1903,7 @@ const DocumentsMode = ({ onToast }) => {
   );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: 'var(--s-1)', padding: 'var(--s-1h)', background: 'var(--bg-app)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-pill)', margin: '0 0 var(--s-2h) 0' }}>
+      <div className="myz-docs-tabbar">
         {tabBtn('analyze', tr('docs_tab_analyze'))}
         {tabBtn('create', tr('docs_tab_create'))}
         {tabBtn('tools', 'Инструменты')}
@@ -1994,7 +1994,7 @@ const ArticleModal=({article,onClose,onInsert})=>{
           <button onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(article.full_text||'');}} className="ai-act-btn">
             <Ico k="copy" sz={14}/><span>Копировать</span>
           </button>
-          <button onClick={()=>onInsert&&onInsert(article.full_text||'')} className="btn" style={{display:'flex',alignItems:'center',gap:'var(--s-1h)',padding:'var(--s-1h) var(--s-3h)',border:'none',borderRadius:'var(--radius-sm)',background:'linear-gradient(135deg,var(--accent),var(--accent2))',color:'#fff',fontSize:'var(--text-sm)',fontWeight:600,cursor:'pointer',fontFamily:'var(--font-sans)'}}>
+          <button onClick={()=>onInsert&&onInsert(article.full_text||'')} className="btn myz-insert-btn">
             <Ico k="file" sz={14} col="#fff"/><span>Вставить в редактор</span>
           </button>
         </div>
