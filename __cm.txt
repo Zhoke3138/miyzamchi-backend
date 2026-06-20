@@ -1,0 +1,1 @@
+﻿fix(telegram): remove project .mcp.json that conflicted with plugin --channels
