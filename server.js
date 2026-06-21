@@ -56,6 +56,7 @@ const OpenAI = require('openai');
 const { AsyncLocalStorage } = require('async_hooks');
 const path = require('path');
 const bot = require('./telegram/bot');
+const { searchQdrant } = require('./services/qdrantService');
 
 const app = express();
 app.set('trust proxy', 1); // Доверие к прокси Render
@@ -296,7 +297,7 @@ app.all('/api/minjust/*', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 // --- НАСТРОЙКИ ИЗ RENDER (Environment Variables) ---
-const { GEMINI_API_KEY, GEMINI_API_KEYS, PINECONE_API_KEY, PINECONE_HOST } = process.env;
+const { GEMINI_API_KEY, GEMINI_API_KEYS, PINECONE_API_KEY, PINECONE_HOST, QDRANT_URL, QDRANT_API_KEY } = process.env;
 
 const rawKeys = GEMINI_API_KEY || GEMINI_API_KEYS;
 const KEYS = rawKeys ? rawKeys.split(',').map(k => k.trim()) : [];
@@ -559,6 +560,39 @@ async function searchPinecone(vector, topK = 15) {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// MULTI-RAG ROUTING — определяем источник до embedding-запроса
+// Возвращает: 'pinecone' | 'qdrant' | 'both'
+//   pinecone — правовые запросы (кодексы, нормы, статьи, иски)
+//   qdrant   — процедурные FAQ (ЦОН, налоги, паспорт, справки, порталы)
+//   both     — смешанные / неоднозначные → параллельный поиск
+// ════════════════════════════════════════════════════════════════════
+function classifyQuerySource(query) {
+    const q = query.toLowerCase();
+
+    // Процедурные/административные → Qdrant
+    const faqRe = /паспорт|загранпаспорт|прописк|регистрац|цон|гнс|налогов|инн|пенси|пособи|субсиди|льгот|патент|лицензи|разрешен|справк|заявлен|электронн|как получить|как оформить|как подать|как зарегистр|сдать отчет|декларац|ндс|снс|акциз|регистрация ип|регистрация юр|госпошлин|портал|тундук|госуслуг|ЦОН|ГНС|МФЦ|очередь|записаться|онлайн|сервис|инструкц|руководств|порядок оформлен|шаги|что нужно для|куда обратиться|кто выдает|где получить|сколько стоит|стоимость|срок изготовлен|медстрах|соцстрах|пенсионн|фонд|взнос/i;
+
+    // Правовые/нормативные → Pinecone
+    const legalRe = /статья|кодекс|закон|гк кр|тк кр|ук кр|упк|гпк|коап|нк кр|нпа|норм|правовой|юридическ|иск|жалоб|апелляц|суд|ответственность|санкц|штраф|расторжен|недействительн|ничтожн|оспоримый|правоспособ|дееспособ|наследств|залог|ипотек|обязательств|неустойк|форс.мажор|ст\.\s*\d|п\.\s*\d/i;
+
+    const isFaq = faqRe.test(q);
+    const isLegal = legalRe.test(q);
+
+    if (isFaq && !isLegal) return 'qdrant';
+    if (isLegal && !isFaq) return 'pinecone';
+    return 'both';
+}
+
+// Форматирование FAQ-результатов из Qdrant (отдельный блок в промпте)
+function formatQdrantContext(matches) {
+    if (!matches.length) return '';
+    return matches.map(m => {
+        const md = m.metadata || {};
+        return `[📋 FAQ — ${md.npa_title} | ${md.article_title}]\nИсточник: ${md.npa_title}\nТема: ${md.article_title}\nСодержание: ${md.full_text}`;
+    }).join('\n\n---\n\n');
+}
+
 function sendStatus(res, text, icon) {
     if (!res || res.writableEnded) return;
     res.write(`data: ${JSON.stringify({ protocolStatus: text, icon })}\n\n`);
@@ -610,7 +644,7 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     // --- Настройки (mode задаёт дефолты, opts может переопределить) ---
     const defaults = {
         thinking: { maxK: 10, minK: 5 },
-        agent:    { maxK: 15, minK: 4 },   // средний — между fast и thinking
+        agent:    { maxK: 15, minK: 4 },
         fast:     { maxK: 5,  minK: 5 }
     };
     const base = defaults[mode] || defaults.fast;
@@ -619,66 +653,85 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     const absoluteMinScore = opts.absoluteMinScore ?? 0.45;
     const coreScoreThreshold = opts.coreScoreThreshold ?? 0.75;
     const elbowDropRatio = opts.elbowDropRatio ?? 0.15;
-    
+    // source: 'pinecone' | 'qdrant' | 'both'. Дефолт 'pinecone' — 100% обратная совместимость.
+    const source = opts.source ?? 'pinecone';
+
     const streamStatuses = res && mode === 'thinking';
-    
-    // --- Этап 1: Эмбеддинг запроса (с расширением аббревиатур для RAG) ---
+
+    // --- Этап 1: Эмбеддинг запроса ---
     const expandedQuery = expandQueryAbbreviations(query);
     if (expandedQuery !== query) {
-        console.log(`[Retrieval] Расширили запрос аббревиатур: "${query}" -> "${expandedQuery}"`);
+        console.log(`[Retrieval] Расширили аббревиатуры: "${query}" -> "${expandedQuery}"`);
     }
-    
     if (streamStatuses) sendStatus(res, 'Преобразую ваш вопрос в вектор...', '🧬');
     const embedding = await getEmbedding(expandedQuery);
-    
-    // --- Этап 2: Семантический поиск ---
-    if (streamStatuses) sendStatus(res, `Ищу в базе ${maxK} ближайших статей НПА...`, '🔎');
-    const matches = await searchPinecone(embedding, maxK);
-    
+
+    // --- Этап 2: Поиск (один или оба источника) ---
+    let matches = [];
+
+    if (source === 'qdrant') {
+        if (streamStatuses) sendStatus(res, `Ищу в базе FAQ/инструкций...`, '🔎');
+        const qdrantMatches = await searchQdrant(embedding, {
+            url: QDRANT_URL, apiKey: QDRANT_API_KEY, topK: maxK, scoreThreshold: absoluteMinScore
+        });
+        console.log(`[Retrieval] ${mode} | source=qdrant | query: ${query.length}ch | results: ${qdrantMatches.length}`);
+        // Для Qdrant не применяем elbow — возвращаем как есть (уже отфильтровано threshold)
+        const core = qdrantMatches.filter(m => (m.score || 0) >= coreScoreThreshold);
+        const context = qdrantMatches.filter(m => (m.score || 0) < coreScoreThreshold);
+        if (streamStatuses) sendStatus(res, `Найдено ${qdrantMatches.length} инструкций/FAQ`, '✅');
+        return { core, context, all: qdrantMatches, _source: 'qdrant' };
+    }
+
+    if (source === 'both') {
+        if (streamStatuses) sendStatus(res, 'Ищу в базе НПА и справочнике FAQ...', '🔎');
+        const [pineconeMatches, qdrantMatches] = await Promise.all([
+            searchPinecone(embedding, maxK),
+            searchQdrant(embedding, {
+                url: QDRANT_URL, apiKey: QDRANT_API_KEY, topK: Math.ceil(maxK / 2), scoreThreshold: absoluteMinScore
+            })
+        ]);
+        // Объединяем и сортируем по score (Pinecone-нормы имеют приоритет при равном score)
+        matches = [...pineconeMatches, ...qdrantMatches].sort((a, b) => (b.score || 0) - (a.score || 0));
+        console.log(`[Retrieval] ${mode} | source=both | pinecone: ${pineconeMatches.length} | qdrant: ${qdrantMatches.length}`);
+    } else {
+        // source === 'pinecone' (дефолт — старое поведение)
+        if (streamStatuses) sendStatus(res, `Ищу в базе ${maxK} ближайших статей НПА...`, '🔎');
+        matches = await searchPinecone(embedding, maxK);
+    }
+
     if (matches.length === 0) {
-        if (streamStatuses) sendStatus(res, 'База НПА не вернула результатов', '⚠️');
-        console.log(`[Retrieval] ${mode} | query: ${query.length} chars | ⚠️ Pinecone пуст`);
+        if (streamStatuses) sendStatus(res, 'База не вернула результатов', '⚠️');
+        console.log(`[Retrieval] ${mode} | source=${source} | query: ${query.length}ch | ⚠️ пусто`);
         return { core: [], context: [], all: [] };
     }
-    
+
     // --- Этап 3: Фильтрация и ранжирование ---
-    if (streamStatuses) sendStatus(res, `Получил ${matches.length} статей, ранжирую по релевантности...`, '📊');
-    
+    if (streamStatuses) sendStatus(res, `Получил ${matches.length} статей, ранжирую...`, '📊');
+
     let candidates = matches.filter(m => (m.score || 0) >= absoluteMinScore);
-    
+
     if (candidates.length > minK) {
         const scores = candidates.map(m => m.score || 0);
         let elbowIndex = candidates.length;
         for (let i = minK - 1; i < scores.length - 1; i++) {
             const drop = scores[i] > 0 ? (scores[i] - scores[i + 1]) / scores[i] : 0;
-            if (drop > elbowDropRatio) {
-                elbowIndex = i + 1;
-                break;
-            }
+            if (drop > elbowDropRatio) { elbowIndex = i + 1; break; }
         }
         candidates = candidates.slice(0, elbowIndex);
     }
-    
-    if (candidates.length < minK && matches.length >= minK) {
-        candidates = matches.slice(0, minK);
-    }
-    
+    if (candidates.length < minK && matches.length >= minK) candidates = matches.slice(0, minK);
+
     const core = candidates.filter(m => (m.score || 0) >= coreScoreThreshold);
     const context = candidates.filter(m => (m.score || 0) < coreScoreThreshold);
-    
+
     const topScore = (matches[0].score || 0).toFixed(3);
     console.log(
-        `[Retrieval] ${mode} | query: ${query.length} chars | ` +
-        `topScore: ${topScore} | ` +
-        `⭐ core: ${core.length} | 📚 context: ${context.length} | ` +
-        `total: ${candidates.length}/${matches.length}`
+        `[Retrieval] ${mode} | source=${source} | query: ${query.length}ch | ` +
+        `topScore: ${topScore} | ⭐ core: ${core.length} | 📚 context: ${context.length} | total: ${candidates.length}/${matches.length}`
     );
-    
-    // --- Этап 4: Результат отбора ---
-    if (streamStatuses) {
-        sendStatus(res, `Отобрал ⭐ ${core.length} ключевых и 📚 ${context.length} смежных статей`, '✅');
-    }
-    
+
+    if (streamStatuses) sendStatus(res, `Отобрал ⭐ ${core.length} ключевых и 📚 ${context.length} смежных`, '✅');
+
     return { core, context, all: candidates };
 }
 
@@ -2178,23 +2231,25 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
         const queryForEmbedding = (userQuery && userQuery.trim()) || message;
         const isCasual = isCasualMessage(queryForEmbedding);
         if (!isCasual && intent === 'RAG_AGENT') {
-            // ▸ Адаптивный TopK для агента:
-            //   - короткий запрос (<60 символов, явная узкая просьба) → 8-10 матчей
-            //   - средний запрос (60-200) → 12-15 матчей
-            //   - длинный/комплексный (>200) → 18-22 матча
+            const agentSource = classifyQuerySource(queryForEmbedding);
             const qLen = queryForEmbedding.length;
             const adaptiveMaxK = qLen > 200 ? 22 : qLen > 60 ? 15 : 10;
             const adaptiveMinK = qLen > 200 ? 6  : qLen > 60 ? 4  : 3;
-            console.log(`[AGENT] Adaptive retrieval: query=${qLen}ch → maxK=${adaptiveMaxK} minK=${adaptiveMinK}`);
+            console.log(`[AGENT] Multi-RAG retrieval: source=${agentSource} | query=${qLen}ch → maxK=${adaptiveMaxK} minK=${adaptiveMinK}`);
             const retrieval = await adaptiveRetrieval(queryForEmbedding, 'agent', null, {
-                maxK: adaptiveMaxK,
-                minK: adaptiveMinK
+                maxK: adaptiveMaxK, minK: adaptiveMinK, source: agentSource
             });
-            const { core = [], context = [], all = [] } = retrieval || {};
+            const { core = [], context = [], all = [], _source } = retrieval || {};
             allMatches = all;
             if (all.length > 0) {
-                const formatted = formatContextWithHierarchy(core, context);
-                contextBlock = `\n\n═══ КОНТЕКСТ — ${all.length} релевантных статей НПА КР (используй для цитирования) ═══\n\n${formatted}\n\n═══ КОНЕЦ КОНТЕКСТА ═══\n`;
+                const isFaqResult = _source === 'qdrant' || agentSource === 'qdrant';
+                const formatted = isFaqResult
+                    ? formatQdrantContext(all)
+                    : formatContextWithHierarchy(core, context);
+                const ctxLabel = isFaqResult
+                    ? `КОНТЕКСТ — ${all.length} инструкций/FAQ (официальные источники КР)`
+                    : `КОНТЕКСТ — ${all.length} релевантных статей НПА КР (используй для цитирования)`;
+                contextBlock = `\n\n═══ ${ctxLabel} ═══\n\n${formatted}\n\n═══ КОНЕЦ КОНТЕКСТА ═══\n`;
             }
         }
     } catch (retErr) {
@@ -2430,58 +2485,76 @@ async function handleSimpleConsultation(message, history, res, userQuery = null)
     const userQ = (userQuery && userQuery.trim()) || message;
     const cleanHistory = sanitizeHistory(history);
 
+    // Определяем источник RAG до embedding-запроса
+    const querySource = classifyQuerySource(userQ);
+    const isFaqMode = querySource === 'qdrant';
+    const isBothMode = querySource === 'both';
+
+    const retrieveLabel = isFaqMode
+        ? 'Ищу в справочнике FAQ/инструкций'
+        : isBothMode ? 'Ищу в базе НПА и справочнике FAQ'
+        : 'Ищу релевантные статьи НПА';
+
     sendStep(res, { id: 'classify', status: 'success', text: 'Простой справочный запрос', reason: 'Использую быстрый путь поиска' });
-    sendStep(res, { id: 'retrieve', status: 'loading', text: 'Ищу релевантные статьи НПА' });
+    sendStep(res, { id: 'retrieve', status: 'loading', text: retrieveLabel });
     sendStatus(res, '🔎 Ищу релевантные статьи...');
 
-    const retrieval = await adaptiveRetrieval(userQ, 'thinking', null, { maxK: 10, minK: 4 });
+    console.log(`[SimpleConsult] query source: ${querySource} | query: "${userQ.slice(0, 60)}"`);
+
+    const retrieval = await adaptiveRetrieval(userQ, 'thinking', null, { maxK: 10, minK: 4, source: querySource });
     const { core = [], context = [], all = [] } = retrieval;
 
     sendStep(res, {
         id: 'retrieve',
         status: all.length ? 'success' : 'warning',
-        text: all.length ? `Найдено статей: ${all.length}` : 'В базе нет данных по запросу'
+        text: all.length ? `Найдено: ${all.length}` : 'В базе нет данных по запросу'
     });
 
     if (all.length === 0) {
-        sendStep(res, { id: 'answer', status: 'warning', text: 'Нет данных в базе НПА' });
-        res.write(`data: ${JSON.stringify({ text: 'К сожалению, в моей текущей базе НПА нет информации по этому вопросу. Сверьте с cbd.minjust.gov.kg.' })}\n\n`);
+        sendStep(res, { id: 'answer', status: 'warning', text: 'Нет данных в базе' });
+        res.write(`data: ${JSON.stringify({ text: 'К сожалению, в базе нет информации по этому вопросу. Для нормативных актов: cbd.minjust.gov.kg, для госуслуг: tunduk.gov.kg.' })}\n\n`);
         return;
     }
 
     sendStep(res, { id: 'answer', status: 'loading', text: 'Формулирую ответ' });
     sendStatus(res, '✍️ Формулирую ответ...');
 
-    const contextText = formatContextWithHierarchy(core, context);
-    const isL4 = detectL4Request(userQ);
-    let systemPrompt = BASE_CONSULTANT_PROMPT;
-    if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
-    if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
+    // Формируем контекст и промпт в зависимости от источника
+    let contextText, finalPrompt, systemPrompt;
 
-    const finalPrompt =
-        `Вопрос пользователя: "${userQ}"\n\n` +
-        `Контекст — ${all.length} релевантных статей НПА КР (⭐ ${core.length} ключевых + 📚 ${context.length} вспомогательных):\n\n${contextText}`;
+    if (isFaqMode) {
+        contextText = formatQdrantContext(all);
+        systemPrompt = BASE_CONSULTANT_PROMPT + `\n\nТЫ ОТВЕЧАЕШЬ НА ПРОЦЕДУРНЫЙ ВОПРОС. В контексте — официальные инструкции и FAQ государственных органов КР (ЦОН, ГНС, портал Tunduk). Опирайся строго на эти инструкции. Отвечай чётко, по шагам, официальным тоном. Если есть конкретные сроки, стоимость или перечень документов — укажи их.`;
+        finalPrompt = `Вопрос пользователя: "${userQ}"\n\nОфициальные инструкции/FAQ (${all.length} документов):\n\n${contextText}`;
+    } else {
+        contextText = formatContextWithHierarchy(core, context);
+        const isL4 = detectL4Request(userQ);
+        systemPrompt = BASE_CONSULTANT_PROMPT;
+        if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
+        if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
+        const prefix = isBothMode
+            ? `Контекст — ${all.length} документов из баз НПА и FAQ:`
+            : `Контекст — ${all.length} релевантных статей НПА КР (⭐ ${core.length} ключевых + 📚 ${context.length} вспомогательных):`;
+        finalPrompt = `Вопрос пользователя: "${userQ}"\n\n${prefix}\n\n${contextText}`;
+    }
 
     try {
         await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res);
         sendStep(res, { id: 'answer', status: 'success', text: 'Ответ готов' });
 
-        // Источники для chip-badges
         const sourcesArr = [...core, ...context].slice(0, 5);
-        const sources = sourcesArr.map(m => `${m.metadata?.npa_title || 'НПА'} — ${m.metadata?.article_title || ''}`);
+        const sources = sourcesArr.map(m => `${m.metadata?.npa_title || 'Источник'} — ${m.metadata?.article_title || ''}`);
         const metadata = sourcesArr.map(m => ({
             npa_title: m.metadata?.npa_title || '',
             article_title: m.metadata?.article_title || '',
             full_text: m.metadata?.full_text || ''
         }));
-        if (sources.length > 0) {
-            res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
-        }
+        if (sources.length > 0) res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
     } catch (err) {
         console.error('[SimpleConsult] failed:', err.message);
         sendStep(res, { id: 'answer', status: 'error', text: 'Ошибка генерации ответа' });
         try {
-            await streamGeminiResponse(getNextKey(), systemInstruction, finalPrompt, cleanHistory, res);
+            await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res);
         } catch (e2) {
             res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Серверы временно перегружены. Повторите запрос через минуту.' })}\n\n`);
         }
@@ -3912,12 +3985,15 @@ app.post('/api/chat', requireClientToken, async (req, res) => {
             let retrievalResult = { core: [], context: [], all: [] };
 
             if (casual) {
-                console.log("Режим: приветствие — Pinecone пропущен");
+                console.log("Режим: приветствие — retrieval пропущен");
             } else if (skipRetrieval) {
-                console.log("Режим: skipRetrieval=true — Pinecone пропущен (chunk-summarization)");
+                console.log("Режим: skipRetrieval=true — retrieval пропущен (chunk-summarization)");
             } else {
                 const tR0 = performance.now();
-                retrievalResult = await adaptiveRetrieval(message, 'fast');
+                const queryForFast = (userQuery && userQuery.trim()) || message;
+                const fastSource = classifyQuerySource(queryForFast);
+                console.log(`[fast] Multi-RAG source: ${fastSource}`);
+                retrievalResult = await adaptiveRetrieval(queryForFast, 'fast', null, { source: fastSource });
                 tRetrieval = performance.now() - tR0;
             }
             await handleFast(message, history, retrievalResult, res);
