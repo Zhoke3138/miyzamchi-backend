@@ -64,6 +64,7 @@
 | `routes/compare.js` | `/api/compare-documents` — Semantic Legal Redlining (Align→Map→Reduce) |
 | `services/parserService.js` | Локальный парсинг: PDF (pdf-parse ≤8МБ), DOCX (mammoth), TXT (fs). Тяжёлые/сканированные PDF → Gemini Vision (File API) |
 | `services/legalAgents.js` | Юридические агенты (верификаторы, судья) |
+| `services/qdrantService.js` | Qdrant FAQ-ретривер: `searchQdrant(vector, {url, apiKey, topK})` → Pinecone-совместимый формат |
 | `services/llmClients.js` | Клиенты LLM: Gemini + DeepSeek |
 | `services/compareService.js` | Логика сравнения редакций документов |
 
@@ -224,13 +225,20 @@
 
 ---
 
-## Текущий статус (20 июня 2026)
+## Текущий статус (21 июня 2026)
 
 ✅ **В проде:** Selective Reasoning v2.0, все 4 фазы. Telemetry с cascade-секцией.
 ✅ **Режим Документы:** 12 типов, интервьюер + мультиагентная генерация + bilateral contract engine + самопроверка + экспорт .docx/.pdf
 ✅ **Инструменты:** калькулятор сроков, госпошлины, библиотека клауз
 ✅ **CSS рефактор:** все inline `style={}` и `<style>` блоки из `App.jsx` перенесены в `src/ide-styles.css`. Все UI-классы — `myz-*` префикс.
-✅ **Telegram remote-control:** плагин установлен, бот `@miyzamchi_work_bot` подключён к VS Code сессии. Паринг ещё не завершён.
+✅ **Telegram remote-control:** бот `@miyzamchi_work_bot` работает через `--channels` флаг. Запуск: `запустить-телеграм.bat`.
+✅ **Multi-RAG (Qdrant):** `services/qdrantService.js` + роутинг `classifyQuerySource()` в `server.js`. Env: `QDRANT_URL`, `QDRANT_API_KEY`. Коллекция: `tunduk_guides_collection` (3567 FAQ/инструкций ЦОН+ГНС).
+
+### Multi-RAG роутинг (server.js)
+- `classifyQuerySource(query)` → `'pinecone'` | `'qdrant'` | `'both'`
+- `adaptiveRetrieval(..., { source })` — поддерживает все три режима, дефолт `'pinecone'`
+- `handleSimpleConsultation`, `handleAgent`, `/api/chat fast` — используют роутинг
+- Env без `QDRANT_URL`/`QDRANT_API_KEY` → Qdrant пропускается, Pinecone работает как раньше
 
 ---
 
