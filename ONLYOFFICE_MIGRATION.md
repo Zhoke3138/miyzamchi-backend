@@ -85,33 +85,36 @@
 **Цель:** Заменить `<SuperDocEditor>` на ONLYOFFICE, сохранить логику вкладок.
 
 ### 2.1 Новый компонент OnlyOfficeEditor
-- [ ] Создать `src/components/OnlyOfficeEditor.jsx`:
-  - `useEffect`: динамически загружает `<script src="${ONLYOFFICE_URL}/web-apps/apps/api/documents/api.js">`
-  - После загрузки: `new window.DocsAPI.DocEditor(containerRef.current.id, config)`
-  - `config.document.key` = `documentKey` из пропа (уникальный на каждую версию)
-  - `config.document.url` = `https://backend/api/files/:fileId/download`
-  - `config.editorConfig.callbackUrl` = `https://backend/api/onlyoffice/callback/:fileId`
-  - `config.editorConfig.lang = 'ru'`
-  - `config.token` = JWT, полученный от `/api/files/:fileId/config`
-  - Cleanup: `editorRef.current.destroyEditor()` при размонтировании
-- [ ] Добавить `VITE_ONLYOFFICE_URL` в `vite.config.js` / `.env`
+- [x] Создать `src/components/onlyoffice-workspace/OnlyOfficeEditor.jsx`:
+  - ✅ Синглтон загрузки api.js: `_apiState` + `_apiWaiters[]` — один script на всё приложение
+  - ✅ Состояния: `idle → loading → ready | error` с оверлеями
+  - ✅ `new window.DocsAPI.DocEditor(containerId, config)` после fetch конфига
+  - ✅ `config.document.key`, `callbackUrl`, `lang:'ru'`, JWT-токен — из `/api/files/:fileId/config`
+  - ✅ `onDocumentStateChange` → `onSaved(newKey)` при успешном сохранении
+  - ✅ Cleanup: `editorRef.current.destroyEditor()` при unmount/смене fileId
+  - ✅ `cancelled` флаг против состояния после unmount
+- [ ] Добавить `VITE_ONLYOFFICE_URL` и `VITE_BACKEND_URL` в `.env.local` для тестирования
 
-### 2.2 Замена SuperDocEditor в App.jsx
-- [ ] В `App.jsx:8533-8552` заменить `<SuperDocEditor ...>` на `<OnlyOfficeEditor fileId=... documentKey=... />`
-- [ ] Удалить `import { SuperDocEditor } from '@superdoc-dev/react'` (строка 1)
-- [ ] Удалить `import '@superdoc-dev/react/style.css'` (строка 2)
-- [ ] Адаптировать `handleAction('openFromDisk')`: вместо ArrayBuffer в state → POST `/api/files/upload` → получить `{fileId, documentKey}` → открыть ONLYOFFICE
-- [ ] Адаптировать `handleAction('save')`: вместо `window.docEngine.exportDocx()` → ONLYOFFICE forcesave через Plugin SDK или прямой API
-- [ ] Адаптировать `handleAction('exportPdf')`: ONLYOFFICE конвертация через DocServer API `/ConvertService`
+### 2.2 Клон-песочница AppOnlyOfficeSandbox
+- [x] Создать `src/components/onlyoffice-workspace/AppOnlyOfficeSandbox.jsx`:
+  - ✅ Файл-пикер → POST `/api/files/upload` → `{fileId, documentKey}` → открытие ONLYOFFICE
+  - ✅ Вкладки `{id, name, fileId, documentKey}` — переключение без потери состояния
+  - ✅ `onSaved(newKey)` — обновляет `documentKey` в tabs state
+  - ✅ AI Chat: SSE-стриминг `/api/chat` → рендер сообщений в реальном времени
+  - ✅ Toast-уведомления, тёмная/светлая тема, кнопка скрытия чат-панели
+  - ✅ Переключение: в `src/main.jsx` заменить `<App />` на `<AppOnlyOfficeSandbox />`
 
-### 2.3 Адаптация агент-режима (window.docEngine → Plugin API)
-- [ ] Зафиксировать все места использования `window.docEngine` (аудит показал 30+ вызовов)
-- [ ] Создать адаптерный модуль `src/onlyofficeAdapter.js`:
-  - `insertText(text)` → `window.Asc.plugin.callCommand(() => Api.GetDocument().GetRangeBySelect().SetText(text))`
-  - `addComment(text)` → `window.Asc.plugin.callCommand(() => Api.GetDocument().GetRangeBySelect().AddComment(text, 'Мыйзамчы'))`
-  - `getSelectedText()` → через `plugin.callCommand(() => Api.GetDocument().GetRangeBySelect().GetText())`
-  - `undo()` / `redo()` → через `window.Asc.plugin.callCommand`
-- [ ] Заменить все вызовы `window.docEngine.*` в `applyAgentCommand()` на адаптер
+### 2.3 Адаптер агент-режима (window.docEngine → Plugin API)
+- [x] Создать `src/components/onlyoffice-workspace/onlyofficeAdapter.js`:
+  - ✅ `pluginCommand(fn)` → Promise-обёртка над `window.Asc.plugin.callCommand()`
+  - ✅ `getSelectedText()` → `Api.GetDocument().GetRangeBySelect().GetText()`
+  - ✅ `getDocumentText()` → итерация по элементам через `GetElement(i).GetText()`
+  - ✅ `insertText(text)` → `oRange.SetText(captured)` или `Push(oPara)` при отсутствии выделения
+  - ✅ `addComment(text, author)` → `oRange.AddComment(text, author)`
+  - ✅ `annotateByText(search, comment)` → `oDoc.Search(text)[0].AddComment()` (для разметки рисков)
+  - ✅ `undo()` / `redo()` → `Api.Undo()` / `Api.Redo()`
+  - ✅ `isAvailable()` → проверка наличия `window.Asc.plugin.callCommand`
+- [ ] Заменить вызовы `window.docEngine.*` в `applyAgentCommand()` на адаптер (Этап 2.3 финальный — после smoke-теста)
 
 **Критерий перехода к Этапу 3:** ONLYOFFICE открывается в Workspace, документы открываются/сохраняются, AI-агент вставляет текст в документ.
 
@@ -198,7 +201,7 @@
 |---|---|---|
 | Аудит системы | ✅ Завершён | 22.06.2026 |
 | Этап 1: Docker + Node.js | 🟡 В процессе (6/7) | — |
-| Этап 2: Frontend React | 🔴 Не начат | — |
+| Этап 2: Frontend React | 🟡 В процессе (9/10) | — |
 | Этап 3: AI-Плагин | 🔴 Не начат | — |
 | Этап 4: Генерация .docx | 🔴 Не начат | — |
 
