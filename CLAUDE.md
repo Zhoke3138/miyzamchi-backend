@@ -242,25 +242,27 @@
 
 ---
 
-## 📍 Последняя сессия / где остановились (20.06.2026)
+## 📍 Последняя сессия / где остановились (22.06.2026)
 
 **Что сделано:**
-1. CSS-рефактор `src/App.jsx` → `src/ide-styles.css`: убраны все 3 inline `<style>` JSX-блока (NPALibraryTree, NPA viewer, keyframes). Классы: `npa-tree`, `npa-row`, `npa-tabstrip`, `npa-content-academic`, `npa-related-*`, `myz-npa-lib-*`, keyframes.
-2. Установлен Telegram-плагин `telegram@claude-plugins-official` v0.0.6. Бот `@miyzamchi_work_bot`.
-3. Токен в `%USERPROFILE%\.claude\channels\telegram\.env`.
-4. Плагин подключён к текущей VS Code сессии (проверено: `claude mcp list` → `√ Connected`).
+1. **ONLYOFFICE интеграция — полная миграция фич из SuperDoc:**
+   - `routes/onlyoffice.js`: mammoth-извлечение текста при upload → `GET /api/files/:fileId/text`, selection-relay (`POST/GET /api/onlyoffice/bridge/selection`), CORS middleware для плагин-iframe (localhost:8080)
+   - `onlyoffice-plugin/miyzamchi-ai/plugin.js`: авто-определение BACKEND_URL (localhost:3000 vs Render), push выделения в backend-relay, новый тип `insert_after` в `applyBridgeCmd`
+   - `src/App.jsx`: `getDocSnapshot()` читает `window.__ooDocText/__ooSelection`, OO setup useEffect регистрирует `__ooLoadDocText` + поллинг выделения каждые 1.5с, upload вызывает `__ooLoadDocText`, `handleAction` корректно обрабатывает save/exportWord/exportPdf в OO mode
+2. **ONLYOFFICE insertBefore crash** (предыдущая сессия): переписан `OnlyOfficeEditor.jsx` — контейнер создаётся imperatively через useEffect, React его не видит. `OOEditorSlot` вынесен на уровень модуля.
 
-**Что НЕ сделано / следующий шаг:**
-- **Паринг Telegram**: пользователь должен написать боту `@miyzamchi_work_bot` любое сообщение → бот ответит кодом → в VS Code ввести `/telegram:access pair КОД`.
-- После паринга: пользователь пишет боту = управляет Claude Code с телефона.
-- При уходе из офиса: оставить VS Code открытым (бот работает в VS Code сессии).
+**Текущее состояние ONLYOFFICE (OO_MODE = true при VITE_ONLYOFFICE_URL):**
+- Документ открывается в ONLYOFFICE → ИИ видит полный текст (через mammoth → `/api/files/:fileId/text`)
+- Выделение юристом → ИИ видит через selection bridge (plugin.js → backend → App.jsx polling)
+- Команды ИИ (insert/replace/comment) → bridge push → plugin.js применяет в ONLYOFFICE
+- Ctrl+S = toast "ONLYOFFICE автосохраняет", Файл → Экспорт Word = скачивает .docx с бэка
 
 **Открытые задачи (по убыванию ROI):**
 1. **Параллельный Triage + Phase 3** — экономия 15-20с. Правка в `routes/analyze.js preparePipelineState`.
 2. **Smart-skip Phase 3** — regex-эвристика "документ содержит явные `ст. N`". Если нет → пропускаем Splitter, экономия ~24с.
 3. **Очистка CJK-артефактов в Final Judge** — DeepSeek вставляет китайские иероглифы. 5-строчная правка в server.js (с согласия).
 4. **Test corpus** — папка `test_corpus/` с шаблонами реальных кыргызских документов (TXT).
-5. **Проверить UX-fix `wrapAsAnalyzeSegments`** на проде — должны быть `п.1...п.71` без дублей.
+5. **Паринг Telegram**: пользователь пишет боту `@miyzamchi_work_bot` → получает код → в VS Code вводит `/telegram:access pair КОД`.
 
 ## Что НЕ надо предлагать
 - Перейти на ESM (проект CJS, всё работает)
