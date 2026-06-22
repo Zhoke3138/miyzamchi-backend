@@ -1,0 +1,36 @@
+version: '3.8'
+
+# ONLYOFFICE Document Server — изолированный контейнер
+# Запуск: docker-compose up -d
+# Проверка: curl http://localhost:8080/healthcheck
+
+services:
+  documentserver:
+    image: onlyoffice/documentserver:latest
+    container_name: miyzamchi-docserver
+    environment:
+      - JWT_ENABLED=true
+      - JWT_SECRET=${ONLYOFFICE_JWT_SECRET}
+      - JWT_HEADER=Authorization
+      - JWT_IN_BODY=true
+    ports:
+      - "8080:80"
+    volumes:
+      - ds_data:/var/www/onlyoffice/Data
+      - ds_logs:/var/log/onlyoffice
+      - ds_lib:/var/lib/onlyoffice
+      - ds_db:/var/lib/postgresql
+      # AI-плагин Мыйзамчы (Этап 3):
+      # - ./onlyoffice-plugin/miyzamchi-ai:/var/www/onlyoffice/documentserver/sdkjs-plugins/miyzamchi-ai
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  ds_data:
+  ds_logs:
+  ds_lib:
+  ds_db:

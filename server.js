@@ -4118,6 +4118,9 @@ require('./routes/analyze')({
 // Эндпоинт: POST /api/v2/analyze-document. См. ARCHITECTURE.md / DEPLOY_CLOUD_RUN.md.
 app.use('/api/v2', require('./routes/analyzeV2').createAnalyzeV2Router());
 
+// ONLYOFFICE Document Server integration (Этап 1 — см. ONLYOFFICE_MIGRATION.md)
+app.use('/api', require('./routes/onlyoffice'));
+
 // ============================================================
 // ЗАПУСК
 // ============================================================

@@ -77,3 +77,5 @@ traces/
 # Telegram remote-control state (токен бота, паринг, inbox)
 # ═══════════════════════════════════════════════════════════════════
 .telegram-state/
+storage/documents/*.docx
+storage/documents/*.pdf

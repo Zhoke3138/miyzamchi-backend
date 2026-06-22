@@ -46,31 +46,35 @@
 **Цель:** Поднять DocServer, создать серверное хранилище файлов, реализовать callback-обработчик.
 
 ### 1.1 Docker-конфигурация
-- [ ] Создать `docker-compose.yml` с образом `onlyoffice/documentserver`
+- [x] Создать `docker-compose.yml` с образом `onlyoffice/documentserver`
   - JWT_ENABLED=true, JWT_SECRET (≥32 символа), JWT_HEADER=Authorization
   - Volume-маунты: Data, logs, lib, postgresql
   - Порт: 8080:80
   - restart: unless-stopped
+  - ✅ Создан: `docker-compose.yml` в корне проекта (22.06.2026)
 - [ ] Добавить `ONLYOFFICE_JWT_SECRET` и `ONLYOFFICE_URL` в `.env` (локально) и Render Dashboard
 - [ ] Проверить: `curl http://localhost:8080/healthcheck` возвращает `{"status":"OK"}`
 
 ### 1.2 Серверное хранилище файлов
-- [ ] Создать папку `storage/documents/` (добавить в `.gitignore`)
-- [ ] Реализовать в `routes/onlyoffice.js` маршрут `GET /api/files/:fileId/download`
-  - Читает файл из `storage/documents/:fileId.docx`
-  - Устанавливает заголовки `Content-Type: application/vnd.openxmlformats-officedocument...`
-  - DocServer будет звонить на этот URL чтобы скачать исходный файл
-- [ ] Реализовать `POST /api/files/upload` — принимает DOCX от клиента, сохраняет на диск, возвращает `{fileId, documentKey}`
-- [ ] Добавить `routes/onlyoffice.js` в `server.js` через `app.use('/api', require('./routes/onlyoffice'))`
+- [x] Создать папку `storage/documents/` (добавить в `.gitignore`)
+  - ✅ Создана папка `storage/documents/` + `.gitkeep`
+  - ✅ В `.gitignore` добавлены `storage/documents/*.docx` и `*.pdf`
+- [x] Реализовать в `routes/onlyoffice.js` маршрут `GET /api/files/:fileId/download`
+  - ✅ Читает файл из `storage/documents/:fileId.docx`, стримит с нужным Content-Type
+- [x] Реализовать `POST /api/files/upload` — принимает DOCX от клиента, сохраняет на диск, возвращает `{fileId, documentKey, config}`
+  - ✅ Multer (уже в зависимостях): фильтр .docx, лимит 50МБ, случайный fileId
+- [x] Добавить `routes/onlyoffice.js` в `server.js` через `app.use('/api', require('./routes/onlyoffice'))`
+  - ✅ Вставлена одна строка в `server.js:4120` (после analyzeV2, перед запуском)
 
 ### 1.3 CallbackUrl-обработчик
-- [ ] Реализовать `POST /api/onlyoffice/callback/:fileId` в `routes/onlyoffice.js`:
-  - Верифицировать JWT от DocServer (`jwt.verify(token, ONLYOFFICE_JWT_SECRET)`)
-  - `status === 2 || status === 6`: скачать `.docx` по `body.url` → сохранить в `storage/`
-  - Ответить `{ error: 0 }` в течение 5 секунд (критично!)
-  - Обновить `documentKey` в памяти (Map fileId → currentKey)
-- [ ] Реализовать вспомогательный `GET /api/files/:fileId/config` — возвращает подписанный JWT-конфиг для инициализации ONLYOFFICE редактора
+- [x] Реализовать `POST /api/onlyoffice/callback/:fileId` в `routes/onlyoffice.js`:
+  - ✅ JWT-верификация через встроенный `crypto` (HS256, без внешних зависимостей)
+  - ✅ `status === 2 || status === 6`: немедленный ответ `{error:0}`, скачивание async
+  - ✅ Обновление `documentKey` в памяти (Map `fileRegistry`)
+- [x] Реализовать вспомогательный `GET /api/files/:fileId/config` — возвращает подписанный JWT-конфиг для инициализации ONLYOFFICE редактора
+  - ✅ `buildEditorConfig()` подписывает payload через `signOoJWT()`, возвращает `{...config, token, _ooUrl}`
 - [ ] Smoke-тест: открыть docx в DocServer → отредактировать → закрыть → убедиться что файл обновился в `storage/`
+  - ⏳ Ожидает: поднятия Docker-контейнера и добавления env vars
 
 **Критерий перехода к Этапу 2:** `storage/documents/` пополняется при закрытии редактора, callbackUrl отвечает `{error:0}`.
 
@@ -193,7 +197,7 @@
 | Этап | Статус | Завершён |
 |---|---|---|
 | Аудит системы | ✅ Завершён | 22.06.2026 |
-| Этап 1: Docker + Node.js | 🔴 Не начат | — |
+| Этап 1: Docker + Node.js | 🟡 В процессе (6/7) | — |
 | Этап 2: Frontend React | 🔴 Не начат | — |
 | Этап 3: AI-Плагин | 🔴 Не начат | — |
 | Этап 4: Генерация .docx | 🔴 Не начат | — |
