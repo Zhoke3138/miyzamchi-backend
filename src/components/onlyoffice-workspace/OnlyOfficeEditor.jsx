@@ -1,15 +1,14 @@
 // ═══════════════════════════════════════════════════════════════════
-// OnlyOfficeEditor.jsx — Компонент редактора ONLYOFFICE (Этап 2)
-// Заменяет <SuperDocEditor> из @superdoc-dev/react.
+// OnlyOfficeEditor.jsx — Компонент редактора ONLYOFFICE
 //
-// Props:
-//   fileId       {string}   — ID файла в storage/documents/
-//   documentKey  {string}   — Уникальный ключ версии
-//   onSaved      {function} — (newKey: string) => void
-//   onError      {function} — (msg: string) => void
+// АРХИТЕКТУРНОЕ РЕШЕНИЕ: ONLYOFFICE (DocsAPI.DocEditor) заменяет/перемещает
+// контейнерный div в DOM, из-за чего React падает с insertBefore NotFoundError
+// при следующей reconciliation. Решение: контейнер создаётся IMPERATIVELY
+// через useEffect/appendChild — React его никогда не видит в своём fiber-дереве
+// и не пытается вставлять/удалять относительно него.
 // ═══════════════════════════════════════════════════════════════════
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const BACKEND_URL    = import.meta.env.VITE_BACKEND_URL    || 'https://miyzamchi-backend.onrender.com';
 const ONLYOFFICE_URL = import.meta.env.VITE_ONLYOFFICE_URL || 'http://localhost:8080';
@@ -24,7 +23,6 @@ function ensureDocsApi() {
         if (_apiState === 'error')  { reject(new Error('api.js не загрузился')); return; }
         _apiWaiters.push({ resolve, reject });
         if (_apiState === 'loading') return;
-
         _apiState = 'loading';
         const script = document.createElement('script');
         script.src = `${ONLYOFFICE_URL}/web-apps/apps/api/documents/api.js`;
@@ -44,78 +42,61 @@ function ensureDocsApi() {
 }
 
 // ── Компонент ──────────────────────────────────────────────────────
-export function OnlyOfficeEditor({ fileId, documentKey, onSaved, onError }) {
-    const containerRef = useRef(null);
-    const editorRef    = useRef(null);
-    const mountedRef   = useRef(true);
-    const [status, setStatus] = useState('idle'); // 'idle'|'loading'|'ready'|'error'
+export function OnlyOfficeEditor({ fileId, onSaved, onError }) {
+    const hostRef   = useRef(null); // React управляет только этим div; детей внутри нет
+    const editorRef = useRef(null);
+    const [status, setStatus] = useState('loading');
     const [errMsg, setErrMsg] = useState('');
 
-    const containerId = `oo-editor-${fileId}`;
-
-    const destroyEditor = useCallback(() => {
-        if (editorRef.current) {
-            try { editorRef.current.destroyEditor(); } catch (_) {}
-            editorRef.current = null;
-        }
-    }, []);
-
     useEffect(() => {
-        mountedRef.current = true;
-        return () => { mountedRef.current = false; };
-    }, []);
-
-    useEffect(() => {
-        if (!fileId) return;
+        if (!fileId || !hostRef.current) return;
         let cancelled = false;
+        const containerId = `oo-editor-${fileId}`;
+
+        // Создаём контейнер IMPERATIVELY — React его не видит и не трогает.
+        // DocsAPI может делать с ним что угодно (заменять, перемещать) без
+        // конфликта с reconciler'ом.
+        const container = document.createElement('div');
+        container.id = containerId;
+        container.style.cssText = 'width:100%;height:100%;';
+        hostRef.current.appendChild(container);
 
         async function init() {
-            setStatus('loading');
-            setErrMsg('');
-
             try {
-                // 1. Убедиться что api.js загружен
                 await ensureDocsApi();
                 if (cancelled) return;
-
                 if (!window.DocsAPI) throw new Error('DocsAPI недоступен после загрузки');
 
-                // 2. Получить подписанный конфиг с бэкенда
                 const resp = await fetch(`${BACKEND_URL}/api/files/${fileId}/config`);
                 if (!resp.ok) throw new Error(`Конфиг: HTTP ${resp.status}`);
                 const config = await resp.json();
                 if (cancelled) return;
 
-                // 3. Подменить key если передан свежий
-                if (documentKey) config.document.key = documentKey;
-
-                // 4. Привязать события
                 config.events = {
                     onAppReady: () => {
-                        if (mountedRef.current) setStatus('ready');
+                        if (!cancelled) setStatus('ready');
                     },
                     onError: ({ data }) => {
                         const msg = data?.errorDescription || 'Ошибка редактора';
-                        if (mountedRef.current) { setStatus('error'); setErrMsg(msg); }
+                        if (!cancelled) { setStatus('error'); setErrMsg(msg); }
                         onError?.(msg);
                     },
-                    // После успешного сохранения — обновить documentKey в родителе
                     onDocumentStateChange: (event) => {
-                        if (event.data === false && typeof onSaved === 'function') {
+                        if (event.data === false) {
                             fetch(`${BACKEND_URL}/api/files/${fileId}/config`)
                                 .then(r => r.json())
-                                .then(c => { if (mountedRef.current) onSaved(c.document?.key); })
+                                .then(c => { if (!cancelled) onSaved?.(c.document?.key); })
                                 .catch(() => {});
                         }
                     }
                 };
 
-                // 5. Уничтожить предыдущий экземпляр и создать новый
-                destroyEditor();
+                if (editorRef.current) {
+                    try { editorRef.current.destroyEditor(); } catch (_) {}
+                }
                 editorRef.current = new window.DocsAPI.DocEditor(containerId, config);
-
             } catch (err) {
-                if (!cancelled && mountedRef.current) {
+                if (!cancelled) {
                     setStatus('error');
                     setErrMsg(err.message);
                     onError?.(err.message);
@@ -124,13 +105,22 @@ export function OnlyOfficeEditor({ fileId, documentKey, onSaved, onError }) {
         }
 
         init();
+
         return () => {
             cancelled = true;
-            destroyEditor();
+            if (editorRef.current) {
+                try { editorRef.current.destroyEditor(); } catch (_) {}
+                editorRef.current = null;
+            }
+            if (container.parentNode) container.remove();
         };
-    }, [fileId, documentKey]);
+    }, [fileId]);
 
     // ── Render ──────────────────────────────────────────────────────
+    // Структура: внешний div (position:relative) содержит:
+    //   1. Overlay'ы загрузки/ошибки — React-managed, absolute поверх
+    //   2. hostRef div — React-managed, НО без React-детей.
+    //      ONLYOFFICE container создаётся внутри него imperatively через useEffect.
     return (
         <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: 600 }}>
 
@@ -147,25 +137,21 @@ export function OnlyOfficeEditor({ fileId, documentKey, onSaved, onError }) {
                 <div style={{ ...styles.overlay, background: '#fff0f0' }}>
                     <p style={{ color: '#c00', fontFamily: 'sans-serif' }}>⚠ {errMsg}</p>
                     <p style={{ color: '#666', fontSize: 12, fontFamily: 'sans-serif' }}>
-                        Убедитесь что DocServer доступен по адресу: <code>{ONLYOFFICE_URL}</code>
+                        Убедитесь что DocServer доступен: <code>{ONLYOFFICE_URL}</code>
                     </p>
                 </div>
             )}
 
-            {/* Пустой экран если fileId не задан */}
-            {!fileId && status === 'idle' && (
-                <div style={styles.overlay}>
-                    <p style={{ color: '#888', fontFamily: 'sans-serif' }}>
-                        Откройте документ .docx для редактирования
-                    </p>
-                </div>
-            )}
-
-            {/* Контейнер DocEditor */}
+            {/* HOST: React не рендерит сюда детей — ONLYOFFICE пишет сюда imperatively.
+                visibility управляет видимостью без DOM-конфликтов. */}
             <div
-                id={containerId}
-                ref={containerRef}
-                style={{ width: '100%', height: '100%', visibility: status === 'ready' ? 'visible' : 'hidden' }}
+                ref={hostRef}
+                style={{
+                    position: 'absolute',
+                    inset: 0,
+                    visibility: status === 'ready' ? 'visible' : 'hidden',
+                    overflow: 'hidden',
+                }}
             />
         </div>
     );
@@ -176,7 +162,7 @@ const styles = {
         position: 'absolute', inset: 0,
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        background: '#f8f8f8', zIndex: 10
+        background: '#f8f8f8', zIndex: 10,
     },
     overlayText: { marginTop: 16, color: '#555', fontFamily: 'sans-serif', fontSize: 14 },
     spinner: {
@@ -184,8 +170,8 @@ const styles = {
         border: '3px solid #ddd',
         borderTop: '3px solid #0069ff',
         borderRadius: '50%',
-        animation: 'oo-spin 0.8s linear infinite'
-    }
+        animation: 'oo-spin 0.8s linear infinite',
+    },
 };
 
 // Инжектируем keyframes один раз
