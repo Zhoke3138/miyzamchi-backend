@@ -1,6 +1,11 @@
 import { SuperDocEditor } from '@superdoc-dev/react';
 import '@superdoc-dev/react/style.css';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { OnlyOfficeEditor } from './components/onlyoffice-workspace/OnlyOfficeEditor.jsx';
+// OO_MODE: true только локально когда задан VITE_ONLYOFFICE_URL.
+// В продакшне (Render) переменная не задана → false → SuperDoc работает как раньше.
+const OO_MODE    = !!import.meta.env.VITE_ONLYOFFICE_URL;
+const OO_BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
 import * as ReactDOM from 'react-dom/client';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -1153,6 +1158,7 @@ const LEGAL_FONT = 'Times New Roman, serif';
 // Ждём, пока после newDoc смонтируется СВЕЖИЙ редактор (window.docEngine
 // переустанавливается в onEditorCreate при remount'е по новому activeTab).
 const _waitFreshEditor = (prev, timeoutMs = 8000) => new Promise((resolve) => {
+  if (window.__ooMode) return resolve(null); // OO mode: SuperDoc editor не используется
   const start = Date.now();
   const tick = () => {
     const e = window.docEngine;
@@ -1221,6 +1227,8 @@ const _trimEmptyEdges = (editor) => {
 
 async function renderLegalDocument(blocks, opts = {}) {
   const toast = opts.onToast;
+  // OO mode: SuperDoc рендер пропускаем — документ уже открыт в ONLYOFFICE вкладке.
+  if (window.__ooMode) { toast && toast('check', 'Документ сгенерирован'); return true; }
   if (!Array.isArray(blocks) || !blocks.length) { toast && toast('warning', 'Пустой документ'); return false; }
 
   // 1. Новый чистый таб (генерация начисто, без Track Changes).
@@ -1256,6 +1264,7 @@ async function renderLegalDocument(blocks, opts = {}) {
 // Открываем чистый таб ОДИН раз и возвращаем свежий редактор. Дальше блоки
 // дописываются по одному (_appendLegalBlock) — как печатает ИИ.
 const _openLegalDoc = async (opts = {}) => {
+  if (window.__ooMode) return null; // OO mode: вкладку открывает window.__ooOpenDocx в evt.done
   const prev = window.docEngine || null;
   try { if (window.__ideHandleAction) window.__ideHandleAction('newDoc', opts.name || 'Документ.docx'); }
   catch (e) { console.warn('[openLegalDoc] newDoc dispatch failed', e); }
@@ -1470,7 +1479,13 @@ const CreateDocMode = ({ onToast }) => {
           }
           else if (evt.stage) setGenStatus(evt.stage);
           else if (evt.error) errMsg = evt.error;
-          else if (evt.done) result = evt;
+          else if (evt.done) {
+            result = evt;
+            // OO mode: открываем готовый .docx в ONLYOFFICE редакторе
+            if (window.__ooMode && evt.docxFileId && window.__ooOpenDocx) {
+              window.__ooOpenDocx(evt.docxFileId, tplLabel + '.docx');
+            }
+          }
           // evt.heartbeat игнорируем (только держит соединение живым).
         }
       }
@@ -1851,6 +1866,16 @@ const CLAUSES = [
 ];
 const ClauseLibrary = ({ onToast }) => {
   const insertClause = (title, body) => {
+    // OO mode: отправляем текст через bridge → плагин вставит в ONLYOFFICE
+    if (window.__ooMode) {
+      const text = `${title}\n\n${body}`;
+      fetch(OO_BACKEND + '/api/onlyoffice/bridge/push', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'insert', text }),
+      }).catch(() => {});
+      onToast && onToast('check', `Вставлено: ${title}`);
+      return;
+    }
     const ed = window.docEngine;
     if (!ed || !ed.doc || typeof ed.doc.insert !== 'function') { onToast && onToast('warning', 'Откройте документ в редакторе'); return; }
     const html = `<p style="text-align:left;font-family:'Times New Roman', serif;"><strong>${_escHtml(title)}</strong></p>`
@@ -2007,6 +2032,7 @@ const ArticleModal=({article,onClose,onInsert})=>{
 
 /* ═══════════ AGENT MODE HELPERS ═══════════ */
 const getDocSnapshot=()=>{
+  if (window.__ooMode) return {text:'',selection:'',hasSelection:false};
   if (!window.docEngine) return {text:"",selection:"",hasSelection:false};
   try {
     // ⚠️ SuperDoc Document API (без deprecated editor.view):
@@ -2250,6 +2276,15 @@ const applyCommandCaptureIds=(cmd,toastFn)=>{
 };
 
 const applyAgentCommand=(cmd,toastFn)=>{
+  // OO mode: все команды агента → bridge → plugin.js → ONLYOFFICE SDK
+  if (window.__ooMode) {
+    fetch(OO_BACKEND + '/api/onlyoffice/bridge/push', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: cmd.type, text: String(cmd.text||'').trim(), oldText: String(cmd.oldText||'').trim(), anchor: cmd.anchor_text||'' }),
+    }).catch(() => {});
+    toastFn && toastFn('check', 'Команда отправлена в редактор');
+    return true;
+  }
   // ⚠️ Чистый SuperDoc Document API (editor.doc) — НЕ deprecated:
   //   replace→doc.find→doc.replace · comment→doc.comments.create ·
   //   format→doc.format.apply · insert→doc.insert. editor.commands и editor.view
@@ -8174,6 +8209,8 @@ const App=()=>{
   const[tweaks,setTweaks]=useState({accent:'#5C66DE'});
   const[tabs,setTabs]=useState([]);
   const[activeTab,setActiveTab]=useState(null);const[ctxMenu,setCtxMenu]=useState(null);const[toasts,setToasts]=useState([]);
+  // OO mode: карта tabId → fileId (для ONLYOFFICE)
+  const[tabFileIds,setTabFileIds]=useState({});
   const[tourStep,setTourStep]=useState(()=>localStorage.getItem('myz-tour')==='1'?null:0);const drag=useRef(null);
   const[fsHandle,setFsHandle]=useState(null);const[fsFiles,setFsFiles]=useState([]);
   
@@ -8285,6 +8322,42 @@ const App=()=>{
   useEffect(()=>{const h=e=>{const m=e.ctrlKey||e.metaKey;if(m&&e.key==='b'){e.preventDefault();handleAction('toggleLeft')}if(m&&e.key==='j'){e.preventDefault();handleAction('toggleRight')}if(m&&e.key==='p'){e.preventDefault();setShowPalette(p=>!p)}if(m&&e.key==='n'){e.preventDefault();handleAction('newDoc')}if(m&&e.key==='o'){e.preventDefault();handleAction('openFromDisk')}if(m&&e.key==='w'){e.preventDefault();handleAction('closeTab')}if(m&&e.key==='f'){e.preventDefault();handleAction('find')}if(m&&e.key==='/'){e.preventDefault();setShowShortcuts(p=>!p)}if(m&&e.key==='\\'){e.preventDefault();handleAction('splitEditor')}/* k shortcut removed */ if(e.key==='Escape'){setShowPalette(false);setShowShortcuts(false);setCtxMenu(null);setShowFind(false);setShowNotif(false);setShowOriginal(false);/* setInlinePrompt */}};window.addEventListener('keydown',h,true);return()=>window.removeEventListener('keydown',h,true)},[handleAction]);
   // Глобальный мост: NPAView перехватывает ссылки и вызывает этот диспатчер
   useEffect(()=>{window.__ideHandleAction=handleAction;return()=>{delete window.__ideHandleAction}},[handleAction]);
+  // OO mode: регистрируем глобальные хелперы и флаг
+  useEffect(()=>{
+    if (!OO_MODE) return;
+    window.__ooMode    = true;
+    window.__ooBridge  = OO_BACKEND;
+    // Открыть docx по fileId в новой вкладке (вызывается из renderLegalDocument и evt.done)
+    window.__ooOpenDocx = (fileId, name) => {
+      const id = 'tab_oo_' + fileId;
+      setTabFileIds(prev => ({ ...prev, [id]: fileId }));
+      setTabs(prev => {
+        if (prev.find(t => t.id === id)) { setActiveTab(id); return prev; }
+        return [...prev, { id, name: name || 'Документ.docx', buffer: null }];
+      });
+      setActiveTab(id);
+    };
+    return () => { delete window.__ooMode; delete window.__ooBridge; delete window.__ooOpenDocx; };
+  }, []);
+  // OO mode: при смене вкладки загружаем buffer на бэкенд → получаем fileId
+  useEffect(()=>{
+    if (!OO_MODE || !activeTab) return;
+    // Используем функциональный доступ через setter чтобы не добавлять tabFileIds в deps
+    setTabFileIds(prev => {
+      if (prev[activeTab]) return prev; // уже загружен
+      const tab = tabs.find(t => t.id === activeTab);
+      if (!tab?.buffer) return prev; // нет DOCX-буфера
+      // Асинхронная загрузка — не блокирует render
+      const blob = new Blob([tab.buffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const fd = new FormData();
+      fd.append('file', blob, tab.name || 'document.docx');
+      fetch(OO_BACKEND + '/api/files/upload', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(({ fileId }) => { if (fileId) setTabFileIds(p => ({ ...p, [activeTab]: fileId })); })
+        .catch(e => console.warn('[OO] upload:', e));
+      return prev; // не меняем пока — обновится после fetch
+    });
+  }, [activeTab, tabs]);
   // Жёсткий перехват Ctrl/Cmd+S: ловим на document в capture-фазе, гасим
   // браузерное "сохранить страницу" и вызываем наш .docx-экспорт.
   useEffect(()=>{
@@ -8531,16 +8604,37 @@ const App=()=>{
         {leftOpen && !isMobile && <Handle onMD={startDrag('l')}/>}
         {/* EDITOR — always full width on mobile */}
         <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
-          {useMemo(() => {
+          {OO_MODE ? (() => {
+            // ── ONLYOFFICE режим (только локально, когда VITE_ONLYOFFICE_URL задан) ──
+            const ooFileId = tabFileIds[activeTab] || null;
+            const currentTab = tabs.find(t => t.id === activeTab);
+            if (!activeTab || !currentTab) return null;
+            if (ooFileId) {
+              return <OnlyOfficeEditor
+                key={activeTab}
+                fileId={ooFileId}
+                onSaved={(newKey) => { /* documentKey обновляется через callback */ }}
+                onError={(msg) => addToast('warning', msg)}
+              />;
+            }
+            // Буфер есть — идёт загрузка на бэкенд
+            if (currentTab.buffer) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:'var(--muted)',fontSize:14}}>⏳ Открываю в редакторе…</div>;
+            // Нет буфера — пустая вкладка (текстовый файл или новый документ)
+            return <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',color:'var(--muted)',gap:8}}>
+              <span style={{fontSize:40}}>📄</span>
+              <span style={{fontSize:14}}>Откройте .docx файл через меню</span>
+            </div>;
+          })() : useMemo(() => {
+            // ── SuperDoc режим (продакшн Render, когда OO_MODE=false) ──
             const currentTab = tabs.find(t => t.id === activeTab);
             const isValidDocx = currentTab?.buffer && currentTab.buffer instanceof ArrayBuffer;
             const docFile = isValidDocx ? new Blob([currentTab.buffer]) : null;
             return (
               <>
-              <SuperDocEditor 
+              <SuperDocEditor
                 key={`${activeTab}_${currentTab?.buffer?.byteLength || 0}`}
-                document={docFile} 
-                documentMode="editing" 
+                document={docFile}
+                documentMode="editing"
                 fonts={{ assetBaseUrl: '/superdoc-fonts/' }}
                 toolbar={{ groups: ['history', 'text', 'paragraph', 'insert', 'list', 'indent', 'font-controls', 'table', 'tools'], fonts: [{ label: 'Times New Roman', key: 'Times New Roman, serif' }] }}
                 onReady={(e) => { window.superdoc = e.superdoc; }}

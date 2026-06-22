@@ -307,6 +307,67 @@
     }
 
     // ════════════════════════════════════════════════════════════════
+    // BRIDGE — обработчик команд от App.jsx (через backend relay)
+    // Полный список cmd.type: insert, comment, replace_smart,
+    // replace_selection, insert_end, replace_all, annotate
+    // ════════════════════════════════════════════════════════════════
+
+    function applyBridgeCmd(cmd) {
+        var type    = cmd.type    || '';
+        var text    = cmd.text    || '';
+        var oldText = cmd.oldText || '';
+        var anchor  = cmd.anchor  || '';
+
+        if (type === 'insert' || type === 'replace_selection') {
+            state.aiAnswer = text;
+            insertAnswer();
+
+        } else if (type === 'insert_end') {
+            Asc.scope = { text: text };
+            window.Asc.plugin.callCommand(function () {
+                var oDoc  = Api.GetDocument();
+                var oPara = Api.CreateParagraph();
+                oPara.AddText(Asc.scope.text);
+                oDoc.Push(oPara);
+            }, false, function () { ui.toast('✅ Вставлено в конец'); });
+
+        } else if (type === 'replace_smart') {
+            var searchFor = oldText || anchor;
+            if (searchFor) {
+                Asc.scope = { searchText: searchFor, newText: text };
+                window.Asc.plugin.callCommand(function () {
+                    var results = Api.GetDocument().Search(Asc.scope.searchText);
+                    if (results && results.length > 0) {
+                        results[0].SetText(Asc.scope.newText);
+                    }
+                }, false, function () { ui.toast('✅ Заменено'); });
+            } else {
+                state.aiAnswer = text;
+                insertAnswer();
+            }
+
+        } else if (type === 'replace_all') {
+            var needle = oldText || anchor;
+            if (needle) {
+                Asc.scope = { needle: needle, newText: text };
+                window.Asc.plugin.callCommand(function () {
+                    var results = Api.GetDocument().Search(Asc.scope.needle);
+                    for (var i = 0; i < (results || []).length; i++) {
+                        results[i].SetText(Asc.scope.newText);
+                    }
+                }, false, function () { ui.toast('✅ Заменено везде'); });
+            }
+
+        } else if (type === 'comment') {
+            state.aiAnswer = text;
+            addCommentAnswer();
+
+        } else if (type === 'annotate' && Array.isArray(cmd.risks)) {
+            annotateRisks(cmd.risks);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
     // UI — управление интерфейсом
     // ════════════════════════════════════════════════════════════════
 
@@ -433,23 +494,20 @@
             });
         }
 
-        // Task 2.3: localStorage-мост host (AppOnlyOfficeSandbox) → plugin
-        var _lastCmdTs = 0;
+        // Bridge: поллинг backend-relay (App.jsx и plugin.js — разные origin,
+        // localStorage между ними не шарится). App.jsx пишет в /bridge/push,
+        // плагин забирает здесь каждые 600мс.
+        var _bridgeTs = Date.now() - 3000;
         setInterval(function () {
-            try {
-                var raw = localStorage.getItem('miyzamchi_plugin_cmd');
-                if (!raw) return;
-                var cmd = JSON.parse(raw);
-                if (!cmd || cmd.ts <= _lastCmdTs) return;
-                _lastCmdTs = cmd.ts;
-                state.aiAnswer = cmd.text || '';
-                if (cmd.type === 'insert') {
-                    insertAnswer();
-                } else if (cmd.type === 'comment') {
-                    addCommentAnswer();
-                }
-            } catch (_) {}
-        }, 500);
+            fetch(BACKEND_URL + '/api/onlyoffice/bridge/poll?since=' + _bridgeTs)
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (data) {
+                    if (!data) return;
+                    _bridgeTs = data.ts || _bridgeTs;
+                    (data.cmds || []).forEach(applyBridgeCmd);
+                })
+                .catch(function () {});
+        }, 600);
     });
 
 }(window));

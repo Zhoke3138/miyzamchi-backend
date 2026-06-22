@@ -178,6 +178,29 @@ router.post('/onlyoffice/callback/:fileId', async (req, res) => {
     res.json({ error: 0 });
 });
 
+// ── Bridge API: App.jsx → plugin.js (кросс-origin через backend) ──
+// App.jsx (localhost:5173) и plugin.js (localhost:8080) — разные origin.
+// localStorage не разделяется между ними. Решение: relay через backend.
+//
+// POST /api/onlyoffice/bridge/push  { type, text, oldText, anchor }
+// GET  /api/onlyoffice/bridge/poll  ?since=<ts>  → { cmds:[], ts }
+const _bridgeQueue = [];
+
+router.post('/onlyoffice/bridge/push', express.json({ limit: '256kb' }), (req, res) => {
+    const { type, text, oldText, anchor } = req.body || {};
+    if (!type) return res.status(400).json({ error: 'type required' });
+    const cmd = { type, text: text || '', oldText: oldText || '', anchor: anchor || '', ts: Date.now() };
+    _bridgeQueue.push(cmd);
+    if (_bridgeQueue.length > 50) _bridgeQueue.splice(0, _bridgeQueue.length - 50);
+    res.json({ ok: true });
+});
+
+router.get('/onlyoffice/bridge/poll', (req, res) => {
+    const since = parseInt(req.query.since) || 0;
+    const cmds = _bridgeQueue.filter(c => c.ts > since);
+    res.json({ cmds, ts: Date.now() });
+});
+
 // ── POST /api/onlyoffice/audit-docx ────────────────────────────────
 // Принимает массив рисков из /api/analyze-document → создаёт
 // сводный .docx с аннотациями → возвращает {fileId} для ONLYOFFICE.
