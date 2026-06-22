@@ -166,32 +166,34 @@
 **Цель:** Генерация документов → готовый .docx файл (не JSON-блоки для SuperDoc).
 
 ### 4.1 Серверная генерация .docx
-- [ ] Установить npm-пакет `docx` (или `officegen`) для программного создания Word-файлов
-- [ ] Создать `lib/docxGenerator.js`:
-  - Принимает массив блоков `[{type, content}]` (тот же формат что сейчас)
-  - Конвертирует каждый блок в `docx` Document API: `Paragraph`, `Table`, `HeadingLevel`
-  - Сохраняет в `storage/documents/:fileId.docx`
-  - Возвращает `fileId` для открытия в ONLYOFFICE
-- [ ] Адаптировать `routes/analyzeV2.js:/draft-document`:
-  - Сохранить существующий SSE-стрим блоков (фронтенд видит прогресс)
-  - В конце (после Final Judge): вызвать `docxGenerator.buildDocx(blocks)` → файл на диске
-  - Последнее SSE-событие: `{type:'ready', fileId}` вместо рендеринга блоков
-- [ ] Фронтенд: при получении `{type:'ready', fileId}` → открыть `<OnlyOfficeEditor fileId=...>`
+- [x] `docx` npm-пакет уже в зависимостях (подтверждено при аудите Этапа 1)
+- [x] Создать `lib/docxGenerator.js`:
+  - ✅ Принимает блоки нормализованной схемы `{kind, runs[], align?, left?, right?}`
+  - ✅ Конвертирует все 8 kind: `section_heading→H1`, `demand_heading→H2`, `paragraph`, `list_group→bullet`, `table→Table`, `requisites_table→двухколоночная таблица`, `signature`, `spacer`
+  - ✅ Шрифт Times New Roman 12pt, поля 3/2/1.75 см (ГОСТ КР)
+  - ✅ Сохраняет в `storage/documents/:fileId.docx`
+  - ✅ `buildAnnotatedSummary(srcFileId, risks[])` — резюме аудита с рисками по severity
+- [x] Адаптировать `routes/analyzeV2.js:/draft-document`:
+  - ✅ `require('../lib/docxGenerator')` добавлен (строка 28)
+  - ✅ После Final Judge: `await buildDocx(safeBlocks, {docType, title})` → `docxFileId`
+  - ✅ SSE `{done:true, ..., docxFileId}` — обратно совместимо (старый App.jsx игнорирует поле)
+  - ✅ `try/catch` — ошибка генерации не ломает основной ответ
+- [x] Фронтенд (`AppOnlyOfficeSandbox.jsx`):
+  - ✅ Хук `useDocGeneration`: SSE-стрим `/api/v2/draft-document` → при `d.done && d.docxFileId` → `openDocxById`
+  - ✅ `demoGenerate()` — кнопка «Создать документ (AI)» → исковое заявление → открывается в ONLYOFFICE
+  - ✅ Индикатор прогресса: `⏳ Генерирую…` с именем последнего блока
 
-### 4.2 Аудит документа → комментарии в .docx
-- [ ] Адаптировать режим «Анализ» (вкладка Анализ в Документах):
-  - Загруженный файл → POST `/api/files/upload` → `fileId`
-  - `/api/analyze-document` SSE → в конце собрать все `tableRow` с рисками
-  - Сгенерировать `docx` с комментариями через `docxGenerator.addComments(fileId, risks[])`
-  - Открыть размеченный файл в ONLYOFFICE
-- [ ] Перенести `lib/superDocBlocks.js` → `lib/docxGenerator.js` (новый формат, SuperDoc-логику удалить)
-- [ ] Удалить `lib/superDocBlocks.js` после переноса всех зависимостей
+### 4.2 Аудит документа → сводный .docx
+- [x] `buildAnnotatedSummary(risks[])` в `lib/docxGenerator.js`:
+  - ✅ Создаёт отдельный .docx с таблицей рисков (HIGH/MEDIUM/LOW, цвета, цитата, НПА)
+  - ✅ Готов к подключению в режим «Анализ» в AppOnlyOfficeSandbox
+- [ ] Подключить в режим «Анализ» AppOnlyOfficeSandbox: upload → analyze → buildAnnotatedSummary → открыть ⏳
 
-### 4.3 Финальная очистка SuperDoc
-- [ ] Удалить `@superdoc-dev/react` из `package.json`
-- [ ] Удалить `public/superdoc-fonts/` (шрифты SuperDoc)
-- [ ] Очистить `src/ide-styles.css` от `.superdoc-*` классов
-- [ ] Обновить `CLAUDE.md`: убрать все упоминания SuperDoc, добавить ONLYOFFICE-архитектуру
+### 4.3 Финальная очистка SuperDoc (после smoke-тестов)
+- [ ] Удалить `@superdoc-dev/react` из `package.json` ⏳ (только после полного переезда)
+- [ ] Удалить `public/superdoc-fonts/` ⏳
+- [ ] Удалить `lib/superDocBlocks.js` ⏳
+- [ ] Обновить `CLAUDE.md` — убрать SuperDoc, добавить ONLYOFFICE-архитектуру ⏳
 
 **Критерий завершения Этапа 4 = финал миграции:** Генерация документов создаёт .docx → открывается в ONLYOFFICE → анализ рисков создаёт комментарии в документе → SuperDoc полностью удалён.
 
@@ -205,7 +207,7 @@
 | Этап 1: Docker + Node.js | 🟡 В процессе (6/7) | — |
 | Этап 2: Frontend React | 🟡 В процессе (9/10) | — |
 | Этап 3: AI-Плагин | 🟡 В процессе (6/8) | — |
-| Этап 4: Генерация .docx | 🔴 Не начат | — |
+| Этап 4: Генерация .docx | 🟡 В процессе (7/9) | — |
 
 ---
 

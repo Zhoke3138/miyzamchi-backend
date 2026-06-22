@@ -1,12 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════
 // AppOnlyOfficeSandbox.jsx — Тестовый клон App.jsx с ONLYOFFICE
-// Этап 2 миграции: изолированная песочница, App.jsx не трогаем.
+// Этап 2+4 миграции: изолированная песочница, App.jsx не трогаем.
 //
 // Чтобы переключиться на этот компонент для тестирования,
 // в src/main.jsx замените <App /> на <AppOnlyOfficeSandbox />.
 // ═══════════════════════════════════════════════════════════════════
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { OnlyOfficeEditor } from './OnlyOfficeEditor.jsx';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://miyzamchi-backend.onrender.com';
@@ -24,6 +24,90 @@ function useToasts() {
 }
 
 const ICONS = { file:'📄', plus:'➕', save:'💾', trash:'🗑', warning:'⚠️', law:'⚖️', ok:'✅', spin:'⏳' };
+
+// ── Генерация документа через /api/v2/draft-document (SSE) ────────
+// Возвращает {docxFileId} через событие done.docxFileId
+function useDocGeneration(addToast) {
+    const [genStatus, setGenStatus] = useState('idle'); // idle|loading|done
+    const [genProgress, setGenProgress] = useState('');
+    const abortRef = useRef(null);
+
+    const generate = useCallback(async (docType, messages, onReady) => {
+        setGenStatus('loading');
+        setGenProgress('Собираю досье…');
+        abortRef.current?.abort();
+        abortRef.current = new AbortController();
+
+        try {
+            // Шаг 1: интервьюер (собрать summary)
+            const intakeResp = await fetch(`${BACKEND_URL}/api/v2/draft-intake`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ docType, messages }),
+                signal: abortRef.current.signal,
+            });
+            if (!intakeResp.ok) throw new Error(`intake: ${intakeResp.status}`);
+            const intake = await intakeResp.json();
+            if (!intake.ready) {
+                setGenStatus('idle');
+                addToast('warning', 'Необходима дополнительная информация');
+                return null;
+            }
+
+            // Шаг 2: генерация SSE
+            setGenProgress('Генерирую документ…');
+            const draftResp = await fetch(`${BACKEND_URL}/api/v2/draft-document`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ docType, summary: intake.summary, plan: intake.plan }),
+                signal: abortRef.current.signal,
+            });
+            if (!draftResp.ok) throw new Error(`draft: ${draftResp.status}`);
+
+            const reader  = draftResp.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                const lines = buf.split('\n');
+                buf = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const raw = line.slice(6).trim();
+                    if (raw === '[DONE]') continue;
+                    try {
+                        const d = JSON.parse(raw);
+                        if (d.block?.kind) {
+                            setGenProgress(`Блок: ${d.block.kind}`);
+                        }
+                        if (d.done && d.docxFileId) {
+                            setGenStatus('done');
+                            setGenProgress('');
+                            addToast('ok', 'Документ готов — открываю в редакторе');
+                            onReady(d.docxFileId);
+                            return d.docxFileId;
+                        }
+                    } catch (_) {}
+                }
+            }
+            setGenStatus('idle');
+            addToast('warning', 'Документ создан, но ONLYOFFICE-файл не получен');
+            return null;
+        } catch (e) {
+            if (e.name !== 'AbortError') {
+                setGenStatus('idle');
+                addToast('warning', 'Ошибка генерации: ' + e.message);
+            }
+            return null;
+        }
+    }, [addToast]);
+
+    return { genStatus, genProgress, generate };
+}
 
 // ── Загрузка файла на бэкенд ───────────────────────────────────────
 async function uploadDocx(file) {
@@ -108,6 +192,7 @@ export default function AppOnlyOfficeSandbox() {
     const [rightOpen, setRightOpen] = useState(true);
     const [chatInput, setChatInput] = useState('');
     const { messages, loading: chatLoading, send: sendChat } = useMiyzamchiChat();
+    const { genStatus, genProgress, generate } = useDocGeneration(addToast);
     const inputRef = useRef(null);
 
     const bg   = dark ? '#1a1a2e' : '#f0f2f5';
@@ -188,6 +273,23 @@ export default function AppOnlyOfficeSandbox() {
         });
     }, [activeTab]);
 
+    // Открыть файл по fileId (после генерации или аудита)
+    const openDocxById = useCallback((fileId, name) => {
+        const id = 'tab_' + fileId;
+        if (tabs.find(t => t.id === id)) { setActiveTab(id); return; }
+        const documentKey = `${fileId}_${Date.now()}`;
+        setTabs(p => [...p, { id, name: name || `Документ_${fileId.slice(0,6)}.docx`, fileId, documentKey }]);
+        setActiveTab(id);
+    }, [tabs]);
+
+    // Демо-запуск генерации искового заявления
+    const demoGenerate = useCallback(async () => {
+        const demoMessages = [
+            { role: 'user', content: 'Исковое заявление о взыскании долга 150000 сом с ответчика ОсОО "Альфа", истец — Иванов Иван Иванович, г. Бишкек' }
+        ];
+        await generate('isk', demoMessages, (fileId) => openDocxById(fileId, 'Исковое_заявление.docx'));
+    }, [generate, openDocxById]);
+
     const onSaved = useCallback(newKey => {
         if (!newKey || !activeTab) return;
         setTabs(p => p.map(t => t.id === activeTab ? { ...t, documentKey: newKey } : t));
@@ -210,7 +312,10 @@ export default function AppOnlyOfficeSandbox() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: accent, marginRight: 8 }}>⚖ Мыйзамчы</span>
                 <span style={{ fontSize: 11, color: '#888', marginRight: 8 }}>ONLYOFFICE Sandbox</span>
                 <button onClick={openFile} style={btnStyle(accent)}>📂 Открыть</button>
-                <button onClick={newDoc}  style={btnStyle('#28a745')}>➕ Создать</button>
+                <button onClick={newDoc}  style={btnStyle('#28a745')}>➕ Пустой</button>
+                <button onClick={demoGenerate} disabled={genStatus === 'loading'} style={{ ...btnStyle('#7c3aed'), opacity: genStatus === 'loading' ? 0.6 : 1 }}>
+                    {genStatus === 'loading' ? `⏳ ${genProgress || 'Генерирую…'}` : '✨ Создать документ (AI)'}
+                </button>
                 <div style={{ flex: 1 }} />
                 <button onClick={() => setDark(d => !d)} style={btnStyle('#555')}>
                     {dark ? '☀ Светлая' : '🌙 Тёмная'}

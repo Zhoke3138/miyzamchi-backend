@@ -25,6 +25,7 @@ const { createHybridSegmenter } = require('../lib/hybridSegmenter');
 const { createLightLLMCascade } = require('../lib/llmCascade');
 const { buildChunkContexts, buildLocalContextBlock } = require('../lib/localContext');
 const { buildSuperDocBlocks } = require('../lib/superDocBlocks');
+const { buildDocx } = require('../lib/docxGenerator');
 const clients = require('../services/llmClients');
 const { getTemplate, buildChecklist } = require('../lib/docTemplates');
 
@@ -1283,6 +1284,16 @@ ${tpl.courtDoc
         }
       } catch (e) { console.warn('[draft-document] self-check failed:', e.message); }
 
+      // Этап 4: параллельно с отправкой done — генерируем .docx для ONLYOFFICE
+      let docxFileId = null;
+      try {
+        const title = String((plan.facts && (plan.facts.docName || plan.facts.title)) || docType || '').trim();
+        const result = await buildDocx(safeBlocks, { docType, title });
+        docxFileId = result.fileId;
+      } catch (e) {
+        console.warn('[draft-document] docx generation failed (non-fatal):', e.message);
+      }
+
       sse({
         done: true,
         blocks: safeBlocks,
@@ -1290,6 +1301,7 @@ ${tpl.courtDoc
         articlesUsed,
         review,
         route: { planner: 'gemini-3.1-flash-lite', retrieval: 'rag-4groups', drafter: usedModel, reviewer: 'gemini-3.1-flash-lite' },
+        ...(docxFileId ? { docxFileId } : {}),
       });
       return done();
     } catch (err) {
