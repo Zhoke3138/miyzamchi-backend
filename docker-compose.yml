@@ -21,7 +21,7 @@ services:
       - ds_lib:/var/lib/onlyoffice
       - ds_db:/var/lib/postgresql
       # AI-плагин Мыйзамчы (Этап 3):
-      # - ./onlyoffice-plugin/miyzamchi-ai:/var/www/onlyoffice/documentserver/sdkjs-plugins/miyzamchi-ai
+      - ./onlyoffice-plugin/miyzamchi-ai:/var/www/onlyoffice/documentserver/sdkjs-plugins/miyzamchi-ai
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/healthcheck"]

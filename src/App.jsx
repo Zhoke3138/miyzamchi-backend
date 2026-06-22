@@ -8129,6 +8129,23 @@ const StatusBar=({dark,tabCount,unsaved,activeName})=>{
 
 /* ═══ Magic Wand ═══ */
 
+/* ═══ OOEditorSlot (module-level, no hook violation) ═══ */
+// Отдельный компонент чтобы не нарушать правила хуков внутри App.
+function OOEditorSlot({ activeTab, tabFileIds, tabs, onError }) {
+  const ooFileId = activeTab ? (tabFileIds[activeTab] || null) : null;
+  const currentTab = activeTab ? tabs.find(t => t.id === activeTab) : null;
+  if (!activeTab || !currentTab) return (
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',color:'var(--muted)',gap:8}}>
+      <span style={{fontSize:40}}>📄</span>
+      <span style={{fontSize:14}}>Откройте .docx файл через меню</span>
+    </div>
+  );
+  if (!ooFileId) return currentTab.buffer
+    ? <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:'var(--muted)',fontSize:14}}>⏳ Открываю в редакторе…</div>
+    : <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',color:'var(--muted)',gap:8}}><span style={{fontSize:40}}>📄</span><span style={{fontSize:14}}>Откройте .docx файл через меню</span></div>;
+  return <OnlyOfficeEditor key={activeTab} fileId={ooFileId} onSaved={()=>{}} onError={onError} />;
+}
+
 /* ═══ App ═══ */
 let _tabIdCounter=10;
 const App=()=>{
@@ -8211,6 +8228,7 @@ const App=()=>{
   const[activeTab,setActiveTab]=useState(null);const[ctxMenu,setCtxMenu]=useState(null);const[toasts,setToasts]=useState([]);
   // OO mode: карта tabId → fileId (для ONLYOFFICE)
   const[tabFileIds,setTabFileIds]=useState({});
+  const _ooUploadedRef = useRef({});
   const[tourStep,setTourStep]=useState(()=>localStorage.getItem('myz-tour')==='1'?null:0);const drag=useRef(null);
   const[fsHandle,setFsHandle]=useState(null);const[fsFiles,setFsFiles]=useState([]);
   
@@ -8342,21 +8360,17 @@ const App=()=>{
   // OO mode: при смене вкладки загружаем buffer на бэкенд → получаем fileId
   useEffect(()=>{
     if (!OO_MODE || !activeTab) return;
-    // Используем функциональный доступ через setter чтобы не добавлять tabFileIds в deps
-    setTabFileIds(prev => {
-      if (prev[activeTab]) return prev; // уже загружен
-      const tab = tabs.find(t => t.id === activeTab);
-      if (!tab?.buffer) return prev; // нет DOCX-буфера
-      // Асинхронная загрузка — не блокирует render
-      const blob = new Blob([tab.buffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-      const fd = new FormData();
-      fd.append('file', blob, tab.name || 'document.docx');
-      fetch(OO_BACKEND + '/api/files/upload', { method: 'POST', body: fd })
-        .then(r => r.json())
-        .then(({ fileId }) => { if (fileId) setTabFileIds(p => ({ ...p, [activeTab]: fileId })); })
-        .catch(e => console.warn('[OO] upload:', e));
-      return prev; // не меняем пока — обновится после fetch
-    });
+    if (_ooUploadedRef.current[activeTab]) return; // уже загружен/загружается
+    const tab = tabs.find(t => t.id === activeTab);
+    if (!tab?.buffer) return; // нет DOCX-буфера
+    _ooUploadedRef.current[activeTab] = true;
+    const blob = new Blob([tab.buffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const fd = new FormData();
+    fd.append('file', blob, tab.name || 'document.docx');
+    fetch(OO_BACKEND + '/api/files/upload', { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(({ fileId }) => { if (fileId) setTabFileIds(p => ({ ...p, [activeTab]: fileId })); })
+      .catch(e => { console.warn('[OO] upload:', e); delete _ooUploadedRef.current[activeTab]; });
   }, [activeTab, tabs]);
   // Жёсткий перехват Ctrl/Cmd+S: ловим на document в capture-фазе, гасим
   // браузерное "сохранить страницу" и вызываем наш .docx-экспорт.
@@ -8604,27 +8618,10 @@ const App=()=>{
         {leftOpen && !isMobile && <Handle onMD={startDrag('l')}/>}
         {/* EDITOR — always full width on mobile */}
         <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
-          {OO_MODE ? (() => {
-            // ── ONLYOFFICE режим (только локально, когда VITE_ONLYOFFICE_URL задан) ──
-            const ooFileId = tabFileIds[activeTab] || null;
-            const currentTab = tabs.find(t => t.id === activeTab);
-            if (!activeTab || !currentTab) return null;
-            if (ooFileId) {
-              return <OnlyOfficeEditor
-                key={activeTab}
-                fileId={ooFileId}
-                onSaved={(newKey) => { /* documentKey обновляется через callback */ }}
-                onError={(msg) => addToast('warning', msg)}
-              />;
-            }
-            // Буфер есть — идёт загрузка на бэкенд
-            if (currentTab.buffer) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%',color:'var(--muted)',fontSize:14}}>⏳ Открываю в редакторе…</div>;
-            // Нет буфера — пустая вкладка (текстовый файл или новый документ)
-            return <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100%',color:'var(--muted)',gap:8}}>
-              <span style={{fontSize:40}}>📄</span>
-              <span style={{fontSize:14}}>Откройте .docx файл через меню</span>
-            </div>;
-          })() : useMemo(() => {
+          {/* useMemo всегда вызывается (нарушение правил хуков при тернаре исправлено).
+              В OO_MODE возвращает null, OOEditorSlot рендерится отдельно ниже. */}
+          {useMemo(() => {
+            if (OO_MODE) return null;
             // ── SuperDoc режим (продакшн Render, когда OO_MODE=false) ──
             const currentTab = tabs.find(t => t.id === activeTab);
             const isValidDocx = currentTab?.buffer && currentTab.buffer instanceof ArrayBuffer;
@@ -8644,6 +8641,13 @@ const App=()=>{
             </>
             );
           }, [activeTab, tabs.find(t => t.id === activeTab)?.buffer])}
+          {/* OO_MODE: ONLYOFFICE-слот (отдельный компонент на уровне модуля) */}
+          {OO_MODE && <OOEditorSlot
+            activeTab={activeTab}
+            tabFileIds={tabFileIds}
+            tabs={tabs}
+            onError={(msg) => addToast('warning', msg)}
+          />}
         </div>
         {rightOpen && !isMobile && <Handle onMD={startDrag('r')}/>}
         {/* RIGHT PANEL — desktop: inline-flex; mobile: fixed overlay */}
