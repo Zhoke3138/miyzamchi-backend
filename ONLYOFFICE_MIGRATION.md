@@ -125,35 +125,37 @@
 **Цель:** AI-функциональность прямо в интерфейсе ONLYOFFICE (боковая панель).
 
 ### 3.1 Структура плагина
-- [ ] Создать папку `onlyoffice-plugin/miyzamchi-ai/`:
-  ```
-  config.json     — манифест (guid, isInsideMode:true, initDataType:'text')
-  index.html      — боковая панель: textarea выделения, кнопки, результат
-  plugin.js       — логика: перехват текста, /api/chat, вставка ответа
-  icon.png        — иконка 40x40px
-  ```
-- [ ] Написать `config.json`: `initOnSelectionChanged: true`, `EditorsSupport: ["word"]`, `isModal: false`
+- [x] Создать папку `onlyoffice-plugin/miyzamchi-ai/`:
+  - ✅ `config.json` — манифест: guid, isInsideMode:true, initDataType:'text', initOnSelectionChanged:true
+  - ✅ `index.html` — боковая панель: режимы, выделение, textarea, результат, кнопки действий
+  - ✅ `plugin.js` — вся логика: перехват текста, SSE, вставка, комментарии, анализ
+  - ✅ `README.md` — инструкция по установке и генерации иконки
+  - ⏳ `icon.png` / `icon@2x.png` — нужно создать вручную (40×80 px, инструкция в README)
+- [x] Написать `config.json`: все поля заполнены, `initOnSelectionChanged: true`
 
 ### 3.2 plugin.js — три ключевых функции
-- [ ] **Перехват выделенного текста:**
-  - `window.Asc.plugin.init(text)` — получает текст при запуске
-  - `window.Asc.plugin.onExternalMouseUp` → `callCommand(() => Api.GetDocument().GetRangeBySelect().GetText())`
-- [ ] **Отправка на `/api/chat` (SSE):**
-  - `fetch('https://miyzamchi-backend.onrender.com/api/chat', { method:'POST', body: JSON.stringify({message, mode:'thinking'}) })`
-  - Читать SSE-стрим: `response.body.getReader()` → `TextDecoder` → парсинг `data: {type:'text', content}` событий
-  - Показывать ответ в боковой панели в реальном времени
-- [ ] **Вставка результата в документ:**
-  - Кнопка «Заменить» → `callCommand(() => Api.GetDocument().GetRangeBySelect().SetText(aiAnswer))`
-  - Кнопка «Комментарий» → `callCommand(() => Api.GetDocument().GetRangeBySelect().AddComment(aiAnswer, 'Мыйзамчы AI'))`
-  - Кнопка «Анализ документа» → POST `/api/analyze-document` → SSE результаты → AddComment на каждый риск
+- [x] **Перехват выделенного текста:**
+  - ✅ `window.Asc.plugin.init(text)` — получает текст при запуске плагина
+  - ✅ `onExternalMouseUp` → `executeMethod('GetSelectedText', null, cb)` — обновление при смене выделения
+- [x] **Отправка на `/api/chat` (SSE):**
+  - ✅ `fetch(BACKEND_URL + '/api/chat', {mode, agentMode:false})`
+  - ✅ SSE-парсинг: `reader.read()` → `TextDecoder` → построчный разбор `data:` событий
+  - ✅ Потоковый рендер: `ui.appendResult(d.content)` обновляет панель в реальном времени
+  - ✅ `step` события → `ui.setStep()`, `sources` → `ui.setSources()`
+  - ✅ Кнопка «Стоп» через `AbortController`
+- [x] **Вставка результата в документ:**
+  - ✅ `Asc.scope = {text}` → `callCommand` → `oRange.SetText(Asc.scope.text)` (официальный способ передачи данных)
+  - ✅ `callCommand` → `oRange.AddComment(Asc.scope.comment, Asc.scope.author)`
+  - ✅ `analyzeFullDocument()`: получает весь текст через `callCommand` → `/api/chat thinking` → `annotateRisks(risks[])`
+  - ✅ `annotateRisks()`: итерация с `oDoc.Search(text)[0].AddComment()` для каждого риска
 
 ### 3.3 Деплой плагина в DocServer
-- [ ] Смонтировать папку плагина в DocServer контейнер:
+- [x] Volume-маунт описан в `docker-compose.yml` (закомментирован, раскомментировать для активации):
   ```
-  -v /path/to/onlyoffice-plugin:/var/www/onlyoffice/documentserver/sdkjs-plugins/miyzamchi-ai
+  - ./onlyoffice-plugin/miyzamchi-ai:/var/www/onlyoffice/documentserver/sdkjs-plugins/miyzamchi-ai
   ```
-- [ ] Проверить: плагин отображается в меню «Плагины» в ONLYOFFICE
-- [ ] E2E-тест: выделить текст → «Анализировать» → увидеть SSE-стрим в боковой панели → вставить ответ
+- [ ] Проверить: плагин отображается в меню «Плагины» в ONLYOFFICE ⏳ (требует живого DocServer)
+- [ ] E2E-тест: выделить текст → «Анализировать» → SSE-стрим → вставить ответ ⏳
 
 **Критерий перехода к Этапу 4:** Плагин запускается, получает текст, стримит ответ от DeepSeek/Gemini, вставляет результат в .docx.
 
@@ -202,7 +204,7 @@
 | Аудит системы | ✅ Завершён | 22.06.2026 |
 | Этап 1: Docker + Node.js | 🟡 В процессе (6/7) | — |
 | Этап 2: Frontend React | 🟡 В процессе (9/10) | — |
-| Этап 3: AI-Плагин | 🔴 Не начат | — |
+| Этап 3: AI-Плагин | 🟡 В процессе (6/8) | — |
 | Этап 4: Генерация .docx | 🔴 Не начат | — |
 
 ---
