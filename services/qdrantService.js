@@ -19,7 +19,7 @@ const COLLECTION = 'tunduk_guides_collection';
  * @param {number}   [opts.topK=10]
  * @param {number}   [opts.scoreThreshold=0.45]
  */
-async function searchQdrant(vector, { url, apiKey, topK = 10, scoreThreshold = 0.45 } = {}) {
+async function searchQdrant(vector, { url, apiKey, topK = 10, scoreThreshold = 0.2 } = {}) {
     if (!url || !apiKey) {
         console.warn('[Qdrant] QDRANT_URL / QDRANT_API_KEY не заданы — пропускаем');
         return [];
@@ -57,6 +57,8 @@ async function searchQdrant(vector, { url, apiKey, topK = 10, scoreThreshold = 0
 
         const data = await response.json();
         const results = data.result || [];
+
+        console.log(`[Qdrant] raw results: ${results.length}, scores: ${results.slice(0,3).map(r=>r.score.toFixed(3)).join(', ')}`);
 
         return results.map(r => {
             const p = r.payload || {};
