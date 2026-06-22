@@ -42,8 +42,7 @@ async function searchQdrant(vector, { url, apiKey, topK = 10, scoreThreshold = 0
                 body: JSON.stringify({
                     vector,
                     top: topK,
-                    with_payload: true,
-                    score_threshold: scoreThreshold
+                    with_payload: true
                 }),
                 signal: controller.signal
             }
@@ -58,9 +57,14 @@ async function searchQdrant(vector, { url, apiKey, topK = 10, scoreThreshold = 0
         const data = await response.json();
         const results = data.result || [];
 
-        console.log(`[Qdrant] raw results: ${results.length}, scores: ${results.slice(0,3).map(r=>r.score.toFixed(3)).join(', ')}`);
+        const topScores = results.slice(0, 5).map(r => r.score.toFixed(3)).join(', ');
+        console.log(`[Qdrant] raw results: ${results.length}, scores: [${topScores}]`);
+        if (results.length > 0) {
+            console.log(`[Qdrant] sample payload keys: ${Object.keys(results[0].payload || {}).join(', ')}`);
+        }
+        const filtered = results.filter(r => r.score >= scoreThreshold);
 
-        return results.map(r => {
+        return filtered.map(r => {
             const p = r.payload || {};
             // Поддерживаем разные схемы payload FAQ-документов
             const fullText =
