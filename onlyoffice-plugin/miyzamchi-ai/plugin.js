@@ -9,7 +9,10 @@
 (function (window) {
     'use strict';
 
-    var BACKEND_URL = 'https://miyzamchi-backend.onrender.com';
+    // Авто-определение: локальная разработка → localhost:3000, продакшн → Render
+    var BACKEND_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? 'http://localhost:3000'
+        : 'https://miyzamchi-backend.onrender.com';
 
     // ── Состояние плагина ────────────────────────────────────────────
     var state = {
@@ -57,6 +60,12 @@
             if (clean === state.selectedText) return;
             state.selectedText = clean;
             ui.setSelection(clean);
+            // Пушим выделение в backend-relay → App.jsx читает через polling
+            fetch(BACKEND_URL + '/api/onlyoffice/bridge/selection', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: clean })
+            }).catch(function () {});
         });
     }
 
@@ -356,6 +365,26 @@
                         results[i].SetText(Asc.scope.newText);
                     }
                 }, false, function () { ui.toast('✅ Заменено везде'); });
+            }
+
+        } else if (type === 'insert_after') {
+            // Вставить новый абзац после первого вхождения anchor/oldText
+            var searchFor = anchor || oldText;
+            if (searchFor) {
+                Asc.scope = { searchText: searchFor, newText: text };
+                window.Asc.plugin.callCommand(function () {
+                    var results = Api.GetDocument().Search(Asc.scope.searchText);
+                    if (results && results.length > 0) {
+                        var oPara = Api.CreateParagraph();
+                        oPara.AddText(Asc.scope.newText);
+                        // Находим родительский элемент найденного диапазона и Push после него
+                        var oParent = results[0].GetElement(0).GetParentElement();
+                        if (oParent && oParent.Push) oParent.Push(oPara);
+                    }
+                }, false, function () { ui.toast('✅ Вставлено после'); });
+            } else {
+                state.aiAnswer = text;
+                insertAnswer();
             }
 
         } else if (type === 'comment') {

@@ -20,6 +20,10 @@ const crypto  = require('crypto');
 const multer  = require('multer');
 const { buildAnnotatedSummary } = require('../lib/docxGenerator');
 
+// mammoth: извлечение plain-text из DOCX (не бросаем если не установлен)
+let mammoth;
+try { mammoth = require('mammoth'); } catch(_) { console.warn('[OnlyOffice] mammoth не найден — текстовый кеш отключён'); }
+
 // ── Конфиг ──────────────────────────────────────────────────────────
 const STORAGE_DIR  = path.join(__dirname, '..', 'storage', 'documents');
 const OO_JWT_SECRET = process.env.ONLYOFFICE_JWT_SECRET || '';
@@ -29,8 +33,28 @@ const BACKEND_URL   = process.env.BACKEND_URL           || 'https://miyzamchi-ba
 // В памяти: fileId → { documentKey, filename, uploadedAt }
 const fileRegistry = new Map();
 
+// Кеш extracted-текста: fileId → plainText (для ИИ-анализа)
+const fileTextCache = new Map();
+
+// Кеш выделенного текста плагина: fileId → { text, ts }
+const _selectionStore = new Map();
+
 // Гарантируем существование директории хранилища
 fsP.mkdir(STORAGE_DIR, { recursive: true }).catch(() => {});
+
+// ── CORS для ONLYOFFICE-плагина (iframe origin: localhost:8080) ─────
+// server.js разрешает :5173/:5174/:5175, но не :8080 (плагин).
+// Добавляем здесь на уровне роутера, не трогая глобальный CORS.
+router.use(function ooPluginCors(req, res, next) {
+    const origin = req.headers.origin || '';
+    if (/localhost:8080|127\.0\.0\.1:8080/.test(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+});
 
 // ── Multer: только DOCX, до 50 МБ ──────────────────────────────────
 const upload = multer({
@@ -88,6 +112,13 @@ router.post('/files/upload', upload.single('file'), (req, res) => {
 
         fileRegistry.set(fileId, { documentKey, filename, uploadedAt: Date.now() });
 
+        // Фоновое извлечение текста для ИИ-контекста
+        if (mammoth && req.file.path) {
+            mammoth.extractRawText({ path: req.file.path })
+                .then(result => { fileTextCache.set(fileId, result.value || ''); })
+                .catch(() => {});
+        }
+
         const config = buildEditorConfig(fileId, documentKey, filename);
         console.log(`[OnlyOffice] upload: fileId=${fileId} | ${filename} | ${req.file.size} bytes`);
         res.json({ fileId, documentKey, filename, config });
@@ -108,6 +139,28 @@ router.get('/files/:fileId/download', (req, res) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', `attachment; filename="${req.params.fileId}.docx"`);
     fs.createReadStream(filePath).pipe(res);
+});
+
+// ── GET /api/files/:fileId/text ────────────────────────────────────
+// Возвращает plain-text из DOCX для ИИ-анализа.
+// App.jsx вызывает после upload → хранит в window.__ooDocText.
+router.get('/files/:fileId/text', async (req, res) => {
+    const { fileId } = req.params;
+    const cached = fileTextCache.get(fileId);
+    if (cached !== undefined) return res.json({ text: cached });
+
+    const filePath = path.join(STORAGE_DIR, `${fileId}.docx`);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Файл не найден', text: '' });
+    if (!mammoth) return res.json({ text: '' });
+
+    try {
+        const result = await mammoth.extractRawText({ path: filePath });
+        const text = result.value || '';
+        fileTextCache.set(fileId, text);
+        res.json({ text });
+    } catch (err) {
+        res.json({ text: '', error: err.message });
+    }
 });
 
 // ── GET /api/files/:fileId/config ──────────────────────────────────
@@ -199,6 +252,22 @@ router.get('/onlyoffice/bridge/poll', (req, res) => {
     const since = parseInt(req.query.since) || 0;
     const cmds = _bridgeQueue.filter(c => c.ts > since);
     res.json({ cmds, ts: Date.now() });
+});
+
+// ── Bridge Selection: plugin.js → App.jsx ─────────────────────────
+// POST /api/onlyoffice/bridge/selection  { fileId?, text }
+// GET  /api/onlyoffice/bridge/selection?fileId=...
+router.post('/onlyoffice/bridge/selection', express.json({ limit: '64kb' }), (req, res) => {
+    const { fileId, text } = req.body || {};
+    const key = fileId || '__default';
+    _selectionStore.set(key, { text: text || '', ts: Date.now() });
+    res.json({ ok: true });
+});
+
+router.get('/onlyoffice/bridge/selection', (req, res) => {
+    const key = req.query.fileId || '__default';
+    const entry = _selectionStore.get(key) || { text: '', ts: 0 };
+    res.json(entry);
 });
 
 // ── POST /api/onlyoffice/audit-docx ────────────────────────────────
