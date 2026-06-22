@@ -29,13 +29,14 @@ async function searchQdrant(vector, { url, apiKey, topK = 10, scoreThreshold = 0
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
-        const cleanUrl = url.replace(/^["']|["']$/g, '').replace(/\/$/, '');
+        const cleanUrl = url.replace(/^["'\s]|["'\s]$/g, '').replace(/\/$/, '');
+        const cleanKey = apiKey.replace(/^["'\s]|["'\s]$/g, '');
         const response = await fetch(
             `${cleanUrl}/collections/${COLLECTION}/points/search`,
             {
                 method: 'POST',
                 headers: {
-                    'api-key': apiKey,
+                    'api-key': cleanKey,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
