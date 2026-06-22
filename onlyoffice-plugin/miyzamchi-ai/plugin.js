@@ -432,6 +432,24 @@
                 ui.toast('⛔ Остановлено');
             });
         }
+
+        // Task 2.3: localStorage-мост host (AppOnlyOfficeSandbox) → plugin
+        var _lastCmdTs = 0;
+        setInterval(function () {
+            try {
+                var raw = localStorage.getItem('miyzamchi_plugin_cmd');
+                if (!raw) return;
+                var cmd = JSON.parse(raw);
+                if (!cmd || cmd.ts <= _lastCmdTs) return;
+                _lastCmdTs = cmd.ts;
+                state.aiAnswer = cmd.text || '';
+                if (cmd.type === 'insert') {
+                    insertAnswer();
+                } else if (cmd.type === 'comment') {
+                    addCommentAnswer();
+                }
+            } catch (_) {}
+        }, 500);
     });
 
 }(window));

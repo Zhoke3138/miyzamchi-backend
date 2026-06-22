@@ -18,6 +18,7 @@ const fsP     = require('fs/promises');
 const path    = require('path');
 const crypto  = require('crypto');
 const multer  = require('multer');
+const { buildAnnotatedSummary } = require('../lib/docxGenerator');
 
 // ── Конфиг ──────────────────────────────────────────────────────────
 const STORAGE_DIR  = path.join(__dirname, '..', 'storage', 'documents');
@@ -175,6 +176,26 @@ router.post('/onlyoffice/callback/:fileId', async (req, res) => {
 
     // Остальные статусы (1, 3, 4, 7) — просто подтверждаем
     res.json({ error: 0 });
+});
+
+// ── POST /api/onlyoffice/audit-docx ────────────────────────────────
+// Принимает массив рисков из /api/analyze-document → создаёт
+// сводный .docx с аннотациями → возвращает {fileId} для ONLYOFFICE.
+router.post('/onlyoffice/audit-docx', express.json({ limit: '1mb' }), async (req, res) => {
+    try {
+        const { risks, title } = req.body || {};
+        if (!Array.isArray(risks) || !risks.length) {
+            return res.status(400).json({ error: 'risks[] обязателен' });
+        }
+        const result = await buildAnnotatedSummary(null, risks, { title: title || 'Аудит документа' });
+        const documentKey = `${result.fileId}_${Date.now()}`;
+        fileRegistry.set(result.fileId, { documentKey, filename: 'Audit_Miyzamchy.docx', uploadedAt: Date.now() });
+        console.log(`[OnlyOffice] audit-docx: ${risks.length} рисков → fileId=${result.fileId}`);
+        res.json({ fileId: result.fileId, documentKey });
+    } catch (err) {
+        console.error('[OnlyOffice] audit-docx error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ── Вспомогательная: построить конфиг для DocsAPI.DocEditor ────────

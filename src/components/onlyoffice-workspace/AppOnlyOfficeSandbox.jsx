@@ -296,6 +296,114 @@ export default function AppOnlyOfficeSandbox() {
         addToast('save', 'Документ сохранён');
     }, [activeTab, addToast]);
 
+    // ── Task 2.3: localStorage-мост host → ONLYOFFICE plugin ─────────
+    // Плагин (plugin.js) читает этот ключ через setInterval и применяет команду.
+    const sendCommandToPlugin = useCallback((type, text) => {
+        try {
+            localStorage.setItem('miyzamchi_plugin_cmd', JSON.stringify({ type, text, ts: Date.now() }));
+            addToast('ok', type === 'insert' ? 'Команда «Вставить» отправлена плагину' : 'Команда «Комментарий» отправлена плагину');
+        } catch (_) {
+            addToast('warning', 'Плагин Мыйзамчы должен быть открыт в ONLYOFFICE');
+        }
+    }, [addToast]);
+
+    // ── Режим «Аудит документа» (Этап 4) ─────────────────────────────
+    const [auditStatus, setAuditStatus] = useState('idle'); // idle|uploading|analyzing|generating|done
+    const analyzeDocument = useCallback(async () => {
+        // Выбор файла
+        let file;
+        const inp = document.createElement('input');
+        inp.type = 'file'; inp.accept = '.docx,.pdf,.txt';
+        file = await new Promise(resolve => {
+            inp.onchange = () => resolve(inp.files?.[0] || null);
+            inp.oncancel  = () => resolve(null);
+            inp.click();
+        });
+        if (!file) return;
+
+        setAuditStatus('uploading');
+        addToast('spin', 'Загружаем документ…');
+
+        try {
+            // 1. Загрузить файл для ONLYOFFICE (наш маршрут)
+            const ooForm = new FormData();
+            ooForm.append('file', file, file.name);
+            const ooResp = await fetch(`${BACKEND_URL}/api/files/upload`, { method: 'POST', body: ooForm });
+            if (!ooResp.ok) throw new Error(`upload: ${ooResp.status}`);
+            const { fileId: srcFileId } = await ooResp.json();
+
+            // 2. Загрузить файл для анализа (Shadow Pipeline)
+            const anaForm = new FormData();
+            anaForm.append('document', file, file.name);
+            const uploadResp = await fetch(`${BACKEND_URL}/api/upload-document`, { method: 'POST', body: anaForm });
+            const uploadData = uploadResp.ok ? await uploadResp.json().catch(() => ({})) : {};
+            const sessionId  = uploadData.sessionId || null;
+
+            setAuditStatus('analyzing');
+            addToast('spin', 'Анализируем…', 60);
+
+            // 3. SSE-анализ → собираем риски
+            const risks = [];
+            const anaBody = sessionId
+                ? JSON.stringify({ sessionId })
+                : JSON.stringify({ text: await file.text().catch(() => '') });
+
+            const anaResp = await fetch(`${BACKEND_URL}/api/analyze-document`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: anaBody,
+            });
+            if (!anaResp.ok) throw new Error(`analyze: ${anaResp.status}`);
+
+            const reader  = anaResp.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                const lines = buf.split('\n'); buf = lines.pop();
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        const d = JSON.parse(line.slice(6));
+                        if (d.type === 'tableRow' && d.data) {
+                            risks.push({
+                                fragment:  d.data.text        || d.data.fragment || '',
+                                risk:      d.data.detail      || d.data.risk     || '',
+                                severity:  d.data.severity    || 'medium',
+                                norm:      (d.data.cited_articles || []).join(', '),
+                            });
+                        }
+                    } catch (_) {}
+                }
+            }
+
+            setAuditStatus('generating');
+            addToast('spin', `Найдено ${risks.length} замечаний, генерируем отчёт…`, 10);
+
+            // 4. Создать сводный .docx с аннотациями
+            const auditResp = await fetch(`${BACKEND_URL}/api/onlyoffice/audit-docx`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ risks, title: `Аудит: ${file.name}` }),
+            });
+            if (!auditResp.ok) throw new Error(`audit-docx: ${auditResp.status}`);
+            const { fileId: auditFileId } = await auditResp.json();
+
+            // 5. Открыть оба файла в ONLYOFFICE
+            openDocxById(srcFileId,  file.name);
+            openDocxById(auditFileId, `Аудит_${file.name}`);
+            setAuditStatus('done');
+            addToast('ok', `Аудит готов: ${risks.length} замечаний`);
+            setTimeout(() => setAuditStatus('idle'), 3000);
+
+        } catch (e) {
+            setAuditStatus('idle');
+            addToast('warning', 'Ошибка аудита: ' + e.message);
+        }
+    }, [addToast, openDocxById]);
+
     const sendMessage = useCallback(() => {
         const text = chatInput.trim();
         if (!text || chatLoading) return;
@@ -314,7 +422,10 @@ export default function AppOnlyOfficeSandbox() {
                 <button onClick={openFile} style={btnStyle(accent)}>📂 Открыть</button>
                 <button onClick={newDoc}  style={btnStyle('#28a745')}>➕ Пустой</button>
                 <button onClick={demoGenerate} disabled={genStatus === 'loading'} style={{ ...btnStyle('#7c3aed'), opacity: genStatus === 'loading' ? 0.6 : 1 }}>
-                    {genStatus === 'loading' ? `⏳ ${genProgress || 'Генерирую…'}` : '✨ Создать документ (AI)'}
+                    {genStatus === 'loading' ? `⏳ ${genProgress || 'Генерирую…'}` : '✨ Создать (AI)'}
+                </button>
+                <button onClick={analyzeDocument} disabled={auditStatus !== 'idle'} style={{ ...btnStyle('#d97706'), opacity: auditStatus !== 'idle' ? 0.6 : 1 }}>
+                    {auditStatus === 'idle' ? '🔍 Аудит' : `⏳ ${auditStatus === 'uploading' ? 'Загрузка…' : auditStatus === 'analyzing' ? 'Анализ…' : 'Генерация…'}`}
                 </button>
                 <div style={{ flex: 1 }} />
                 <button onClick={() => setDark(d => !d)} style={btnStyle('#555')}>
@@ -381,14 +492,27 @@ export default function AppOnlyOfficeSandbox() {
                                 </p>
                             )}
                             {messages.map((msg, i) => (
-                                <div key={i} style={{
-                                    alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                                    maxWidth: '85%', padding: '8px 12px', borderRadius: 12,
-                                    background: msg.role === 'user' ? accent : (dark ? '#2a2a4a' : '#f0f4ff'),
-                                    color: msg.role === 'user' ? '#fff' : text,
-                                    fontSize: 13, lineHeight: 1.5
-                                }}>
-                                    {msg.loading && !msg.content ? '⏳ Думаю…' : msg.content}
+                                <div key={i} style={{ alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+                                    <div style={{
+                                        padding: '8px 12px', borderRadius: 12,
+                                        background: msg.role === 'user' ? accent : (dark ? '#2a2a4a' : '#f0f4ff'),
+                                        color: msg.role === 'user' ? '#fff' : text,
+                                        fontSize: 13, lineHeight: 1.5
+                                    }}>
+                                        {msg.loading && !msg.content ? '⏳ Думаю…' : msg.content}
+                                    </div>
+                                    {msg.role === 'ai' && !msg.loading && msg.content && (
+                                        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                                            <button onClick={() => sendCommandToPlugin('insert', msg.content)}
+                                                style={{ ...btnStyle('#28a745'), fontSize: 11, padding: '2px 8px' }}>
+                                                ✏ Вставить
+                                            </button>
+                                            <button onClick={() => sendCommandToPlugin('comment', msg.content)}
+                                                style={{ ...btnStyle(accent), fontSize: 11, padding: '2px 8px' }}>
+                                                💬 Комментарий
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
