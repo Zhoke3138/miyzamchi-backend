@@ -2279,14 +2279,82 @@ const applyCommandCaptureIds=(cmd,toastFn)=>{
   return { ok:true, ids };
 };
 
+// Применяет команду агента через ONLYOFFICE Connector API (без плагина).
+// Connector.callCommand выполняет функцию прямо в контексте редактора.
+// Данные передаются через Asc.scope (стандартный механизм OO SDK).
+const _applyViaOOConnector=(connector,cmd,toastFn)=>{
+  const type=cmd.type||'';
+  const text=String(cmd.text||'').trim();
+  const oldText=String(cmd.oldText||'').trim();
+  const anchor=String(cmd.anchor_text||'').trim();
+  if(type==='insert'||type==='replace_selection'){
+    Asc.scope={text};
+    connector.callCommand(function(){
+      var oDoc=Api.GetDocument();var oRange=oDoc.GetRangeBySelect();
+      if(oRange){oRange.SetText(Asc.scope.text);}
+      else{var p=Api.CreateParagraph();p.AddText(Asc.scope.text);oDoc.Push(p);}
+    },false,()=>toastFn&&toastFn('check','Вставлено в документ'));
+  }else if(type==='insert_end'){
+    Asc.scope={text};
+    connector.callCommand(function(){
+      var p=Api.CreateParagraph();p.AddText(Asc.scope.text);Api.GetDocument().Push(p);
+    },false,()=>toastFn&&toastFn('check','Добавлено в конец'));
+  }else if(type==='replace_smart'){
+    const searchFor=oldText||anchor;
+    if(searchFor){
+      Asc.scope={searchText:searchFor,newText:text};
+      connector.callCommand(function(){
+        var r=Api.GetDocument().Search(Asc.scope.searchText);
+        if(r&&r.length>0)r[0].SetText(Asc.scope.newText);
+      },false,()=>toastFn&&toastFn('check','Заменено'));
+    }else{
+      Asc.scope={text};
+      connector.callCommand(function(){
+        var oRange=Api.GetDocument().GetRangeBySelect();
+        if(oRange)oRange.SetText(Asc.scope.text);
+      },false,null);
+    }
+  }else if(type==='replace_all'){
+    const needle=oldText||anchor;
+    if(needle){
+      Asc.scope={needle,newText:text};
+      connector.callCommand(function(){
+        var r=Api.GetDocument().Search(Asc.scope.needle);
+        for(var i=0;i<(r||[]).length;i++)r[i].SetText(Asc.scope.newText);
+      },false,()=>toastFn&&toastFn('check','Заменено везде'));
+    }
+  }else if(type==='insert_after'){
+    const searchFor=anchor||oldText;
+    Asc.scope={searchText:searchFor,newText:text};
+    connector.callCommand(function(){
+      var r=Asc.scope.searchText?Api.GetDocument().Search(Asc.scope.searchText):null;
+      var p=Api.CreateParagraph();p.AddText(Asc.scope.newText);
+      if(r&&r.length>0)r[0].GetElement(0).GetParentElement().Push(p);
+      else Api.GetDocument().Push(p);
+    },false,()=>toastFn&&toastFn('check','Вставлено после'));
+  }else if(type==='comment'){
+    Asc.scope={comment:text};
+    connector.callCommand(function(){
+      var oRange=Api.GetDocument().GetRangeBySelect();
+      if(oRange)oRange.AddComment(Asc.scope.comment,'Мыйзамчы AI');
+    },false,()=>toastFn&&toastFn('check','Комментарий добавлен'));
+  }
+};
+
 const applyAgentCommand=(cmd,toastFn)=>{
-  // OO mode: все команды агента → bridge → plugin.js → ONLYOFFICE SDK
+  // OO mode: сначала пробуем Connector API (прямой доступ без плагина),
+  // fallback → bridge relay (требует активного плагина в ONLYOFFICE).
   if (window.__ooMode) {
-    fetch(OO_BACKEND + '/api/onlyoffice/bridge/push', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: cmd.type, text: String(cmd.text||'').trim(), oldText: String(cmd.oldText||'').trim(), anchor: cmd.anchor_text||'' }),
-    }).catch(() => {});
-    toastFn && toastFn('check', 'Команда отправлена в редактор');
+    const connector=window.__ooConnector;
+    if(connector){
+      _applyViaOOConnector(connector,cmd,toastFn);
+    }else{
+      fetch(OO_BACKEND + '/api/onlyoffice/bridge/push', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: cmd.type, text: String(cmd.text||'').trim(), oldText: String(cmd.oldText||'').trim(), anchor: cmd.anchor_text||'' }),
+      }).catch(() => {});
+      toastFn && toastFn('check', 'Команда отправлена в редактор');
+    }
     return true;
   }
   // ⚠️ Чистый SuperDoc Document API (editor.doc) — НЕ deprecated:
@@ -8358,14 +8426,20 @@ const App=()=>{
         .then(({ text }) => { window.__ooDocText = text || ''; })
         .catch(() => {});
     };
-    // Поллинг выделения от плагина → window.__ooSelection (каждые 1.5с)
+    // Поллинг выделения: через connector (приоритет) или bridge relay (fallback)
     const selInterval = setInterval(() => {
-      const fileId = window.__ooFileId;
-      if (!fileId) return;
-      fetch(OO_BACKEND + '/api/onlyoffice/bridge/selection?fileId=' + fileId)
-        .then(r => r.json())
-        .then(({ text }) => { window.__ooSelection = text || ''; })
-        .catch(() => {});
+      if (window.__ooConnector) {
+        window.__ooConnector.executeMethod('GetSelectedText', null, function(text) {
+          window.__ooSelection = (text || '').trim();
+        });
+      } else {
+        const fileId = window.__ooFileId;
+        if (!fileId) return;
+        fetch(OO_BACKEND + '/api/onlyoffice/bridge/selection?fileId=' + fileId)
+          .then(r => r.json())
+          .then(({ text }) => { window.__ooSelection = text || ''; })
+          .catch(() => {});
+      }
     }, 1500);
     // Открыть docx по fileId в новой вкладке (вызывается из renderLegalDocument и evt.done)
     window.__ooOpenDocx = (fileId, name) => {

@@ -74,7 +74,31 @@ export function OnlyOfficeEditor({ fileId, onSaved, onError }) {
 
                 config.events = {
                     onAppReady: () => {
-                        if (!cancelled) setStatus('ready');
+                        if (!cancelled) {
+                            setStatus('ready');
+                            // Connector API: прямой доступ к документу без плагина
+                            try {
+                                if (typeof editorRef.current?.createConnector === 'function') {
+                                    const conn = editorRef.current.createConnector();
+                                    window.__ooConnector = conn;
+                                    // Начальное чтение текста (актуальнее чем mammoth после правок)
+                                    conn.callCommand(function () {
+                                        var oDoc = Api.GetDocument();
+                                        var lines = [];
+                                        var n = oDoc.GetElementsCount();
+                                        for (var i = 0; i < n; i++) {
+                                            var el = oDoc.GetElement(i);
+                                            if (el && el.GetText) lines.push(el.GetText());
+                                        }
+                                        return lines.join('\n');
+                                    }, false, function (text) {
+                                        if (text) window.__ooDocText = text;
+                                    });
+                                }
+                            } catch (e) {
+                                console.warn('[OO] createConnector недоступен:', e.message);
+                            }
+                        }
                     },
                     onError: ({ data }) => {
                         const msg = data?.errorDescription || 'Ошибка редактора';
@@ -112,6 +136,7 @@ export function OnlyOfficeEditor({ fileId, onSaved, onError }) {
                 try { editorRef.current.destroyEditor(); } catch (_) {}
                 editorRef.current = null;
             }
+            delete window.__ooConnector;
             if (container.parentNode) container.remove();
         };
     }, [fileId]);
