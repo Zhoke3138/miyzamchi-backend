@@ -65,13 +65,68 @@ router.use(function ooPluginCors(req, res, next) {
 });
 
 // ── Раздача файлов плагина (для autostart через pluginsData) ────────
-// ONLYOFFICE DocEditor загружает плагин из BROWSER_URL/api/onlyoffice/plugin/
-// index.html ссылается на plugin.js относительным путём → оба с одного origin.
-const PLUGIN_ALLOWED = new Set(['config.json', 'index.html', 'plugin.js', 'icon.png', 'icon@2x.png']);
+// config.json и index.html — динамические (абсолютные URL + инжект SDK).
+// plugin.js, icon.png, icon@2x.png — статические.
 
+// config.json: абсолютный url нужен для ONLYOFFICE 9.x (относительный не резолвится)
+router.get('/onlyoffice/plugin/config.json', (req, res) => {
+    const pluginBase = `${BROWSER_URL}/api/onlyoffice/plugin`;
+    res.json({
+        name: 'Мыйзамчы AI',
+        nameLocale: { ru: 'Мыйзамчы AI', en: 'Miyzamchy AI' },
+        guid: PLUGIN_GUID,
+        version: '1.0.0',
+        variations: [{
+            description: 'Юридический AI-ассистент для КР',
+            descriptionLocale: { ru: 'Юридический AI-ассистент для КР', en: 'Legal AI assistant for Kyrgyz Republic' },
+            url: `${pluginBase}/index.html`,
+            icons: [`${pluginBase}/icon.png`, `${pluginBase}/icon@2x.png`],
+            icons2: [{ '100%': { normal: `${pluginBase}/icon.png` }, '200%': { normal: `${pluginBase}/icon@2x.png` } }],
+            isViewer: false,
+            EditorsSupport: ['word'],
+            isVisual: true,
+            isModal: false,
+            isInsideMode: true,
+            initDataType: 'text',
+            initData: '',
+            isUpdateOleOnResize: false,
+            buttons: [],
+            events: ['onExternalMouseUp'],
+            initOnSelectionChanged: true
+        }]
+    });
+});
+
+// index.html: инжектируем ONLYOFFICE SDK до plugin.js.
+// Без SDK window.Asc.plugin === undefined → plugin.js падает сразу → сломанный значок.
+// SDK подгружается с DocServer (cross-origin <script> не требует CORS для non-module).
+// ВАЖНО: переопределяем CSP от Helmet:
+//   - frame-ancestors * → ONLYOFFICE (localhost:8080) может встраивать наш iframe
+//   - script-src * → iframe может грузить SDK с localhost:8080
+router.get('/onlyoffice/plugin/index.html', (req, res) => {
+    const htmlPath = path.join(PLUGIN_DIR, 'index.html');
+    try {
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        const sdkTag    = `<script src="${OO_URL}/sdkjs/common/plugins/plugin.js"></script>`;
+        const pluginTag = `<script src="${BROWSER_URL}/api/onlyoffice/plugin/plugin.js"></script>`;
+        html = html.replace('<script src="plugin.js"></script>', sdkTag + '\n' + pluginTag);
+        // Перезаписываем CSP Helmet'а (вызывается ПОСЛЕ helmet middleware)
+        // frame-ancestors * → ONLYOFFICE (localhost:8080) может встраивать этот iframe
+        // X-Frame-Options удаляем — он имеет приоритет над frame-ancestors в старых браузерах
+        res.setHeader('Content-Security-Policy', "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-ancestors *;");
+        res.removeHeader('X-Frame-Options');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(html);
+    } catch (err) {
+        res.status(500).send('Plugin index.html error: ' + err.message);
+    }
+});
+
+// Статические файлы плагина
+const PLUGIN_STATIC = new Set(['plugin.js', 'icon.png', 'icon@2x.png']);
 router.get('/onlyoffice/plugin/:file', (req, res) => {
     const file = req.params.file;
-    if (!PLUGIN_ALLOWED.has(file)) return res.status(404).send('Not found');
+    if (!PLUGIN_STATIC.has(file)) return res.status(404).send('Not found');
     const filePath = path.join(PLUGIN_DIR, file);
     if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
     res.sendFile(filePath);

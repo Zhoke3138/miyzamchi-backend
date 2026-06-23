@@ -14,6 +14,16 @@
         ? 'http://localhost:3000'
         : 'https://miyzamchi-backend.onrender.com';
 
+    // Защита: SDK должен быть загружен ПЕРЕД этим скриптом (через index.html).
+    // Если window.Asc.plugin не существует — показываем ошибку и выходим.
+    if (!window.Asc || !window.Asc.plugin) {
+        document.addEventListener('DOMContentLoaded', function () {
+            document.body.innerHTML = '<div style="padding:20px;color:#c00;font-family:sans-serif;font-size:13px">' +
+                '⚠ ONLYOFFICE SDK не загружен.<br>Перезагрузите страницу.</div>';
+        });
+        return;
+    }
+
     // ── Состояние плагина ────────────────────────────────────────────
     var state = {
         selectedText: '',  // текст выделенный в документе
