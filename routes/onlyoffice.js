@@ -26,9 +26,17 @@ try { mammoth = require('mammoth'); } catch(_) { console.warn('[OnlyOffice] mamm
 
 // ── Конфиг ──────────────────────────────────────────────────────────
 const STORAGE_DIR  = path.join(__dirname, '..', 'storage', 'documents');
+const PLUGIN_DIR   = path.join(__dirname, '..', 'onlyoffice-plugin', 'miyzamchi-ai');
 const OO_JWT_SECRET = process.env.ONLYOFFICE_JWT_SECRET || '';
 const OO_URL        = process.env.ONLYOFFICE_URL        || 'http://localhost:8080';
 const BACKEND_URL   = process.env.BACKEND_URL           || 'https://miyzamchi-backend.onrender.com';
+// URL, доступный из браузера (не из Docker). В локальной разработке
+// BACKEND_URL = host.docker.internal:3000 (для DocServer), а браузер видит localhost:3000.
+const BROWSER_URL   = BACKEND_URL.includes('host.docker.internal')
+    ? 'http://localhost:3000'
+    : BACKEND_URL;
+// GUID плагина (должен совпадать с config.json)
+const PLUGIN_GUID   = 'asc.{f3a4b2c1-8e7d-4f6a-9b3c-2d1e5f8a7b4c}';
 
 // В памяти: fileId → { documentKey, filename, uploadedAt }
 const fileRegistry = new Map();
@@ -54,6 +62,19 @@ router.use(function ooPluginCors(req, res, next) {
     }
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
+});
+
+// ── Раздача файлов плагина (для autostart через pluginsData) ────────
+// ONLYOFFICE DocEditor загружает плагин из BROWSER_URL/api/onlyoffice/plugin/
+// index.html ссылается на plugin.js относительным путём → оба с одного origin.
+const PLUGIN_ALLOWED = new Set(['config.json', 'index.html', 'plugin.js', 'icon.png', 'icon@2x.png']);
+
+router.get('/onlyoffice/plugin/:file', (req, res) => {
+    const file = req.params.file;
+    if (!PLUGIN_ALLOWED.has(file)) return res.status(404).send('Not found');
+    const filePath = path.join(PLUGIN_DIR, file);
+    if (!fs.existsSync(filePath)) return res.status(404).send('File not found');
+    res.sendFile(filePath);
 });
 
 // ── Multer: только DOCX, до 50 МБ ──────────────────────────────────
@@ -318,6 +339,12 @@ function buildEditorConfig(fileId, documentKey, filename) {
                 logo: { visible: false },
                 chat: { visible: false },
                 comments: { visible: true }
+            },
+            // Автозапуск плагина при открытии документа.
+            // pluginsData URL должен быть доступен ИЗ БРАУЗЕРА (не из Docker).
+            plugins: {
+                autostart: [PLUGIN_GUID],
+                pluginsData: [`${BROWSER_URL}/api/onlyoffice/plugin/config.json`]
             }
         },
         type: 'desktop'
