@@ -30,11 +30,16 @@ const PLUGIN_DIR   = path.join(__dirname, '..', 'onlyoffice-plugin', 'miyzamchi-
 const OO_JWT_SECRET = process.env.ONLYOFFICE_JWT_SECRET || '';
 const OO_URL        = process.env.ONLYOFFICE_URL        || 'http://localhost:8080';
 const BACKEND_URL   = process.env.BACKEND_URL           || 'https://miyzamchi-backend.onrender.com';
-// URL, доступный из браузера (не из Docker). В локальной разработке
-// BACKEND_URL = host.docker.internal:3000 (для DocServer), а браузер видит localhost:3000.
-const BROWSER_URL   = BACKEND_URL.includes('host.docker.internal')
+// URL, доступный из браузера (не из Docker).
+// Если DocServer локальный (OO_URL содержит localhost) → браузер доступен на localhost:3000.
+const BROWSER_URL   = BACKEND_URL.includes('host.docker.internal') || OO_URL.includes('localhost')
     ? 'http://localhost:3000'
     : BACKEND_URL;
+// URL, доступный из DocServer (внутри Docker).
+// Если DocServer локальный (localhost:8080) → DocServer в Docker → хост доступен через host.docker.internal.
+// Иначе (cloud) → тот же BACKEND_URL.
+const DOCSERVER_BACKEND_URL = process.env.OO_DOCSERVER_BACKEND_URL
+    || (OO_URL.includes('localhost') ? 'http://host.docker.internal:3000' : BACKEND_URL);
 // GUID плагина (должен совпадать с config.json)
 const PLUGIN_GUID   = 'asc.{f3a4b2c1-8e7d-4f6a-9b3c-2d1e5f8a7b4c}';
 
@@ -394,7 +399,7 @@ function buildEditorConfig(fileId, documentKey, filename) {
             fileType: 'docx',
             key: documentKey,
             title: filename,
-            url: `${BACKEND_URL}/api/files/${fileId}/download`,
+            url: `${DOCSERVER_BACKEND_URL}/api/files/${fileId}/download`,
             permissions: {
                 edit: true,
                 download: true,
@@ -406,7 +411,7 @@ function buildEditorConfig(fileId, documentKey, filename) {
         editorConfig: {
             mode: 'edit',
             lang: 'ru',
-            callbackUrl: `${BACKEND_URL}/api/onlyoffice/callback/${fileId}`,
+            callbackUrl: `${DOCSERVER_BACKEND_URL}/api/onlyoffice/callback/${fileId}`,
             user: { id: 'lawyer', name: 'Юрист' },
             customization: {
                 autosave: true,
