@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useLayoutEffect, useCallback } from 'react';
 
 const PaperclipIcon = ({ size = 16 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -24,21 +24,6 @@ const ArrowUpIcon = ({ size = 16 }) => (
   </svg>
 );
 
-/* ── PromptBox ─────────────────────────────────────────────────────────
-   Props:
-     id           – textarea id (for external .focus() calls)
-     value        – controlled value
-     onChange     – (e) => void
-     onSubmit     – () => void  called on Enter / send click
-     placeholder  – string
-     disabled     – bool  (disables send button)
-     onAttach     – () => void  shows paperclip button when provided
-     onVoice      – () => void  shows mic button when provided
-     listening    – bool  mic active state
-     attachmentsNode – JSX rendered inside the box above the textarea
-     maxHeight    – number px, default 200
-     className    – extra class on wrapper
-   ──────────────────────────────────────────────────────────────────── */
 export const PromptBox = ({
   id,
   value = '',
@@ -50,24 +35,28 @@ export const PromptBox = ({
   onVoice,
   listening = false,
   attachmentsNode,
-  maxHeight = 200,
+  maxHeight = 300,
   className = '',
 }) => {
   const taRef = useRef(null);
 
-  /* '1px' trick: collapse first so scrollHeight = true content height,
-     then expand. CSS max-height handles the cap + shows scrollbar. */
   const resize = useCallback((el) => {
     if (!el) return;
-    el.style.height = '1px';
-    const natural = el.scrollHeight;
-    el.style.height = natural + 'px';
-    /* Show scrollbar only when content exceeds cap */
-    el.style.overflowY = natural >= maxHeight ? 'auto' : 'hidden';
+    /* Reset to auto so scrollHeight reflects true content */
+    el.style.height = 'auto';
+    const sh = el.scrollHeight;
+    if (sh <= maxHeight) {
+      el.style.height = sh + 'px';
+      el.style.overflowY = 'hidden';
+    } else {
+      el.style.height = maxHeight + 'px';
+      el.style.overflowY = 'auto';
+    }
   }, [maxHeight]);
 
-  /* Resize when value changes externally (e.g. state set from outside) */
-  useEffect(() => { resize(taRef.current); }, [value, resize]);
+  /* useLayoutEffect = synchronous after DOM update, before browser paint.
+     Prevents the one-frame flicker where textarea shows wrong height. */
+  useLayoutEffect(() => { resize(taRef.current); }, [value, resize]);
 
   const handleChange = (e) => {
     onChange?.(e);
@@ -96,7 +85,6 @@ export const PromptBox = ({
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
-        rows={1}
         className="myz-pb-textarea"
       />
       <div className="myz-pb-footer">

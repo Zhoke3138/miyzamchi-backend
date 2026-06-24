@@ -8519,11 +8519,16 @@ body.dk .analyze-accordion-content {
   gap: var(--s-1h);
 }
 
-/* Textarea — height & overflow-y managed by JS resize() */
+/* Textarea — height & overflow-y controlled entirely by JS resize() */
 .myz-pb-textarea {
-  flex: 1;
+  display: block;
+  width: 100%;
   border: none;
+  border-bottom: none;
   outline: none;
+  box-shadow: none;
+  -webkit-appearance: none;
+  appearance: none;
   background: transparent;
   resize: none;
   font-family: var(--font-sans);
@@ -8532,12 +8537,9 @@ body.dk .analyze-accordion-content {
   color: var(--text-main);
   padding: 14px var(--s-4) 6px;
   min-height: 44px;
-  max-height: 200px;
-  overflow-y: hidden;
+  overflow: hidden;
   scrollbar-width: thin;
   scrollbar-color: var(--border-color) transparent;
-  display: block;
-  width: 100%;
 }
 .myz-pb-textarea::placeholder {
   color: var(--text-muted);
