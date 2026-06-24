@@ -8546,8 +8546,8 @@ body.dk .analyze-accordion-content {
   font-size: var(--text-md);
   line-height: var(--lh-normal);
   color: var(--text-main);
-  padding: 14px var(--s-4) 6px;
-  min-height: 44px;
+  padding: 10px var(--s-3) 4px;
+  min-height: 40px;
   overflow: hidden;
   scrollbar-width: thin;
   scrollbar-color: var(--border-color) transparent;
@@ -8561,23 +8561,23 @@ body.dk .analyze-accordion-content {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px var(--s-2) var(--s-2);
-  gap: var(--s-1h);
+  padding: 2px var(--s-1h) 6px;
+  gap: var(--s-1);
 }
 .myz-pb-footer-left,
 .myz-pb-footer-right {
   display: flex;
   align-items: center;
-  gap: var(--s-1);
+  gap: 4px;
 }
 
-/* Icon buttons (clip, mic) */
+/* Icon buttons (clip, mic) — same size as send */
 .myz-pb-icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   border: none;
   background: transparent;
@@ -8597,13 +8597,13 @@ body.dk .analyze-accordion-content {
   animation: mic-pulse 1.4s ease-in-out infinite;
 }
 
-/* Send button — circle, fills on active */
+/* Send button — same size as icon buttons */
 .myz-pb-send {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   border: none;
   cursor: not-allowed;

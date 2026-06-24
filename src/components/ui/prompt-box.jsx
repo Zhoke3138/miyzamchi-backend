@@ -7,7 +7,7 @@ const PaperclipIcon = ({ size = 16 }) => (
   </svg>
 );
 
-const MicIcon = ({ size = 14 }) => (
+const MicIcon = ({ size = 16 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
     stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
@@ -102,14 +102,14 @@ export const PromptBox = ({
             <button type="button" onClick={onVoice}
               className={`myz-pb-icon-btn${listening ? ' myz-pb-mic-active' : ''}`}
               title={listening ? 'Остановить запись' : 'Голосовой ввод (Web Speech API)'}>
-              <MicIcon size={14} />
+              <MicIcon size={16} />
             </button>
           )}
           <button type="button" onClick={() => !sendDisabled && onSubmit?.()}
             disabled={sendDisabled}
             className={`myz-pb-send${!sendDisabled ? ' myz-pb-send--active' : ''}`}
             title="Отправить (Enter)">
-            <ArrowUpIcon size={15} />
+            <ArrowUpIcon size={16} />
           </button>
         </div>
       </div>
