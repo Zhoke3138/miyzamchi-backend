@@ -48,6 +48,11 @@ const BACKEND_URL = (() => {
 // не так — используем продакшн URL вместо опасного localhost-fallback.
 const _ensureBackend = () => BACKEND_URL && BACKEND_URL.length ? BACKEND_URL : RENDER_BACKEND_URL;
 
+// CLIENT_TOKEN — защита API от скрейпинга. Задаётся через VITE_CLIENT_TOKEN в Render env.
+const CLIENT_TOKEN = import.meta.env.VITE_CLIENT_TOKEN || '';
+const jsonHeaders = () => ({ 'Content-Type': 'application/json', ...(CLIENT_TOKEN ? { 'X-Client-Token': CLIENT_TOKEN } : {}) });
+const tokenHeaders = () => (CLIENT_TOKEN ? { 'X-Client-Token': CLIENT_TOKEN } : {});
+
 const safeJson=(v,fallback)=>{try{return JSON.parse(v)}catch(e){return fallback}};
 
 // ═══ i18n: единый язык KY|RU|EN с лендингом (localStorage 'app_language') ═══
@@ -129,7 +134,7 @@ async function streamChat({message,history,mode,agentMode=false,userQuery=null,s
   try{
     res=await fetch(url,{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers: jsonHeaders(),
       body:JSON.stringify({message,history,mode,agentMode,userQuery,skipRetrieval,documentContext}),
       signal
     });
@@ -183,7 +188,7 @@ async function streamUploadDocument({documentText, onStep, onStatus, signal}){
   try{
     res = await fetch(url, {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({documentText}),
       signal
     });
@@ -242,10 +247,10 @@ async function streamAnalyzeDocument({documentText, userQuery, sessionId, file, 
     if (userQuery) fd.append('userQuery', userQuery);
     if (sessionId) fd.append('sessionId', sessionId);
     // Content-Type НЕ ставим вручную — браузер сам подставит boundary для multipart.
-    fetchOpts = { method:'POST', body: fd, signal };
+    fetchOpts = { method:'POST', headers: tokenHeaders(), body: fd, signal };
     console.log('[IDE Analyze] →', url, '| FILE:', file.name, `(${file.size} B)`, '| query:', (userQuery||'').slice(0,40));
   } else {
-    fetchOpts = { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({documentText, userQuery, sessionId}), signal };
+    fetchOpts = { method:'POST', headers: jsonHeaders(), body: JSON.stringify({documentText, userQuery, sessionId}), signal };
     console.log('[IDE Analyze] →', url, '| TEXT:', documentText?.length, 'ch | query:', (userQuery||'').slice(0,40));
   }
   let res;
@@ -307,7 +312,7 @@ async function streamDeepAnalyze({documentText, userQuery, perspective='audit', 
   try{
     res = await fetch(url, {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({documentText, userQuery, perspective, modules}),
       signal
     });
@@ -357,7 +362,7 @@ async function streamCompareDocuments({oldDocumentText, newDocumentText, onStatu
   try{
     res = await fetch(url, {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: jsonHeaders(),
       body: JSON.stringify({oldDocumentText, newDocumentText}),
       signal
     });
@@ -407,7 +412,7 @@ async function executeAIEdit({ instruction, text, documentContext = '', onToast 
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: jsonHeaders(),
     body: JSON.stringify({ instruction, text, documentContext })
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1411,7 +1416,7 @@ const CreateDocMode = ({ onToast }) => {
       // чтобы они не засоряли контекст интервьюера.
       const payloadMsgs = next.filter(m => !(m.role === 'assistant' && /не до конца понял|не смог разобрать|Не удалось связаться/i.test(m.text)));
       const res = await fetch(`${_ensureBackend()}/api/v2/draft-intake`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: jsonHeaders(),
         body: JSON.stringify({ docType, messages: payloadMsgs }),
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1441,7 +1446,7 @@ const CreateDocMode = ({ onToast }) => {
       // планировщик → RAG по 4 группам норм → отборщик → драфтер v4-pro.
       const payloadMsgs = messages.filter(m => !(m.role === 'assistant' && /не до конца понял|не смог разобрать|Не удалось связаться/i.test(m.text)));
       const res = await fetch(`${_ensureBackend()}/api/v2/draft-document`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: jsonHeaders(),
         body: JSON.stringify({ docType, messages: payloadMsgs }),
       });
       if (!res.ok || !res.body) {
@@ -1523,7 +1528,7 @@ const CreateDocMode = ({ onToast }) => {
     setPatchBusy(true); setGenBusy(true); setGenStatus('🔎 Анализирую замечания…'); setGenReview(null);
     try {
       const res = await fetch(`${_ensureBackend()}/api/v2/patch-document`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: jsonHeaders(),
         body: JSON.stringify({ docType, messages, blocks: blocksSnapshot, issues: issuesToFix }),
       });
       if (!res.ok || !res.body) {
@@ -1571,7 +1576,7 @@ const CreateDocMode = ({ onToast }) => {
     setDeepBusy(true); setDeepReview(null);
     try {
       const res = await fetch(`${_ensureBackend()}/api/v2/deep-check-document`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: jsonHeaders(),
         body: JSON.stringify({ docType, messages, blocks: genBlocks }),
       });
       if (!res.ok || !res.body) {
@@ -1870,7 +1875,7 @@ const ClauseLibrary = ({ onToast }) => {
     if (window.__ooMode) {
       const text = `${title}\n\n${body}`;
       fetch(OO_BACKEND + '/api/onlyoffice/bridge/push', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: jsonHeaders(),
         body: JSON.stringify({ type: 'insert', text }),
       }).catch(() => {});
       onToast && onToast('check', `Вставлено: ${title}`);
@@ -2350,7 +2355,7 @@ const applyAgentCommand=(cmd,toastFn)=>{
       _applyViaOOConnector(connector,cmd,toastFn);
     }else{
       fetch(OO_BACKEND + '/api/onlyoffice/bridge/push', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: jsonHeaders(),
         body: JSON.stringify({ type: cmd.type, text: String(cmd.text||'').trim(), oldText: String(cmd.oldText||'').trim(), anchor: cmd.anchor_text||'' }),
       }).catch(() => {});
       toastFn && toastFn('check', 'Команда отправлена в редактор');
@@ -3663,7 +3668,7 @@ const NPALibraryTree = ({ onClose, onSelectArticle }) => {
     try {
       const res = await fetch(
         `${_ensureBackend()}/api/minjust/GetDocuments?pageNumber=1&pageSize=500`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+        { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(payload) }
       );
       if (res.status === 429) throw new Error('RATE_LIMIT');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -3734,7 +3739,7 @@ const NPALibraryTree = ({ onClose, onSelectArticle }) => {
       if (statusId) payload.refStatusId = statusId;
       const res = await fetch(
         `${_ensureBackend()}/api/minjust/GetDocuments?pageNumber=1&pageSize=500`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+        { method: 'POST', headers: jsonHeaders(), body: JSON.stringify(payload) }
       );
       if (res.status === 429) throw new Error('RATE_LIMIT');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -8636,7 +8641,7 @@ const App=()=>{
                     try {
                       const res = await fetch(`${_ensureBackend()}/api/chat`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: jsonHeaders(),
                         body: JSON.stringify({
                           message: prompt,
                           history: [{ role: 'user', content: `Контекст документа:\n${documentContext}\n\nЗапрос на вставку текста. В ответе только сгенерированный новый юридический текст, без вводных слов и пояснений.` }],
