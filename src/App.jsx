@@ -1940,10 +1940,9 @@ const DocumentsMode = ({ onToast }) => {
       <div className="myz-docs-tabbar">
         {tabBtn('analyze', tr('docs_tab_analyze'))}
         {tabBtn('create', tr('docs_tab_create'))}
-        {tabBtn('tools', 'Инструменты')}
       </div>
       <div className="myz-documents-content">
-        {tab === 'analyze' ? <AnalyzeDocsMode /> : tab === 'create' ? <CreateDocMode onToast={onToast} /> : <LegalToolsMode onToast={onToast} />}
+        {tab === 'analyze' ? <AnalyzeDocsMode /> : <CreateDocMode onToast={onToast} />}
       </div>
     </div>
   );
