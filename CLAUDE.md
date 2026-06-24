@@ -234,6 +234,17 @@
 ✅ **Telegram remote-control:** бот `@miyzamchi_work_bot` работает через `--channels` флаг. Запуск: `запустить-телеграм.bat`.
 ✅ **Multi-RAG (Qdrant):** `services/qdrantService.js` + роутинг `classifyQuerySource()` в `server.js`. Env: `QDRANT_URL`, `QDRANT_API_KEY`. Коллекция: `tunduk_guides_collection` (3567 FAQ/инструкций ЦОН+ГНС).
 
+### Сессия 24.06.2026 (вечер) — чеклист запуска юристов:
+✅ **CLIENT_TOKEN** — фронт шлёт `X-Client-Token` на все запросы (хелперы `jsonHeaders()` / `tokenHeaders()` в `App.jsx`). Значение задать в Render env: `VITE_CLIENT_TOKEN` (фронт) + `CLIENT_TOKEN` (бэк).
+✅ **Rate limits** — `apiLimiter` поднят до 60/min; добавлен `v2Limiter` (15/min) на `/api/v2/*` (раньше без лимита); `/api/edit` добавлен в `apiLimiter`.
+✅ **CJK-артефакты** — `stripCJK()` в `routes/analyze.js`: срезает китайские иероглифы из вывода DeepSeek Final Judge перед отправкой клиенту.
+✅ **Нормы «процитировано верно»** — переименовано в «соответствует закону» + уточнение что нормы найдены системой через RAG (`services/legalAgents.js`).
+✅ **Секции по центру + отступы** — `section_heading`, `demand_heading`, `attachment_heading` → `text-align:center` в `LEGAL_KIND_ALIGN`. `injectSpacers` добавляет пустую строку ДО и ПОСЛЕ таких заголовков (streaming path тоже).
+✅ **Times New Roman 12pt везде** — `_runToHtml`, `_linesToCellHtml`, `_blockToHtml`, вставка клауз — все оборачивают текст в `<span style="font-family:'Times New Roman',serif;font-size:12pt;">`. CSS-дефолт на `.ProseMirror` в `ide-styles.css`.
+✅ **Статусы генерации** — прогрессивные фазы: нашёл N норм (с разбивкой по категориям), reasoning phase 1/2/3 (по кол-ву символов), счётчик блоков.
+✅ **Graceful recovery** — если стриминг прошёл но финальный JSON.parse упал → не выдаём ошибку, а используем уже отрендеренные блоки.
+✅ **Структура docTemplates** — все 12 типов: `paragraph: ПРАВОВОЕ ОБОСНОВАНИЕ` разбито на `section_heading:` + `paragraph:` для раздельных блоков.
+
 ### Multi-RAG роутинг (server.js)
 - `classifyQuerySource(query)` → `'pinecone'` | `'qdrant'` | `'both'`
 - `adaptiveRetrieval(..., { source })` — поддерживает все три режима, дефолт `'pinecone'`
@@ -257,8 +268,8 @@
 ## 📋 ЧТО ОСТАЛОСЬ ДО ЗАПУСКА ЮРИСТОВ (чеклист)
 
 ### 🔴 Критично (без этого нельзя запускать)
-1. **CLIENT_TOKEN** — задать в Render env (`CLIENT_TOKEN=...`). Сейчас API публичный, любой может дёргать `/api/chat`. Фронт уже шлёт заголовок `X-Client-Token` — просто задать значение в Render.
-2. **Проверить лимиты** — `apiLimiter`: 30 req/min, `deepAnalyzeLimiter`: 6 req/min. Достаточно ли для нескольких юристов одновременно? Если нет — поднять в `server.js`.
+1. ~~**CLIENT_TOKEN**~~ ✅ СДЕЛАНО — фронт шлёт `X-Client-Token`. Осталось: задать `VITE_CLIENT_TOKEN` в Render env фронтенда (значение — любая строка, совпадающая с `CLIENT_TOKEN` бэка).
+2. ~~**Проверить лимиты**~~ ✅ СДЕЛАНО — `apiLimiter` 60/min, `v2Limiter` 15/min добавлен.
 3. **Smoke-тест продакшена** — загрузить реальный кыргызский договор на https://miyzamchy-ceo.com.kg → убедиться что анализ проходит до конца (все 4 фазы, Final Judge, telemetry).
 
 ### 🟡 Важно (мешает работе, но можно запустить)
@@ -268,7 +279,7 @@
 7. **Калькуляторы (Инструменты)** — проверить калькулятор сроков и госпошлины на актуальность ставок.
 
 ### 🟢 Желательно (повышает доверие)
-8. **CJK-артефакты** — DeepSeek иногда вставляет китайские иероглифы в Final Judge. Фикс: 5-строчная замена в `server.js` (нужно явное согласие).
+8. ~~**CJK-артефакты**~~ ✅ СДЕЛАНО — `stripCJK()` в `routes/analyze.js`.
 9. **Лендинг** — проверить что `https://miyzamchy-ceo.com.kg` открывается корректно и ведёт на IDE.
 10. **Onboarding** — нет auth/регистрации. Если юристов несколько — как разграничить доступ? Пока только через `CLIENT_TOKEN` (один токен на всех).
 
@@ -279,10 +290,19 @@
 
 ---
 
-## 📍 Последняя сессия / где остановились (24.06.2026)
+## 📍 Последняя сессия / где остановились (24.06.2026, вечер)
 
-**Стратегическое решение:** ONLYOFFICE заморожен. Детали в `ONLYOFFICE_STATE.md`.
-Следующий Claude должен работать над чеклистом «ЧТО ОСТАЛОСЬ ДО ЗАПУСКА ЮРИСТОВ» выше.
+**Что сделано в этой сессии:** весь чеклист критичных и CJK-пунктов закрыт (см. статус выше).
+
+**Осталось для следующего Claude:**
+1. Smoke-тест продакшена с реальным договором — пользователь должен сделать сам или попросить Claude помочь
+2. Проверить все 12 типов документов в режиме «Создать» end-to-end
+3. Проверить экспорт .docx/.pdf
+4. Пункт 1 из чеклиста: пользователь должен задать `VITE_CLIENT_TOKEN` в Render env (фронтенд-сервис `srv-d8lc3je7r5hc739snrf0`) — значение совпадает с `CLIENT_TOKEN` бэка
+
+**Шрифт Times New Roman:** полностью реализован через `<span>` во всех генерируемых блоках + CSS дефолт на `.ProseMirror`. Если где-то ещё видно Arial — проверить нет ли других мест вставки HTML в `App.jsx`.
+
+**ONLYOFFICE:** заморожен. Детали в `ONLYOFFICE_STATE.md`.
 
 ## Что НЕ надо предлагать
 - Перейти на ESM (проект CJS, всё работает)
