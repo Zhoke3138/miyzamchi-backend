@@ -1632,12 +1632,9 @@ const CreateDocMode = ({ onToast }) => {
             <button key={d.k} type="button" disabled={!d.active}
               className={`myz-doc-type-btn${d.active?'':' myz-doc-type-btn--dim'}${d.custom?' myz-doc-type-btn--custom':''}`}
               onClick={() => d.active && pickType(d.k)}>
-              <span>
-                <span className="myz-doc-type-btn-label">{d.label}</span>
-                <span className="myz-doc-type-btn-blurb">{d.blurb}</span>
-              </span>
+              <span className="myz-doc-type-btn-label">{d.label}</span>
+              <span className="myz-doc-type-btn-blurb">{d.blurb}</span>
               {!d.active && <span className="myz-doc-type-soon">скоро</span>}
-              {d.active && <span aria-hidden="true" style={{ color: 'var(--muted)', fontSize: 16 }}>→</span>}
             </button>
           ))}
         </div>
