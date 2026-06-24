@@ -1164,9 +1164,7 @@ ${tpl.courtDoc
       // Последний kind, отправленный клиенту — для авто-spacer injection в стриме.
       let lastStreamedKind = null;
       const emitStreamBlock = (normalized) => {
-        // Авто-spacer: перед section_heading, demand_heading, attachment_heading,
-        // signature и requisites_table вставляем пустой разделитель — если
-        // предыдущий блок сам не является spacer.
+        // Spacer ДО заголовка
         if (SPACER_BEFORE_KINDS.has(normalized.kind) && lastStreamedKind && lastStreamedKind !== 'spacer') {
           streamedCount += 1;
           sse({ block: { kind: 'spacer', runs: [] } });
@@ -1174,6 +1172,12 @@ ${tpl.courtDoc
         streamedCount += 1;
         sse({ block: normalized });
         lastStreamedKind = normalized.kind;
+        // Spacer ПОСЛЕ заголовка (section_heading, demand_heading, attachment_heading)
+        if (SPACER_AFTER_KINDS.has(normalized.kind)) {
+          streamedCount += 1;
+          sse({ block: { kind: 'spacer', runs: [] } });
+          lastStreamedKind = 'spacer';
+        }
       };
       const feedStream = () => {
         for (; scan < acc.length; scan++) {
@@ -1229,6 +1233,14 @@ ${tpl.courtDoc
       let blocks = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.blocks) ? parsed.blocks : null);
 
       if (!Array.isArray(blocks) || !blocks.length) {
+        if (streamedCount > 0) {
+          // Стрим уже доставил блоки клиенту — финальный JSON-парс упал (обрыв/обёртка),
+          // но документ на фронте уже есть. Отдаём done с пустым blocks — фронт
+          // использует накопленный streamed[] как finalBlocks.
+          console.warn(`[draft-document] final JSON parse failed, but ${streamedCount} blocks already streamed — graceful recovery`);
+          sse({ done: true, blocks: [], articlesUsed: [], review: null });
+          return done();
+        }
         console.warn(`[draft-document] unparseable drafter output (len=${String(draftText || '').length}): ${String(draftText || '').slice(0, 200)}`);
         sse({ error: 'Драфтер вернул некорректный формат. Попробуйте ещё раз.' });
         return done();
