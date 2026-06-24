@@ -166,14 +166,24 @@ function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 const SPACER_BEFORE_KINDS = new Set([
   'section_heading', 'demand_heading', 'attachment_heading', 'signature', 'requisites_table',
 ]);
+const SPACER_AFTER_KINDS = new Set([
+  'section_heading', 'demand_heading', 'attachment_heading',
+]);
 function injectSpacers(blocks) {
   const result = [];
-  for (const b of blocks) {
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
     const prev = result[result.length - 1];
     if (SPACER_BEFORE_KINDS.has(b.kind) && prev && prev.kind !== 'spacer') {
       result.push({ kind: 'spacer', runs: [] });
     }
     result.push(b);
+    if (SPACER_AFTER_KINDS.has(b.kind)) {
+      const next = blocks[i + 1];
+      if (next && next.kind !== 'spacer') {
+        result.push({ kind: 'spacer', runs: [] });
+      }
+    }
   }
   return result;
 }
@@ -910,8 +920,9 @@ ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
 
 ТИПЫ БЛОКОВ (kind):
 - court (только для судебных документов: наименование суда) · party_header (стороны/адресат/заявитель — по одному блоку на строку, справа) · spacer (runs:[]) · title (НАЗВАНИЕ заглавными, bold, центр${ttl ? `: «${ttl}»` : ''}) · subtitle («о …», центр)
-- paragraph (фабула / правовое обоснование / тело письма)
-${demandLine}- attachment_heading («Приложение:») · attachment_item · signature (справа, с местом для даты)
+- section_heading (заголовок раздела, bold, ЦЕНТР): «ПРАВОВОЕ ОБОСНОВАНИЕ», «РАСЧЁТ СУММЫ ТРЕБОВАНИЯ», «НАРУШЕННЫЕ ПРАВА», «НАША ПОЗИЦИЯ» и т.п. — СТРОГО отдельный блок, только текст заголовка, runs:[{"t":"ЗАГОЛОВОК","bold":true}]
+- paragraph (фабула / тело раздела / расчёты — по ширине)
+${demandLine}- attachment_heading («Приложение:», центр) · attachment_item · signature (справа, с местом для даты)
 
 ПОРЯДОК СЕКЦИЙ:
 ${(tpl.structureHint || []).map((s, i) => `${i + 1}. ${s}`).join('\n')}
@@ -938,7 +949,7 @@ ${tpl.courtDoc
 1. Цитируй ТОЛЬКО статьи из ЭТАЛОННОГО списка норм (RAG). Не придумывай номера. Используй КАК МОЖНО БОЛЬШЕ применимых норм — не ограничивайся одной-двумя.
 2. Каждую ссылку на норму — отдельным run: italic:true и cite:"<НПА ст.N>". Окружающий текст — обычными run. Следи за пробелами между run.
 3. НЕ выдумывай факты (имена, суммы, даты, адреса, ИНН). Только из досье. Нет детали — ставь «____________».
-4. Вставляй spacer (runs:[]) ПЕРЕД demand_heading, attachment_heading, signature — и между смысловыми секциями (после шапки перед заголовком, после заголовка перед фабулой).
+4. Вставляй spacer (runs:[]) ПЕРЕД И ПОСЛЕ каждого section_heading, demand_heading, attachment_heading, signature — и между смысловыми секциями (после шапки перед заголовком, после заголовка перед фабулой).
 5. Верни ТОЛЬКО JSON-массив блоков. Первый символ ответа — «[», последний — «]».`;
   };
 

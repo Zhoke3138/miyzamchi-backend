@@ -1150,10 +1150,10 @@ const AnalyzeDocsMode = () => {
 const LEGAL_KIND_ALIGN = {
   court: 'left', party_header: 'right', spacer: 'left',
   title: 'center', subtitle: 'center', paragraph: 'justify',
-  demand_heading: 'left', demand_item: 'left',
-  attachment_heading: 'left', attachment_item: 'left', signature: 'right',
+  demand_heading: 'center', demand_item: 'left',
+  attachment_heading: 'center', attachment_item: 'left', signature: 'right',
   // Договор (двусторонний): разделы, пункты, реквизиты сторон.
-  section_heading: 'left', clause: 'justify', requisites: 'left',
+  section_heading: 'center', clause: 'justify', requisites: 'left',
 };
 const LEGAL_FONT = 'Times New Roman, serif';
 
@@ -1192,7 +1192,7 @@ const _runToHtml = (run) => {
 // Ячейка реквизитов: строки → абзацы (первая строка — жирная: название стороны).
 const _linesToCellHtml = (s) => String(s == null ? '' : s).split('\n').map((ln, i) => {
   const t = _escHtml(ln.trim());
-  return `<p style="font-family:'Times New Roman', serif;${i === 0 ? 'font-weight:bold;' : ''}">${t || '&nbsp;'}</p>`;
+  return `<p style="font-family:'Times New Roman', serif;font-size:12pt;${i === 0 ? 'font-weight:bold;' : ''}">${t || '&nbsp;'}</p>`;
 }).join('');
 const _blockToHtml = (block) => {
   // Двухколоночные реквизиты договора (Сторона 1 | Сторона 2) — через таблицу.
@@ -1205,7 +1205,7 @@ const _blockToHtml = (block) => {
   const align = block.align || LEGAL_KIND_ALIGN[block.kind] || 'left';
   const inner = (block.runs || []).map(_runToHtml).join('');
   // text-align читается HTML-импортёром SuperDoc (style.textAlign → OOXML w:jc).
-  const style = `text-align:${align};font-family:'Times New Roman', serif;`;
+  const style = `text-align:${align};font-family:'Times New Roman', serif;font-size:12pt;`;
   return `<p style="${style}">${inner || '&nbsp;'}</p>`;
 };
 
