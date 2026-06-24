@@ -8063,37 +8063,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
         </div>
       )}
       <div className="myz-input-area" style={{display: chatMode === 'documents' ? 'none' : 'block'}}>
-        {exchanges.length === 0 && attachments.length === 0 && (
-          <div className="myz-suggest-chips-row">{(agent
-            ? ['Проверь документ','Перепиши формально','Добавь реквизиты','Сократи','Добавь ссылки на КР']
-            : ['Срок исковой давности','Подсудность спора','Расчёт госпошлины','Алгоритм взыскания долга','Судебная практика по…']
-          ).map(c=><button key={c} className="btn myz-suggest-chip" onClick={()=>setInp(c)}>{c}</button>)}</div>
-        )}
         <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.rtf,image/*" style={{display:'none'}} onChange={(e)=>{const files=Array.from(e.target.files||[]);e.target.value='';files.forEach(processAttFile)}}/>
-        {/* Быстрые пресеты — заполняют поле ввода (без авто-отправки, юрист проверяет).
-            Контекст: с документом (agent) — разбор/упрощение; без — типовые юр-запросы. */}
-        {!inp.trim() && !thinking && (
-          <div className="myz-suggest-chips-row">
-            {(agent
-              ? [
-                  ['📝 Краткое резюме', 'Сделай краткое резюме этого документа: суть, стороны, ключевые условия и сроки.'],
-                  ['⚠️ Найди риски', 'Проверь документ на юридические риски и слабые формулировки, перечисли их с пояснением.'],
-                  ['✂️ Упрости', 'Упрости формулировки выделенного фрагмента, сохранив юридический смысл.'],
-                  ['🌐 На кыргызский', 'Переведи выделенный фрагмент на кыргызский язык, сохранив юридическую терминологию.'],
-                ]
-              : [
-                  ['⚖️ Применимые нормы', 'Какие нормы законодательства Кыргызской Республики применимы к этой ситуации?'],
-                  ['📋 План действий', 'Составь пошаговый план юридических действий по моей ситуации.'],
-                  ['💬 Простыми словами', 'Объясни простыми словами правовую суть моего вопроса.'],
-                ]
-            ).map(([label, text]) => (
-              <button key={label} type="button" className="myz-suggest-chip"
-                onClick={()=>{ setInp(text); setTimeout(()=>{ document.getElementById('myz-ai-input')?.focus(); }, 0); }}>
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
         <div className="myz-incognito-row">
           <label className="myz-incognito-label">
             <input type="checkbox" checked={incognito} onChange={e=>setIncognito(e.target.checked)} style={{accentColor:'var(--accent)',cursor:'pointer',width:13,height:13}} />

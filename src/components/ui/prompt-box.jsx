@@ -1,6 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
 
-/* ── Icons (inline SVG — no external dep) ─────────────────────────── */
 const PaperclipIcon = ({ size = 16 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
     stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -37,7 +36,7 @@ const ArrowUpIcon = ({ size = 16 }) => (
      onVoice      – () => void  shows mic button when provided
      listening    – bool  mic active state
      attachmentsNode – JSX rendered inside the box above the textarea
-     maxHeight    – number px, default 160
+     maxHeight    – number px, default 200
      className    – extra class on wrapper
    ──────────────────────────────────────────────────────────────────── */
 export const PromptBox = ({
@@ -51,18 +50,23 @@ export const PromptBox = ({
   onVoice,
   listening = false,
   attachmentsNode,
-  maxHeight = 160,
+  maxHeight = 200,
   className = '',
 }) => {
   const taRef = useRef(null);
 
+  /* '1px' trick: collapse first so scrollHeight = true content height,
+     then expand. CSS max-height handles the cap + shows scrollbar. */
   const resize = useCallback((el) => {
     if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = Math.min(maxHeight, el.scrollHeight) + 'px';
+    el.style.height = '1px';
+    const natural = el.scrollHeight;
+    el.style.height = natural + 'px';
+    /* Show scrollbar only when content exceeds cap */
+    el.style.overflowY = natural >= maxHeight ? 'auto' : 'hidden';
   }, [maxHeight]);
 
-  /* Resize when value changes externally (e.g. chip click sets state) */
+  /* Resize when value changes externally (e.g. state set from outside) */
   useEffect(() => { resize(taRef.current); }, [value, resize]);
 
   const handleChange = (e) => {

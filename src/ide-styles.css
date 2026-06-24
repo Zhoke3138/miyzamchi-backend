@@ -8519,7 +8519,7 @@ body.dk .analyze-accordion-content {
   gap: var(--s-1h);
 }
 
-/* Textarea */
+/* Textarea — height & overflow-y managed by JS resize() */
 .myz-pb-textarea {
   flex: 1;
   border: none;
@@ -8530,12 +8530,14 @@ body.dk .analyze-accordion-content {
   font-size: var(--text-md);
   line-height: var(--lh-normal);
   color: var(--text-main);
-  padding: 14px var(--s-4) var(--s-2);
+  padding: 14px var(--s-4) 6px;
   min-height: 44px;
-  max-height: 160px;
-  overflow-y: auto;
+  max-height: 200px;
+  overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: var(--border-color) transparent;
+  display: block;
+  width: 100%;
 }
 .myz-pb-textarea::placeholder {
   color: var(--text-muted);
@@ -8546,7 +8548,7 @@ body.dk .analyze-accordion-content {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--s-1h) var(--s-2) var(--s-2);
+  padding: 4px var(--s-2) var(--s-2);
   gap: var(--s-1h);
 }
 .myz-pb-footer-left,
