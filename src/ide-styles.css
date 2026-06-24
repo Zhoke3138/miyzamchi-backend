@@ -4427,6 +4427,19 @@ body.dk .analyze-accordion-content {
   margin: 0 auto !important;
 }
 
+/* Default font for SuperDoc editor — applied to all text incl. user-typed content */
+#superdoc-wrapper .ProseMirror {
+  font-family: 'Times New Roman', serif !important;
+  font-size: 12pt !important;
+}
+#superdoc-wrapper .ProseMirror p,
+#superdoc-wrapper .ProseMirror li,
+#superdoc-wrapper .ProseMirror td,
+#superdoc-wrapper .ProseMirror th {
+  font-family: 'Times New Roman', serif;
+  font-size: 12pt;
+}
+
 #superdoc-wrapper {
   background-color: var(--bg-panel, #f3f4f6);
 }

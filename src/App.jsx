@@ -1193,7 +1193,9 @@ const _runToHtml = (run) => {
 // Ячейка реквизитов: строки → абзацы (первая строка — жирная: название стороны).
 const _linesToCellHtml = (s) => String(s == null ? '' : s).split('\n').map((ln, i) => {
   const t = _escHtml(ln.trim());
-  return `<p style="font-family:'Times New Roman', serif;font-size:12pt;${i === 0 ? 'font-weight:bold;' : ''}">${t || '&nbsp;'}</p>`;
+  const bold = i === 0 ? 'font-weight:bold;' : '';
+  const spanStyle = `font-family:'Times New Roman',serif;font-size:12pt;${bold}`;
+  return `<p style="font-family:'Times New Roman',serif;font-size:12pt;">${t ? `<span style="${spanStyle}">${t}</span>` : '&nbsp;'}</p>`;
 }).join('');
 const _blockToHtml = (block) => {
   // Двухколоночные реквизиты договора (Сторона 1 | Сторона 2) — через таблицу.
@@ -1207,7 +1209,8 @@ const _blockToHtml = (block) => {
   const inner = (block.runs || []).map(_runToHtml).join('');
   // text-align читается HTML-импортёром SuperDoc (style.textAlign → OOXML w:jc).
   const style = `text-align:${align};font-family:'Times New Roman', serif;font-size:12pt;`;
-  return `<p style="${style}">${inner || '&nbsp;'}</p>`;
+  const emptySpan = `<span style="font-family:'Times New Roman',serif;font-size:12pt;">&nbsp;</span>`;
+  return `<p style="${style}">${inner || emptySpan}</p>`;
 };
 
 // Убираем ПУСТЫЕ абзацы по краям (стартовый <p><br></p> нового дока и хвост),
@@ -1884,8 +1887,8 @@ const ClauseLibrary = ({ onToast }) => {
     }
     const ed = window.docEngine;
     if (!ed || !ed.doc || typeof ed.doc.insert !== 'function') { onToast && onToast('warning', 'Откройте документ в редакторе'); return; }
-    const html = `<p style="text-align:left;font-family:'Times New Roman', serif;"><strong>${_escHtml(title)}</strong></p>`
-      + `<p style="text-align:justify;font-family:'Times New Roman', serif;">${_escHtml(body)}</p>`;
+    const html = `<p style="text-align:left;font-family:'Times New Roman',serif;font-size:12pt;"><span style="font-family:'Times New Roman',serif;font-size:12pt;font-weight:bold;">${_escHtml(title)}</span></p>`
+      + `<p style="text-align:justify;font-family:'Times New Roman',serif;font-size:12pt;"><span style="font-family:'Times New Roman',serif;font-size:12pt;">${_escHtml(body)}</span></p>`;
     try { ed.commands && ed.commands.focus && ed.commands.focus('end'); } catch (_) {}
     try {
       const r = ed.doc.insert({ value: html, type: 'html' });
