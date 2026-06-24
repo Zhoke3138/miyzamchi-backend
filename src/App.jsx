@@ -1,6 +1,7 @@
 import { SuperDocEditor } from '@superdoc-dev/react';
 import '@superdoc-dev/react/style.css';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { PromptBox } from './components/ui/prompt-box.jsx';
 import { OnlyOfficeEditor } from './components/onlyoffice-workspace/OnlyOfficeEditor.jsx';
 // OO_MODE: true только локально когда задан VITE_ONLYOFFICE_URL.
 // В продакшне (Render) переменная не задана → false → SuperDoc работает как раньше.
@@ -1729,12 +1730,13 @@ const CreateDocMode = ({ onToast }) => {
         </button>
       )}
       <div className="myz-create-input-row">
-        <textarea value={input} onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-          rows={Math.min(5, Math.max(1, input.split('\n').length))}
+        <PromptBox
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onSubmit={send}
           placeholder="Опишите ситуацию или ответьте на вопрос…"
-          className="myz-create-textarea"/>
-        <button type="button" onClick={send} disabled={busy || !input.trim()} className="myz-create-send">➤</button>
+          disabled={busy || !input.trim()}
+        />
       </div>
     </div>
   );
@@ -8067,27 +8069,6 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             : ['Срок исковой давности','Подсудность спора','Расчёт госпошлины','Алгоритм взыскания долга','Судебная практика по…']
           ).map(c=><button key={c} className="btn myz-suggest-chip" onClick={()=>setInp(c)}>{c}</button>)}</div>
         )}
-        {attachments.length > 0 && (
-          <div className="myz-attach-row">
-            {attachments.map(a=>{
-              const loading=a.status==='loading', err=a.status==='error';
-              return (
-                <div key={a.id} title={a.name} className="myz-attach-pill" style={{border:'1px solid '+(err?'var(--red)':loading?'var(--accent)':'var(--border)'),background:err?'var(--red-soft)':loading?'var(--accent-dim)':'var(--bg-editor)'}}>
-                  {a.isImage && a.dataUrl
-                    ? <img src={a.dataUrl} alt="" style={{width:28,height:28,borderRadius:'var(--radius-sm)',objectFit:'cover',flexShrink:0,border:'1px solid var(--border)'}}/>
-                    : <span style={{width:28,height:28,display:'inline-flex',alignItems:'center',justifyContent:'center',background:err?'var(--red-soft)':'var(--accent-dim)',color:err?'var(--red)':'var(--accent)',borderRadius:'var(--radius-sm)',flexShrink:0,fontSize:'var(--text-base)',animation:loading?'spin 1s linear infinite':'none'}}>
-                        {loading?'⟳':err?'!':'📄'}
-                      </span>}
-                  <div style={{display:'flex',flexDirection:'column',minWidth:0,flex:1,lineHeight:'var(--lh-snug)'}}>
-                    <span style={{fontWeight:500,color:'var(--text)',fontSize:'var(--text-sm)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:160}}>{a.name}</span>
-                    <span style={{fontSize:'var(--text-xs)',color:'var(--muted)',whiteSpace:'nowrap'}}>{loading?'Извлечение…':err?(a.error||'Ошибка'):(a.isImage?fmtSizeAtt(a.size):fmtSizeAtt(a.size)+' · '+(a.text?Math.round(a.text.length/100)/10+'k симв.':'—'))}</span>
-                  </div>
-                  <button onClick={()=>removeAttachment(a.id)} title="Удалить" className="myz-attach-remove">×</button>
-                </div>
-              );
-            })}
-          </div>
-        )}
         <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.rtf,image/*" style={{display:'none'}} onChange={(e)=>{const files=Array.from(e.target.files||[]);e.target.value='';files.forEach(processAttFile)}}/>
         {/* Быстрые пресеты — заполняют поле ввода (без авто-отправки, юрист проверяет).
             Контекст: с документом (agent) — разбор/упрощение; без — типовые юр-запросы. */}
@@ -8107,7 +8088,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                 ]
             ).map(([label, text]) => (
               <button key={label} type="button" className="myz-suggest-chip"
-                onClick={()=>{ setInp(text); setTimeout(()=>{ const el=document.getElementById('myz-ai-input'); if(el){ el.focus(); el.style.height='auto'; el.style.height=Math.min(160,el.scrollHeight)+'px'; } }, 0); }}>
+                onClick={()=>{ setInp(text); setTimeout(()=>{ document.getElementById('myz-ai-input')?.focus(); }, 0); }}>
                 {label}
               </button>
             ))}
@@ -8120,40 +8101,38 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             Анонимизировать (скрыть ФИО, даты, реквизиты)
           </label>
         </div>
-        <div className="myz-input-ring">
-          <button
-            onClick={()=>fileInputRef.current?.click()}
-            className="btn myz-input-icon-btn"
-            title="Прикрепить файл (PDF / DOCX / TXT / изображение)"
-          >
-            <Ico k="clip" sz={16}/>
-          </button>
-          <textarea
-            id="myz-ai-input"
-            value={inp}
-            onChange={e=>{setInp(e.target.value);e.target.style.height='auto';e.target.style.height=Math.min(160,e.target.scrollHeight)+'px'}}
-            rows={1}
-            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}
-            placeholder={agent ? ((getDocSnapshot() && getDocSnapshot().selection) ? tr('ws_ph_selection') : tr('ws_ph_doc')) : tr('ws_ph_legal')}
-            className="myz-chat-textarea"
-          />
-          <button
-            onClick={toggleVoice}
-            className={`btn myz-input-icon-btn${listening ? ' mic-listening' : ''}`}
-            title={listening?'Остановить запись':'Голосовой ввод (Web Speech API)'}
-            style={listening ? {background:'var(--red)',color:'#fff',boxShadow:'0 0 0 3px var(--red-soft)',animation:'mic-pulse 1.4s ease-in-out infinite'} : undefined}
-          >
-            <Ico k="mic" sz={14}/>
-          </button>
-          <button
-            onClick={send}
-            disabled={(!inp.trim()&&attachments.filter(a=>a.status==='ready').length===0)||thinking||attachments.some(a=>a.status==='loading')}
-            className="btn myz-send-btn"
-            title={attachments.some(a=>a.status==='loading')?'Подождите, файлы обрабатываются…':'Отправить (Enter)'}
-          >
-            <Ico k="send" sz={16} col="currentColor"/>
-          </button>
-        </div>
+        <PromptBox
+          id="myz-ai-input"
+          value={inp}
+          onChange={e=>setInp(e.target.value)}
+          onSubmit={send}
+          placeholder={agent ? ((getDocSnapshot() && getDocSnapshot().selection) ? tr('ws_ph_selection') : tr('ws_ph_doc')) : tr('ws_ph_legal')}
+          disabled={(!inp.trim()&&attachments.filter(a=>a.status==='ready').length===0)||thinking||attachments.some(a=>a.status==='loading')}
+          onAttach={()=>fileInputRef.current?.click()}
+          onVoice={toggleVoice}
+          listening={listening}
+          attachmentsNode={attachments.length > 0 ? (
+            <div className="myz-attach-row" style={{padding:0,marginBottom:0}}>
+              {attachments.map(a=>{
+                const loading=a.status==='loading', err=a.status==='error';
+                return (
+                  <div key={a.id} title={a.name} className="myz-attach-pill" style={{border:'1px solid '+(err?'var(--red)':loading?'var(--accent)':'var(--border)'),background:err?'var(--red-soft)':loading?'var(--accent-dim)':'var(--bg-editor)'}}>
+                    {a.isImage && a.dataUrl
+                      ? <img src={a.dataUrl} alt="" style={{width:28,height:28,borderRadius:'var(--radius-sm)',objectFit:'cover',flexShrink:0,border:'1px solid var(--border)'}}/>
+                      : <span style={{width:28,height:28,display:'inline-flex',alignItems:'center',justifyContent:'center',background:err?'var(--red-soft)':'var(--accent-dim)',color:err?'var(--red)':'var(--accent)',borderRadius:'var(--radius-sm)',flexShrink:0,fontSize:'var(--text-base)',animation:loading?'spin 1s linear infinite':'none'}}>
+                          {loading?'⟳':err?'!':'📄'}
+                        </span>}
+                    <div style={{display:'flex',flexDirection:'column',minWidth:0,flex:1,lineHeight:'var(--lh-snug)'}}>
+                      <span style={{fontWeight:500,color:'var(--text)',fontSize:'var(--text-sm)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:160}}>{a.name}</span>
+                      <span style={{fontSize:'var(--text-xs)',color:'var(--muted)',whiteSpace:'nowrap'}}>{loading?'Извлечение…':err?(a.error||'Ошибка'):(a.isImage?fmtSizeAtt(a.size):fmtSizeAtt(a.size)+' · '+(a.text?Math.round(a.text.length/100)/10+'k симв.':'—'))}</span>
+                    </div>
+                    <button onClick={()=>removeAttachment(a.id)} title="Удалить" className="myz-attach-remove">×</button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        />
         <div className="myz-disclaimer">Перед использованием в производстве сверяйте нормы с <a href="https://cbd.minjust.gov.kg" target="_blank" rel="noopener noreferrer" className="myz-disclaimer-link">cbd.minjust.gov.kg</a>.</div>
       </div>
       {articleModal && <ArticleModal article={articleModal} onClose={()=>setArticleModal(null)} onInsert={handleInsertToQuill}/>}
