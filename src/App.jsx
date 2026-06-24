@@ -1221,40 +1221,37 @@ const AnalyzeDocsMode = () => {
         <div className="cmp-empty">Ожидаю результат...</div>
       )}
 
-      {/* ── Q&A по документу (показывается после завершения анализа) ── */}
+      {/* ── Q&A: вопросы и ответы рендерятся прямо в потоке результатов ── */}
       {!running && (summary || tableRows.length > 0) && slots[0]?.text && (
-        <div className="ad-qa-section">
-          <div className="ad-qa-header">
-            <span style={{fontSize:18}}>💬</span>
-            <span className="ad-qa-title">Вопросы по документу</span>
-            <span className="ad-qa-subtitle">ИИ отвечает в контексте проверенного документа</span>
-          </div>
-          {qaMessages.length > 0 && (
-            <div className="ad-qa-messages">
-              {qaMessages.map((m, i) => (
-                <div key={i} className={`ad-qa-msg ad-qa-msg--${m.role}`}>
-                  <div className="ad-qa-bubble ai-md"
-                       dangerouslySetInnerHTML={{__html:
-                         m.role === 'ai'
-                           ? renderMarkdown(m.text || (qaRunning && i === qaMessages.length - 1 ? '_Анализирую…_' : ''))
-                           : m.text
-                       }}/>
-                </div>
-              ))}
-              <div ref={qaEndRef}/>
-            </div>
+        <>
+          {qaMessages.map((m, i) =>
+            m.role === 'user' ? (
+              <div key={i} className="ad-qa-q">
+                <span className="ad-qa-q-icon">💬</span>
+                <span className="ad-qa-q-text">{m.text}</span>
+              </div>
+            ) : (
+              <div key={i} className="cmp-summary ad-summary-prominent">
+                <div className="cmp-summary-head">📋 Ответ</div>
+                <div className="cmp-summary-body ai-md"
+                     dangerouslySetInnerHTML={{__html:
+                       renderMarkdown(m.text || (qaRunning && i === qaMessages.length - 1 ? '_Анализирую…_' : ''))
+                     }}/>
+              </div>
+            )
           )}
-          <div className="ad-qa-input-wrap">
+          <div ref={qaEndRef}/>
+          <div className="ad-qa-input">
             <PromptBox
               value={qaInput}
               onChange={e => setQaInput(e.target.value)}
               onSubmit={sendQaMessage}
-              placeholder="Спросите что-нибудь о документе… «Какие риски для арендатора?»"
+              placeholder="Задайте вопрос по документу… «Какие риски для арендатора?»"
               disabled={qaRunning}
               maxHeight={180}
             />
           </div>
-        </div>
+        </>
       )}
     </div>
   );
