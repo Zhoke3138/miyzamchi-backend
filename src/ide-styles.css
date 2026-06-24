@@ -6272,9 +6272,17 @@ body.dk .analyze-accordion-content {
   gap: var(--s-3);
 }
 .myz-doc-type-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: var(--s-2);
+}
+.myz-doc-type-btn--custom {
+  grid-column: span 2;
+  background: var(--accent-soft);
+  border-color: var(--accent-edge);
+}
+.myz-doc-type-btn--custom:hover {
+  background: var(--hover);
 }
 
 /* Create dialog (step 2: interview) */
