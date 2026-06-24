@@ -839,11 +839,12 @@ const AnalyzeDocsMode = () => {
     if (qaMessages.length > 0) qaEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [qaMessages]);
 
-  // ── Отправить вопрос по документу ─────────────────────────────
+  // ── Отправить вопрос по документу (с RAG + контекстом аудита) ─
   const sendQaMessage = async () => {
     const msg = qaInput.trim();
     if (!msg || qaRunning) return;
     setQaInput('');
+
     const historyForApi = qaMessages.map(m => ({
       role: m.role === 'ai' ? 'model' : 'user',
       parts: [{ text: m.text }]
@@ -852,13 +853,34 @@ const AnalyzeDocsMode = () => {
     setQaRunning(true);
     const ac = new AbortController();
     qaAbortRef.current = ac;
+
+    // Собираем полный контекст: оригинал + результаты аудита.
+    // RAG (skipRetrieval не передаём → false по умолчанию) дополнит ответ
+    // нормами из Pinecone так же, как делает основной чат.
+    const ctxParts = [];
+    if (slots[0]?.text) {
+      ctxParts.push(`=== ТЕКСТ ПРОВЕРЯЕМОГО ДОКУМЕНТА ===\n${slots[0].text}`);
+    }
+    if (summary) {
+      ctxParts.push(`=== EXECUTIVE SUMMARY АУДИТА ===\n${summary}`);
+    }
+    if (tableRows.length > 0) {
+      const rows = tableRows.slice(0, 40).map(r =>
+        `• ${r.item_number || '?'}: [${(r.status || 'ok').toUpperCase()}] ${r.short_verdict || ''}${r.legal_rationale && r.legal_rationale !== r.short_verdict ? ' — ' + r.legal_rationale : ''}`
+      ).join('\n');
+      ctxParts.push(`=== ВЕРДИКТЫ ПО ПУНКТАМ ===\n${rows}`);
+    }
+    if (sources.length > 0) {
+      ctxParts.push(`=== НОРМЫ КР НАЙДЕННЫЕ ПРИ АУДИТЕ ===\n${sources.slice(0, 20).join('\n')}`);
+    }
+    const documentContext = ctxParts.join('\n\n');
+
     try {
       await streamChat({
         message: msg,
         history: historyForApi,
         mode: 'fast',
-        skipRetrieval: true,
-        documentContext: slots[0]?.text || '',
+        documentContext,
         signal: ac.signal,
         onText: (chunk) => setQaMessages(prev => {
           const copy = [...prev];
@@ -866,6 +888,12 @@ const AnalyzeDocsMode = () => {
           if (last && last.role === 'ai') copy[copy.length - 1] = { ...last, text: last.text + chunk };
           return copy;
         }),
+        onStatus: () => {},
+        onStep: () => {},
+        onSources: () => {},
+        onMetadata: () => {},
+        onConfidence: () => {},
+        onTelemetry: () => {},
       });
     } catch (err) {
       if (err.name !== 'AbortError') {
