@@ -8546,8 +8546,8 @@ body.dk .analyze-accordion-content {
   font-size: var(--text-md);
   line-height: var(--lh-normal);
   color: var(--text-main);
-  padding: 7px var(--s-3) 7px;
-  min-height: 34px;
+  padding: 12px var(--s-3) 12px;
+  min-height: 46px;
   overflow: hidden;
   scrollbar-width: thin;
   scrollbar-color: var(--border-color) transparent;
