@@ -225,7 +225,7 @@
 
 ---
 
-## Текущий статус (21 июня 2026)
+## Текущий статус (24 июня 2026)
 
 ✅ **В проде:** Selective Reasoning v2.0, все 4 фазы. Telemetry с cascade-секцией.
 ✅ **Режим Документы:** 12 типов, интервьюер + мультиагентная генерация + bilateral contract engine + самопроверка + экспорт .docx/.pdf
@@ -242,27 +242,112 @@
 
 ---
 
-## 📍 Последняя сессия / где остановились (22.06.2026)
+## 📍 Последняя сессия / где остановились (24.06.2026)
 
-**Что сделано:**
-1. **ONLYOFFICE интеграция — полная миграция фич из SuperDoc:**
-   - `routes/onlyoffice.js`: mammoth-извлечение текста при upload → `GET /api/files/:fileId/text`, selection-relay (`POST/GET /api/onlyoffice/bridge/selection`), CORS middleware для плагин-iframe (localhost:8080)
-   - `onlyoffice-plugin/miyzamchi-ai/plugin.js`: авто-определение BACKEND_URL (localhost:3000 vs Render), push выделения в backend-relay, новый тип `insert_after` в `applyBridgeCmd`
-   - `src/App.jsx`: `getDocSnapshot()` читает `window.__ooDocText/__ooSelection`, OO setup useEffect регистрирует `__ooLoadDocText` + поллинг выделения каждые 1.5с, upload вызывает `__ooLoadDocText`, `handleAction` корректно обрабатывает save/exportWord/exportPdf в OO mode
-2. **ONLYOFFICE insertBefore crash** (предыдущая сессия): переписан `OnlyOfficeEditor.jsx` — контейнер создаётся imperatively через useEffect, React его не видит. `OOEditorSlot` вынесен на уровень модуля.
+### Контекст: задача сессии
+Полная миграция функций SuperDoc в ONLYOFFICE Document Server (локальный Docker, порт 8080). Основная цель — команды ИИ-агента должны применяться прямо в документе ONLYOFFICE через bridge-relay.
 
-**Текущее состояние ONLYOFFICE (OO_MODE = true при VITE_ONLYOFFICE_URL):**
-- Документ открывается в ONLYOFFICE → ИИ видит полный текст (через mammoth → `/api/files/:fileId/text`)
-- Выделение юристом → ИИ видит через selection bridge (plugin.js → backend → App.jsx polling)
-- Команды ИИ (insert/replace/comment) → bridge push → plugin.js применяет в ONLYOFFICE
-- Ctrl+S = toast "ONLYOFFICE автосохраняет", Файл → Экспорт Word = скачивает .docx с бэка
+### Что сделано в этой сессии (коммиты d5db366, f9d82b0)
+
+**1. `routes/onlyoffice.js`**
+- Добавлен `DOCSERVER_BACKEND_URL`: если `OO_URL` содержит `localhost` → DocServer получает `http://host.docker.internal:3000` (чтобы Docker мог достучаться до локального бэкенда)
+- Исправлен `BROWSER_URL`: аналогичная логика — если DocServer локальный → браузер получает `http://localhost:3000`
+- `buildEditorConfig()`: `document.url` и `callbackUrl` теперь используют `DOCSERVER_BACKEND_URL`, `pluginsData` — `BROWSER_URL`
+- Добавлены endpoints: `POST/GET /api/onlyoffice/bridge/doctext` — плагин пушит живой текст документа каждые 8с
+
+**2. `onlyoffice-plugin/miyzamchi-ai/plugin.js`**
+- Bridge poll: 600ms → **300ms**
+- Периодический push текста документа через `callCommand` каждые 8с → `POST /api/onlyoffice/bridge/doctext`
+- `replace_smart` / `replace_all`: `Search()` теперь возвращает кол-во найденных; если 0 → user-visible toast `⚠ Не найдено: «...»` + console.warn
+- SDK CDN: заменён путь `localhost:8080/sdkjs/...` на официальный `https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.js` + `plugins-ui.js`
+
+**3. `src/App.jsx`**
+- Async refresh `window.__ooDocText` из bridge (`GET /api/onlyoffice/bridge/doctext`) ПЕРЕД каждым вызовом ИИ-агента (guard: `window.__ooMode`)
+- Обновляет `__ooDocText` только если `ts > 0` (т.е. плагин уже пушил текст)
+
+**4. `src/components/onlyoffice-workspace/OnlyOfficeEditor.jsx`**
+- Диагностическое логирование в `onAppReady`: логирует `typeof createConnector/serviceCommand/executeMethod/destroyEditor` — чтобы видеть что доступно в Community Edition
+
+### Текущее состояние ONLYOFFICE — ЧТО НЕ РАБОТАЕТ ❌
+
+**Симптом:** При загрузке `.docx` файла показывается ошибка в компоненте редактора:
+```
+⚠ Загрузка не удалась.
+Убедитесь что DocServer доступен: http://localhost:8080
+```
+
+**Что проверено и исключено:**
+- `api.js` доступен: `GET http://localhost:8080/web-apps/apps/api/documents/api.js` → 200 OK, 65KB ✅
+- Все три сервиса запущены: backend :3000 ✅, frontend :5173 ✅, DocServer :8080 (healthy) ✅
+- `document.url` и `callbackUrl` теперь правильные (`host.docker.internal:3000`) ✅
+- `pluginsData` теперь правильный (`localhost:3000`) ✅
+
+**Возможные оставшиеся причины (не диагностированы):**
+1. **ONLYOFFICE Community Edition JWT**: если `ONLYOFFICE_JWT_SECRET` задан в `.env`, а DocServer не настроен на JWT — он отклоняет конфиг. Либо наоборот — DocServer ожидает JWT, а secret не задан.
+2. **DocServer не может достучаться до `host.docker.internal:3000`** — на некоторых Windows-конфигурациях Docker `host.docker.internal` не резолвится. Проверить: `docker exec miyzamchi-docserver curl http://host.docker.internal:3000/api/ping`
+3. **CORS от DocServer к браузеру** — `api.js` грузит скрипты, браузер может блокировать из-за CORP/COEP заголовков.
+4. **Ошибка в самом `onError` event** — ONLYOFFICE посылает `onError` с `data.errorDescription`, но что именно написано — неизвестно (нужно проверить в DevTools Console вкладку Network или Console на `onError`).
+
+### Что нужно сделать следующему Claude
+
+**Шаг 1 — Диагностика (обязательно перед любыми правками):**
+
+```powershell
+# 1. Проверить резолвится ли host.docker.internal из Docker:
+docker exec miyzamchi-docserver curl -s -o /dev/null -w "%{http_code}" http://host.docker.internal:3000/api/ping
+
+# 2. Проверить логи DocServer в момент открытия файла:
+docker logs miyzamchi-docserver --tail 50 -f
+# Затем в браузере загрузить docx и смотреть логи
+
+# 3. В браузере DevTools Console найти:
+#    - '[OO Diag] onAppReady' — если есть, значит api.js загрузился
+#    - Строку с 'onError' или errorDescription
+#    - Любые ошибки CORS/CSP
+```
+
+**Шаг 2 — Вероятный фикс (по результатам диагностики):**
+
+Если `host.docker.internal` не резолвится → заменить в `routes/onlyoffice.js`:
+```js
+// Узнать IP хоста из Docker:
+// docker exec miyzamchi-docserver cat /etc/hosts | grep host-gateway
+// Обычно это 172.17.0.1 или 172.18.0.1
+const DOCSERVER_BACKEND_URL = process.env.OO_DOCSERVER_BACKEND_URL
+    || (OO_URL.includes('localhost') ? 'http://172.18.0.1:3000' : BACKEND_URL);
+```
+
+Если JWT проблема → проверить `.env`: если `ONLYOFFICE_JWT_SECRET` задан — убрать или добавить его в DocServer конфиг.
+
+### Архитектура bridge-relay (для следующего Claude)
+
+```
+Пользователь редактирует документ в ONLYOFFICE
+         ↕ (каждые 8с)
+plugin.js → callCommand(getText) → POST /api/onlyoffice/bridge/doctext { text }
+                                            ↓ (backend хранит в _doctextStore)
+App.jsx → перед ИИ-запросом: GET /api/onlyoffice/bridge/doctext → window.__ooDocText
+                                            ↓
+                                   ИИ видит актуальный текст
+
+Команда ИИ (insert/replace) → POST /api/onlyoffice/bridge/push { cmd }
+                                            ↓
+plugin.js polls GET /api/onlyoffice/bridge/poll (каждые 300ms)
+                                            ↓
+plugin.js → callCommand(SearchAndReplace / SetText)
+                                            ↓
+                              Текст меняется в документе
+```
+
+### Confirmation: createConnector НЕ ДОСТУПЕН в Community Edition
+ONLYOFFICE Automation API (`createConnector()`) — Developer/Enterprise Edition ONLY. В Community 9.4.0 его нет. Вся архитектура построена на bridge-relay через плагин — это правильный путь.
 
 **Открытые задачи (по убыванию ROI):**
-1. **Параллельный Triage + Phase 3** — экономия 15-20с. Правка в `routes/analyze.js preparePipelineState`.
-2. **Smart-skip Phase 3** — regex-эвристика "документ содержит явные `ст. N`". Если нет → пропускаем Splitter, экономия ~24с.
-3. **Очистка CJK-артефактов в Final Judge** — DeepSeek вставляет китайские иероглифы. 5-строчная правка в server.js (с согласия).
-4. **Test corpus** — папка `test_corpus/` с шаблонами реальных кыргызских документов (TXT).
-5. **Паринг Telegram**: пользователь пишет боту `@miyzamchi_work_bot` → получает код → в VS Code вводит `/telegram:access pair КОД`.
+1. **[КРИТИЧНО] Починить открытие документа в ONLYOFFICE** — описано выше. Диагностика → фикс.
+2. **Параллельный Triage + Phase 3** — экономия 15-20с. Правка в `routes/analyze.js preparePipelineState`.
+3. **Smart-skip Phase 3** — regex-эвристика "документ содержит явные `ст. N`". Если нет → пропускаем Splitter, экономия ~24с.
+4. **Очистка CJK-артефактов в Final Judge** — DeepSeek вставляет китайские иероглифы. 5-строчная правка в server.js (с согласия).
+5. **Test corpus** — папка `test_corpus/` с шаблонами реальных кыргызских документов (TXT).
 
 ## Что НЕ надо предлагать
 - Перейти на ESM (проект CJS, всё работает)
