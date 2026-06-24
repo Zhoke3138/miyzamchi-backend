@@ -192,19 +192,20 @@ app.use(express.static(__dirname, { dotfiles: 'deny' }));
 //  папкой ide/. Активный фронт деплоится отдельно на Netlify из src/.)
 
 // --- RATE LIMITING ---
+// Лимиты рассчитаны на 3-5 юристов, работающих одновременно (возможно из одного офиса/IP).
 const rateLimit = require('express-rate-limit');
 const apiLimiter = rateLimit({
     windowMs: 60_000,
-    max: 30,
+    max: 60, // 60/мин: комфортно для 3 юристов из одного IP (~20 каждому)
     standardHeaders: true,
     legacyHeaders: false,
     message: { reply: 'Слишком много запросов. Пожалуйста, подождите одну минуту.' }
 });
 app.use('/api/chat', apiLimiter);
 app.use('/api/analyze-document', apiLimiter);
-// PR3: /api/upload-document — фоновый прогрев (Shadow Pipeline). Тот же лимит.
 app.use('/api/upload-document', apiLimiter);
-// Deep Analysis (PRO) — отдельный лимит, дороже по агентам
+app.use('/api/edit', apiLimiter);
+// Deep Analysis (PRO) — жёсткий лимит: дорогой multi-agent pipeline
 const deepAnalyzeLimiter = rateLimit({
     windowMs: 60_000,
     max: 6,
@@ -213,6 +214,15 @@ const deepAnalyzeLimiter = rateLimit({
     message: { reply: 'Лимит глубокого анализа: не более 6 в минуту. Используйте обычный анализ или подождите.' }
 });
 app.use('/api/deep-analyze-document', deepAnalyzeLimiter);
+// v2 (генерация документов) — умеренный лимит: SSE-стриминг, дороже обычного чата
+const v2Limiter = rateLimit({
+    windowMs: 60_000,
+    max: 15, // 15/мин: 3 юристам по 5 генераций в минуту
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { reply: 'Лимит генерации документов: не более 15 в минуту. Подождите немного.' }
+});
+app.use('/api/v2', v2Limiter);
 
 // --- MINJUST API PROXY (CORS Bypass & Caching) ---
 const apiCache = new Map();

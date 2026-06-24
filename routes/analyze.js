@@ -1569,25 +1569,36 @@ ${riskReports}
             // outputText капчим ВСЕГДА если trace включён — даже если telemetry off.
             const captureForTrace = trace && !trace.isNoop;
             const captureForTele = !!telemetry;
+            // Удаляем CJK-символы (иероглифы), которые DeepSeek иногда вставляет в ответ.
+            // Диапазоны: CJK Unified (4E00-9FFF), Extension A (3400-4DBF),
+            // CJK Symbols (3000-303F), Halfwidth/Fullwidth (FF00-FFEF).
+            const stripCJK = (s) => s.replace(/[　-〿㐀-䶿一-鿿豈-﫿＀-￯]/g, '');
+
             let outputText = '';
             const originalWrite = res.write;
-            if (captureForTrace || captureForTele) {
-                res.write = function(chunk, encoding, callback) {
-                    // Парсим только SSE-data text-куски: { "text": "..." }
-                    try {
-                        const str = String(chunk);
-                        const m = str.match(/^data: (.+)\n\n$/);
-                        if (m) {
-                            const obj = JSON.parse(m[1]);
-                            if (obj && typeof obj.text === 'string') outputText += obj.text;
-                            else outputText += str;
-                        } else {
+            // Всегда оборачиваем: (1) стрипаем CJK из text-чанков до отправки клиенту,
+            // (2) если нужно — копим outputText для trace/telemetry.
+            res.write = function(chunk, encoding, callback) {
+                try {
+                    const str = String(chunk);
+                    const m = str.match(/^data: (.+)\n\n$/);
+                    if (m) {
+                        const obj = JSON.parse(m[1]);
+                        if (obj && typeof obj.text === 'string') {
+                            obj.text = stripCJK(obj.text);
+                            if (captureForTrace || captureForTele) outputText += obj.text;
+                            chunk = `data: ${JSON.stringify(obj)}\n\n`;
+                        } else if (captureForTrace || captureForTele) {
                             outputText += str;
                         }
-                    } catch (_) { outputText += String(chunk); }
-                    return originalWrite.call(res, chunk, encoding, callback);
-                };
-            }
+                    } else if (captureForTrace || captureForTele) {
+                        outputText += str;
+                    }
+                } catch (_) {
+                    if (captureForTrace || captureForTele) outputText += String(chunk);
+                }
+                return originalWrite.call(res, chunk, encoding, callback);
+            };
             // ── Имя сработавшего судьи → фронтенд ──
             // 1) protocolStatus — уже отображается статус-строкой над сообщением
             //    (известное SSE-событие контракта, ничего не ломает);
@@ -1606,7 +1617,7 @@ ${riskReports}
                 user_id: judgeUserId,
                 label: `judge-${pathLabel}`
             });
-            if (captureForTrace || captureForTele) res.write = originalWrite;
+            res.write = originalWrite; // всегда восстанавливаем (wrapper был создан безусловно)
             if (captureForTele) {
                 telemetry.addTokens(0, telemetry.estimateTokens(outputText));
                 telemetry.endTimer('Final_Judge_Time');
