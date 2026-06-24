@@ -76,11 +76,27 @@ export function OnlyOfficeEditor({ fileId, onSaved, onError }) {
                     onAppReady: () => {
                         if (!cancelled) {
                             setStatus('ready');
-                            // Connector API: прямой доступ к документу без плагина
+                            // ── ДИАГНОСТИКА: логируем все методы объекта редактора ──────
+                            try {
+                                const ed  = editorRef.current;
+                                const own = ed ? Object.getOwnPropertyNames(ed) : [];
+                                const proto = ed ? Object.getOwnPropertyNames(Object.getPrototypeOf(ed) || {}) : [];
+                                console.log('[OO Diag] onAppReady. editorRef type:', typeof ed);
+                                console.log('[OO Diag] Own props:', own.join(', ') || '(none)');
+                                console.log('[OO Diag] Proto props:', proto.join(', ') || '(none)');
+                                console.log('[OO Diag] createConnector:', typeof ed?.createConnector);
+                                console.log('[OO Diag] serviceCommand:', typeof ed?.serviceCommand);
+                                console.log('[OO Diag] executeMethod:', typeof ed?.executeMethod);
+                                console.log('[OO Diag] destroyEditor:', typeof ed?.destroyEditor);
+                            } catch (diagErr) {
+                                console.warn('[OO Diag] Ошибка при перечислении методов:', diagErr);
+                            }
+                            // ── Connector API: прямой доступ к документу без плагина ───
                             try {
                                 if (typeof editorRef.current?.createConnector === 'function') {
                                     const conn = editorRef.current.createConnector();
                                     window.__ooConnector = conn;
+                                    console.log('[OO Diag] ✅ createConnector() вернул объект — Automation API доступен!');
                                     // Начальное чтение текста (актуальнее чем mammoth после правок)
                                     conn.callCommand(function () {
                                         var oDoc = Api.GetDocument();

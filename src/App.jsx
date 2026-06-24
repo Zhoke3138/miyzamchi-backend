@@ -7549,6 +7549,18 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
     let messageToSend=t;
     let agentDocCtx=null;
     if(agent){
+      // В OO-режиме: обновить __ooDocText свежим текстом из bridge ПЕРЕД снапшотом
+      if(window.__ooMode){
+        try{
+          const OO_BACK = import.meta.env.VITE_BACKEND_URL || 'https://miyzamchi-backend.onrender.com';
+          const r = await fetch(OO_BACK+'/api/onlyoffice/bridge/doctext');
+          const { text, ts } = await r.json();
+          if(text && ts > 0){
+            window.__ooDocText = text;
+            console.log('[Agent] __ooDocText обновлён из bridge:',text.length,'chars, ts:',new Date(ts).toISOString());
+          }
+        }catch(e){ console.warn('[Agent] doctext bridge refresh failed:',e); }
+      }
       const doc=getDocSnapshot();
       // [DEBUG] verify document text is actually captured before LLM call
       console.log('[Agent] Document snapshot:',{

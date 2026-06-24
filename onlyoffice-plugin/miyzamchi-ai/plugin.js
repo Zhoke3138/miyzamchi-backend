@@ -359,7 +359,18 @@
                     if (results && results.length > 0) {
                         results[0].SetText(Asc.scope.newText);
                     }
-                }, false, function () { ui.toast('✅ Заменено'); });
+                    // Возвращаем количество найденных — 0 означает "не найдено"
+                    return (results ? results.length : 0);
+                }, false, function (found) {
+                    if (!found) {
+                        // Search вернул 0: текст не найден (возможно гиперссылка, или изменился)
+                        console.warn('[Bridge] replace_smart: Search() вернул 0 для: «' + searchFor.slice(0, 80) + '»');
+                        ui.toast('⚠ Не найдено: «' + searchFor.slice(0, 40) + '…»');
+                    } else {
+                        console.log('[Bridge] replace_smart: OK, found=' + found + ', replaced first');
+                        ui.toast('✅ Заменено');
+                    }
+                });
             } else {
                 state.aiAnswer = text;
                 insertAnswer();
@@ -374,7 +385,16 @@
                     for (var i = 0; i < (results || []).length; i++) {
                         results[i].SetText(Asc.scope.newText);
                     }
-                }, false, function () { ui.toast('✅ Заменено везде'); });
+                    return (results ? results.length : 0);
+                }, false, function (found) {
+                    if (!found) {
+                        console.warn('[Bridge] replace_all: Search() вернул 0 для: «' + needle.slice(0, 80) + '»');
+                        ui.toast('⚠ Не найдено: «' + needle.slice(0, 40) + '…»');
+                    } else {
+                        console.log('[Bridge] replace_all: OK, replaced ' + found + ' occurrences');
+                        ui.toast('✅ Заменено везде (' + found + ')');
+                    }
+                });
             }
 
         } else if (type === 'insert_after') {
@@ -535,7 +555,7 @@
 
         // Bridge: поллинг backend-relay (App.jsx и plugin.js — разные origin,
         // localStorage между ними не шарится). App.jsx пишет в /bridge/push,
-        // плагин забирает здесь каждые 600мс.
+        // плагин забирает здесь каждые 300мс (снижено с 600 для лучшего UX).
         var _bridgeTs = Date.now() - 3000;
         setInterval(function () {
             fetch(BACKEND_URL + '/api/onlyoffice/bridge/poll?since=' + _bridgeTs)
@@ -546,7 +566,30 @@
                     (data.cmds || []).forEach(applyBridgeCmd);
                 })
                 .catch(function () {});
-        }, 600);
+        }, 300);
+
+        // Периодически пушим актуальный текст документа на бэкенд (каждые 8с).
+        // App.jsx читает его перед ИИ-запросом → ИИ видит документ ПОСЛЕ правок,
+        // а не статичный mammoth-снимок времени загрузки.
+        setInterval(function () {
+            window.Asc.plugin.callCommand(function () {
+                var oDoc  = Api.GetDocument();
+                var lines = [];
+                var n     = oDoc.GetElementsCount();
+                for (var i = 0; i < n; i++) {
+                    var el = oDoc.GetElement(i);
+                    if (el && el.GetText) lines.push(el.GetText());
+                }
+                return lines.join('\n');
+            }, false, function (text) {
+                if (!text) return;
+                fetch(BACKEND_URL + '/api/onlyoffice/bridge/doctext', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                }).catch(function () {});
+            });
+        }, 8000);
     });
 
 }(window));

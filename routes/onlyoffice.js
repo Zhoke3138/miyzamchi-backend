@@ -97,19 +97,20 @@ router.get('/onlyoffice/plugin/config.json', (req, res) => {
     });
 });
 
-// index.html: инжектируем ONLYOFFICE SDK до plugin.js.
-// Без SDK window.Asc.plugin === undefined → plugin.js падает сразу → сломанный значок.
-// SDK подгружается с DocServer (cross-origin <script> не требует CORS для non-module).
+// index.html: инжектируем ONLYOFFICE Plugin SDK до plugin.js.
+// SDK размещён на публичном CDN GitHub Pages — не зависит от DocServer.
+// Официальный источник: github.com/ONLYOFFICE/sdkjs-plugins (v1/plugins.js + plugins-ui.js).
 // ВАЖНО: переопределяем CSP от Helmet:
 //   - frame-ancestors * → ONLYOFFICE (localhost:8080) может встраивать наш iframe
-//   - script-src * → iframe может грузить SDK с localhost:8080
+//   - script-src * → iframe может грузить SDK с CDN
 router.get('/onlyoffice/plugin/index.html', (req, res) => {
     const htmlPath = path.join(PLUGIN_DIR, 'index.html');
     try {
         let html = fs.readFileSync(htmlPath, 'utf8');
-        const sdkTag    = `<script src="${OO_URL}/sdkjs/common/plugins/plugin.js"></script>`;
+        const sdkTag    = `<script src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.js"></script>`;
+        const sdkUiTag  = `<script src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins-ui.js"></script>`;
         const pluginTag = `<script src="${BROWSER_URL}/api/onlyoffice/plugin/plugin.js"></script>`;
-        html = html.replace('<script src="plugin.js"></script>', sdkTag + '\n' + pluginTag);
+        html = html.replace('<script src="plugin.js"></script>', sdkTag + '\n' + sdkUiTag + '\n' + pluginTag);
         // Перезаписываем CSP Helmet'а (вызывается ПОСЛЕ helmet middleware)
         // frame-ancestors * → ONLYOFFICE (localhost:8080) может встраивать этот iframe
         // X-Frame-Options удаляем — он имеет приоритет над frame-ancestors в старых браузерах
@@ -328,6 +329,26 @@ router.get('/onlyoffice/bridge/poll', (req, res) => {
     const since = parseInt(req.query.since) || 0;
     const cmds = _bridgeQueue.filter(c => c.ts > since);
     res.json({ cmds, ts: Date.now() });
+});
+
+// ── Bridge DocText: plugin.js → App.jsx ───────────────────────────
+// Плагин каждые 8с пушит актуальный текст документа (после правок в ONLYOFFICE).
+// App.jsx читает перед каждым ИИ-запросом → ИИ всегда видит свежий текст.
+// POST /api/onlyoffice/bridge/doctext  { text }
+// GET  /api/onlyoffice/bridge/doctext  → { text, ts }
+let _doctextStore = { text: '', ts: 0 };
+
+router.post('/onlyoffice/bridge/doctext', express.json({ limit: '512kb' }), (req, res) => {
+    const { text } = req.body || {};
+    if (typeof text === 'string') {
+        _doctextStore = { text, ts: Date.now() };
+        console.log(`[OnlyOffice] doctext updated: ${text.length} chars`);
+    }
+    res.json({ ok: true });
+});
+
+router.get('/onlyoffice/bridge/doctext', (req, res) => {
+    res.json(_doctextStore);
 });
 
 // ── Bridge Selection: plugin.js → App.jsx ─────────────────────────
