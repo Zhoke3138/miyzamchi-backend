@@ -1091,11 +1091,12 @@ ${tpl.courtDoc
         refParts.push(`=== ${CAT_LABEL[cat]} ===\n${lines.join('\n\n')}`);
       }
       const refBlock = refParts.length ? refParts.join('\n\n') : '(эталонных норм в базе не найдено — составляй фабулу без точных ссылок на статьи)';
-      stage(`📚 Норм найдено: ${allNorms.length}, в работу: ${refIdx}. Составляю документ…`, { found: allNorms.length, used: refIdx });
+      // Точный разброс по категориям — не просто "27 норм" (потолок cap), а реальные числа.
+      const normBreakdown = `точных: ${byRole.exact.length} · связанных: ${byRole.related.length} · процессуальных: ${byRole.procedural.length} · общих: ${byRole.general.length}`;
+      stage(`📚 Нашёл ${allNorms.length} норм, беру в работу ${refIdx} (${normBreakdown})`, { found: allNorms.length, used: refIdx });
       console.log(`[draft-document] ${docType} | pool=${allNorms.length} → used=${refIdx} | roles=${JSON.stringify(Object.fromEntries(cats.map((c) => [c, byRole[c].length])))}`);
 
-      // ── 4) ДРАФТЕР (DeepSeek v4-pro) ──
-      stage(`✍️ Составляю документ по ${articlesUsed.length} нормам…`, { articles: articlesUsed.length });
+      // ── 4) ДРАФТЕР (DeepSeek v4-pro) — статусы обновляются в onDelta ──
       const drafterUser = [
         `ТИП ДОКУМЕНТА: ${tpl.label}`,
         `ПРЕДМЕТ: ${plan.subject_line || ''}`,
@@ -1161,8 +1162,10 @@ ${tpl.courtDoc
       let scan = 0, depth = 0, inStr = false, esc = false, objStart = -1;
       let streamedCount = 0;
       let hbReason = 0;
-      // Последний kind, отправленный клиенту — для авто-spacer injection в стриме.
-      let lastStreamedKind = null;
+      // Прогресс reasoning-фазы (до появления первого text-токена)
+      let reasoningChars = 0, reasoningPhase = 0;
+      // Последний kind/block-count для авто-статусов во время генерации
+      let lastStreamedKind = null, lastStatusCount = 0;
       const emitStreamBlock = (normalized) => {
         // Spacer ДО заголовка
         if (SPACER_BEFORE_KINDS.has(normalized.kind) && lastStreamedKind && lastStreamedKind !== 'spacer') {
@@ -1207,9 +1210,37 @@ ${tpl.courtDoc
       };
       const onDelta = (d) => {
         if (!d) return;
-        // Фаза reasoning (до контента): heartbeat, чтобы прокси Render держал SSE.
-        if (d.reasoning) { hbReason += d.reasoning.length; if (hbReason > 1500) { hbReason = 0; sse({ heartbeat: 1 }); } }
-        if (d.text) { acc += d.text; feedStream(); }
+        // ── Reasoning-фаза (DeepSeek думает, text ещё не идёт) ──
+        // heartbeat + прогрессивные статусы чтобы юрист видел что система работает.
+        if (d.reasoning) {
+          hbReason += d.reasoning.length;
+          reasoningChars += d.reasoning.length;
+          if (hbReason > 1500) { hbReason = 0; sse({ heartbeat: 1 }); }
+          if (reasoningPhase === 0) {
+            reasoningPhase = 1;
+            stage(`🧠 Анализирую правовые основания (${refIdx} норм)…`);
+          } else if (reasoningChars > 3000 && reasoningPhase === 1) {
+            reasoningPhase = 2;
+            stage('🧠 Формирую структуру документа и аргументацию…');
+          } else if (reasoningChars > 7000 && reasoningPhase === 2) {
+            reasoningPhase = 3;
+            stage('✍️ Готовлю текст документа…');
+          }
+        }
+        // ── Text-фаза (JSON-блоки льются) ──
+        if (d.text) {
+          acc += d.text;
+          feedStream();
+          // Обновляем статус на каждый новый блок (но не чаще 1 раза на 3 блока).
+          if (streamedCount > lastStatusCount) {
+            lastStatusCount = streamedCount;
+            if (streamedCount === 1) {
+              stage(`✍️ Пишу документ… (блок 1 из ~${refIdx} норм)`);
+            } else if (streamedCount % 3 === 0) {
+              stage(`✍️ Написано блоков: ${streamedCount}…`);
+            }
+          }
+        }
       };
       // Заголовок: для типов с фиксированным titleWord — он; для «Прочее»/письма —
       // выводим из досье (docName), иначе из subject_line.

@@ -1187,7 +1187,8 @@ const _runToHtml = (run) => {
   if (run.bold) html = `<strong>${html}</strong>`;
   if (run.italic) html = `<em>${html}</em>`;       // курсив — цитаты НПА
   if (run.underline) html = `<u>${html}</u>`;       // подчёрк — особые моменты
-  return html;
+  // Шрифт на уровне span — SuperDoc применяет его к тексту, а не только к абзацу.
+  return `<span style="font-family:'Times New Roman',serif;font-size:12pt;">${html}</span>`;
 };
 // Ячейка реквизитов: строки → абзацы (первая строка — жирная: название стороны).
 const _linesToCellHtml = (s) => String(s == null ? '' : s).split('\n').map((ln, i) => {
