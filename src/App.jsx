@@ -656,6 +656,13 @@ const AnalyzeDocsMode = () => {
   const abortRef = useRef(null);
   const fileInputRefs = [useRef(null), useRef(null)];
 
+  // ── Q&A по документу (появляется после завершения анализа) ────
+  const [qaMessages, setQaMessages] = useState([]);
+  const [qaInput, setQaInput] = useState('');
+  const [qaRunning, setQaRunning] = useState(false);
+  const qaAbortRef = useRef(null);
+  const qaEndRef = useRef(null);
+
   // ── Live-таймер: тикает каждые 100ms пока running ─────────────
   // 2026-05-30: каждый тик дублирует tele в window-event для LeftPanel.
   useEffect(() => {
@@ -818,11 +825,62 @@ const AnalyzeDocsMode = () => {
 
   const startNew = () => {
     if (abortRef.current) { try { abortRef.current.abort() } catch(e){} abortRef.current = null; }
+    if (qaAbortRef.current) { try { qaAbortRef.current.abort() } catch(e){} qaAbortRef.current = null; }
     setRunning(false);
     setSlots([{...EMPTY_SLOT}, {...EMPTY_SLOT}]);
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null); setError('');
     setTele({...EMPTY_TELE});
+    setQaMessages([]); setQaInput(''); setQaRunning(false);
     try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-reset')); } catch(_) {}
+  };
+
+  // ── Скролл Q&A к последнему сообщению ─────────────────────────
+  useEffect(() => {
+    if (qaMessages.length > 0) qaEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [qaMessages]);
+
+  // ── Отправить вопрос по документу ─────────────────────────────
+  const sendQaMessage = async () => {
+    const msg = qaInput.trim();
+    if (!msg || qaRunning) return;
+    setQaInput('');
+    const historyForApi = qaMessages.map(m => ({
+      role: m.role === 'ai' ? 'model' : 'user',
+      parts: [{ text: m.text }]
+    }));
+    setQaMessages(prev => [...prev, { role: 'user', text: msg }, { role: 'ai', text: '' }]);
+    setQaRunning(true);
+    const ac = new AbortController();
+    qaAbortRef.current = ac;
+    try {
+      await streamChat({
+        message: msg,
+        history: historyForApi,
+        mode: 'fast',
+        skipRetrieval: true,
+        documentContext: slots[0]?.text || '',
+        signal: ac.signal,
+        onText: (chunk) => setQaMessages(prev => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (last && last.role === 'ai') copy[copy.length - 1] = { ...last, text: last.text + chunk };
+          return copy;
+        }),
+      });
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setQaMessages(prev => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (last && last.role === 'ai' && !last.text)
+            copy[copy.length - 1] = { ...last, text: '⚠️ Ошибка: ' + (err.message || String(err)) };
+          return copy;
+        });
+      }
+    } finally {
+      setQaRunning(false);
+      qaAbortRef.current = null;
+    }
   };
 
   // ── IDLE: drag&drop слоты ─────────────────────────────────────
@@ -830,15 +888,13 @@ const AnalyzeDocsMode = () => {
     return (
       <div className="ad-root">
         <TraceArchiveModal open={archiveOpen} onClose={() => setArchiveOpen(false)} />
-        <div className="cmp-intro">
-          <h3 className="cmp-title">Анализ документов</h3>
-          <p className="cmp-sub">Перетащите файл сюда или выберите вручную. Один документ → глубокий аудит. Два → сравнение редакций.</p>
-          <button className="ad-trace-btn ad-trace-btn--idle"
-                  onClick={() => setArchiveOpen(true)}
-                  title="Постоянный архив debug-отчётов всех прошлых анализов">
-            🗃️ Debug-архив
-          </button>
+
+        <div className="ad-idle-hero">
+          <div className="ad-idle-hero-icon">⚖️</div>
+          <h3 className="ad-idle-hero-title">Юридический аудит документа</h3>
+          <p className="ad-idle-hero-sub">Загрузите файл — ИИ проверит каждый пункт на соответствие законодательству КР через поиск по 50 000+ нормам</p>
         </div>
+
         <div className="ad-slots">
           {slots.map((slot, i) => {
             const isOver  = dragOverIdx === i;
@@ -899,22 +955,23 @@ const AnalyzeDocsMode = () => {
             );
           })}
         </div>
-        <div className={'ad-mode-banner ad-mode-banner--' + (mode || 'none')}>
-          {mode === 'audit'   && <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Ico k="microscope" sz={14} col="var(--accent)" /> Режим: <b>Одиночный аудит</b> · Triage + Ищейки + DCR Final Judge</span>}
-          {mode === 'compare' && <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Ico k="scale" sz={14} col="var(--accent)" /> Режим: <b>Сравнение редакций</b> · semantic diff + Executive Summary</span>}
-          {!mode              && <span>Загрузите хотя бы один документ, чтобы начать</span>}
-        </div>
-        <div className="cmp-actions">
-          <button className="cmp-run-btn" disabled={!canRun} onClick={onRun}>
-            {mode === 'compare' ? (
-              <span style={{display:'inline-flex',alignItems:'center',gap:6,justifyContent:'center'}}><Ico k="scale" sz={14} /> Сравнить редакции</span>
-            ) : (
-              <span style={{display:'inline-flex',alignItems:'center',gap:6,justifyContent:'center'}}><Ico k="microscope" sz={14} /> Запустить аудит</span>
-            )}
+
+        <div className="ad-idle-cta">
+          <button className="ad-run-cta" disabled={!canRun} onClick={onRun}>
+            {mode === 'compare'
+              ? <><Ico k="scale" sz={17}/> Сравнить редакции</>
+              : <><Ico k="microscope" sz={17}/> Запустить аудит</>
+            }
           </button>
-          {loadingCount > 0 && <span className="cmp-hint">Дождитесь извлечения текста…</span>}
-          {readyCount === 0 && loadingCount === 0 && <span className="cmp-hint">Поддержка: PDF, DOCX, TXT, MD. Макс. 25 МБ.</span>}
+          {loadingCount > 0 && <p className="ad-idle-cta-hint">Дождитесь извлечения текста…</p>}
+          {!mode && !loadingCount && <p className="ad-idle-cta-hint">PDF · DOCX · TXT · MD · до 25 МБ</p>}
+          {mode === 'audit'   && <p className="ad-idle-cta-hint">Triage → Ищейки → Final Judge · 4 фазы анализа</p>}
+          {mode === 'compare' && <p className="ad-idle-cta-hint">Semantic Redlining · семантический diff двух редакций</p>}
         </div>
+
+        <button className="ad-archive-link" onClick={() => setArchiveOpen(true)}>
+          🗃️ Debug-архив
+        </button>
       </div>
     );
   }
@@ -1134,6 +1191,42 @@ const AnalyzeDocsMode = () => {
 
       {!running && !pairs.length && !tableRows.length && !error && (
         <div className="cmp-empty">Ожидаю результат...</div>
+      )}
+
+      {/* ── Q&A по документу (показывается после завершения анализа) ── */}
+      {!running && (summary || tableRows.length > 0) && slots[0]?.text && (
+        <div className="ad-qa-section">
+          <div className="ad-qa-header">
+            <span style={{fontSize:18}}>💬</span>
+            <span className="ad-qa-title">Вопросы по документу</span>
+            <span className="ad-qa-subtitle">ИИ отвечает в контексте проверенного документа</span>
+          </div>
+          {qaMessages.length > 0 && (
+            <div className="ad-qa-messages">
+              {qaMessages.map((m, i) => (
+                <div key={i} className={`ad-qa-msg ad-qa-msg--${m.role}`}>
+                  <div className="ad-qa-bubble ai-md"
+                       dangerouslySetInnerHTML={{__html:
+                         m.role === 'ai'
+                           ? renderMarkdown(m.text || (qaRunning && i === qaMessages.length - 1 ? '_Анализирую…_' : ''))
+                           : m.text
+                       }}/>
+                </div>
+              ))}
+              <div ref={qaEndRef}/>
+            </div>
+          )}
+          <div className="ad-qa-input-wrap">
+            <PromptBox
+              value={qaInput}
+              onChange={e => setQaInput(e.target.value)}
+              onSubmit={sendQaMessage}
+              placeholder="Спросите что-нибудь о документе… «Какие риски для арендатора?»"
+              disabled={qaRunning}
+              maxHeight={180}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

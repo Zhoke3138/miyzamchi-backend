@@ -8639,3 +8639,159 @@ body.dk .analyze-accordion-content {
 .dk .myz-pb-textarea {
   color: var(--text-main);
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   ANALYZE MODE — IDLE HERO + CTA + Q&A
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Idle hero header ─────────────────────────────────────────── */
+.ad-idle-hero {
+  text-align: center;
+  padding: var(--s-4) var(--s-3) var(--s-2);
+}
+.ad-idle-hero-icon {
+  font-size: 44px;
+  display: block;
+  margin-bottom: var(--s-2);
+  line-height: 1;
+}
+.ad-idle-hero-title {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--text-main);
+  margin: 0 0 var(--s-1h);
+  letter-spacing: -0.01em;
+}
+.ad-idle-hero-sub {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin: 0 auto;
+  max-width: 460px;
+  line-height: 1.6;
+}
+
+/* ── Big centered CTA ─────────────────────────────────────────── */
+.ad-idle-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1h);
+  padding: var(--s-2) 0 var(--s-1);
+}
+.ad-run-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 38px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong, var(--primary)));
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-pill);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow: 0 4px 22px var(--accent-glow), 0 2px 6px rgba(0,0,0,.1);
+  transition: transform .15s, box-shadow .15s, opacity .15s;
+}
+.ad-run-cta:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 30px var(--accent-glow), 0 3px 10px rgba(0,0,0,.12);
+}
+.ad-run-cta:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.ad-idle-cta-hint {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin: 0;
+  text-align: center;
+}
+
+/* ── Debug archive — discreet link ───────────────────────────── */
+.ad-archive-link {
+  display: block;
+  margin: 0 auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: var(--s-1) var(--s-2);
+  opacity: 0.45;
+  transition: opacity .15s;
+}
+.ad-archive-link:hover { opacity: 1; }
+
+/* ── Q&A section ──────────────────────────────────────────────── */
+.ad-qa-section {
+  border: 1.5px solid var(--border-color);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-app);
+  margin-top: var(--s-2);
+}
+.ad-qa-header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1h);
+  padding: var(--s-2) var(--s-3);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
+}
+.ad-qa-title {
+  font-weight: 600;
+  font-size: var(--text-base);
+  color: var(--text-main);
+}
+.ad-qa-subtitle {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-left: auto;
+}
+.ad-qa-messages {
+  max-height: 440px;
+  overflow-y: auto;
+  padding: var(--s-2h) var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  scroll-behavior: smooth;
+}
+.ad-qa-msg {
+  display: flex;
+}
+.ad-qa-msg--user { justify-content: flex-end; }
+.ad-qa-msg--ai   { justify-content: flex-start; }
+.ad-qa-bubble {
+  max-width: 88%;
+  padding: var(--s-1h) var(--s-2h);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: 1.58;
+  word-break: break-word;
+}
+.ad-qa-msg--user .ad-qa-bubble {
+  background: var(--primary);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.ad-qa-msg--ai .ad-qa-bubble {
+  background: var(--bg-panel);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-bottom-left-radius: 4px;
+}
+.ad-qa-input-wrap {
+  padding: var(--s-1h) var(--s-2);
+  border-top: 1px solid var(--border-color);
+}
+@media (max-width: 600px) {
+  .ad-idle-hero-icon { font-size: 32px; }
+  .ad-idle-hero-title { font-size: var(--text-lg); }
+  .ad-run-cta { padding: 12px 28px; font-size: 14px; }
+  .ad-qa-subtitle { display: none; }
+}
