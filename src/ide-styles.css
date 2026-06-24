@@ -34,17 +34,16 @@ body{
 
 /* ════ DESIGN TOKENS — LIGHT (PROFESSIONAL DEFAULT) ═══════════════════
    Светлый профессиональный интерфейс как на скриншоте.
-   Чистый, светлый, с бирюзовыми акцентами.
+   Чистый, светлый, с бордовыми акцентами.
    ════════════════════════════════════════════════════════════════════ */
 :root{
-  /* REQUIRED PALETTE TOKENS — Canva Indigo brand
-     Основа: #5C66DE (нейтральный indigo-blue, спокойнее старого #7C5CFF)
-     Вторичный: #8C9CCE (мягкий cornflower — для secondary CTA, бейджей,
-     второстепенной графики). HSL: первый 234°/65%/62%, второй 225°/41%/68% */
-  --primary: #5C66DE;
-  --primary-hover: #4951C9;
-  --secondary: #8C9CCE;          /* мягкий cornflower */
-  --secondary-hover: #7889BD;
+  /* REQUIRED PALETTE TOKENS — Mıyzamchy Crimson brand
+     Основа: #8B1E2D (глубокий бордово-красный, юридический авторитет)
+     Вторичный: #B85C68 (мягкий розово-бордовый — для secondary CTA, бейджей) */
+  --primary: #8B1E2D;
+  --primary-hover: #711826;
+  --secondary: #B85C68;          /* мягкий бордо-розовый */
+  --secondary-hover: #9E3D49;
   --bg-app: #FFFFFF;             /* основная зона документа — чистый белый */
   --bg-panel: #F4F4F6;            /* sidebar, чат, тулбары — мягкий нейтральный */
   --bg-input: #FFFFFF;
@@ -57,7 +56,7 @@ body{
   --bg-editor: var(--bg-app);
   --bg-bar: var(--bg-panel);
   --border: var(--border-color);
-  --hover: #EEF0FB;               /* нежно-indigo ховер (десатурированнее старого) */
+  --hover: #FBEEF0;               /* нежно-бордо ховер */
   --workspace-bg: var(--bg-app);
 
   /* Ink — mapped to new tokens */
@@ -67,14 +66,14 @@ body{
   /* Accent — Indigo (Canva-grade) */
   --accent: var(--primary);
   --accent2: var(--primary-hover);
-  --accent-dim: rgba(92, 102, 222, 0.08);
-  --accent-glow: rgba(92, 102, 222, 0.20);
-  --accent-soft: #EEF0FB;
-  --accent-edge: #C9CFF3;
+  --accent-dim: rgba(139, 30, 45, 0.08);
+  --accent-glow: rgba(139, 30, 45, 0.20);
+  --accent-soft: #FBEEF0;
+  --accent-edge: #E8B4B9;
   --accent-strong: var(--primary-hover);
 
   --link: var(--primary);
-  --link-bg: #EEF0FB;
+  --link-bg: #FBEEF0;
 
   /* Status — solid + pastel soft pair (для бейджей как на скрине) */
   --gold:#D4A54C;
@@ -187,18 +186,18 @@ body{
   --paper:#FDFCF7;            /* document paper, light always */
   --on-paper:#0A0C12;         /* text on paper */
 
-  /* Decorative gradients — Canva Indigo signature */
-  --grad-accent:linear-gradient(135deg,#6E78E5 0%,#5C66DE 50%,#4951C9 100%);
-  --grad-accent-soft:linear-gradient(135deg,rgba(92,102,222,.10) 0%,rgba(73,81,201,.10) 100%);
-  --grad-accent-dual:linear-gradient(135deg,#5C66DE 0%,#8C9CCE 100%); /* primary→secondary */
-  --grad-text:linear-gradient(135deg,#1F2937 0%,#5C66DE 60%,#4951C9 100%);
-  --grad-text-soft:linear-gradient(135deg,#EEF0FB 0%,#5C66DE 100%);
+  /* Decorative gradients — Mıyzamchy Crimson signature */
+  --grad-accent:linear-gradient(135deg,#A02233 0%,#8B1E2D 50%,#711826 100%);
+  --grad-accent-soft:linear-gradient(135deg,rgba(139,30,45,.10) 0%,rgba(113,24,38,.10) 100%);
+  --grad-accent-dual:linear-gradient(135deg,#8B1E2D 0%,#B85C68 100%); /* primary→secondary */
+  --grad-text:linear-gradient(135deg,#1F2937 0%,#8B1E2D 60%,#711826 100%);
+  --grad-text-soft:linear-gradient(135deg,#FBEEF0 0%,#8B1E2D 100%);
 
-  /* Ambient mesh — мягкие indigo-blue облака */
+  /* Ambient mesh — мягкие бордовые облака */
   --grad-mesh:
-    radial-gradient(ellipse 50% 40% at 18% 12%,rgba(92,102,222,.08),transparent 60%),
-    radial-gradient(ellipse 45% 35% at 82% 88%,rgba(140,156,206,.10),transparent 60%),
-    radial-gradient(ellipse 30% 25% at 50% 50%,rgba(73,81,201,.04),transparent 70%);
+    radial-gradient(ellipse 50% 40% at 18% 12%,rgba(139,30,45,.08),transparent 60%),
+    radial-gradient(ellipse 45% 35% at 82% 88%,rgba(184,92,104,.10),transparent 60%),
+    radial-gradient(ellipse 30% 25% at 50% 50%,rgba(113,24,38,.04),transparent 70%);
 
   /* Glass overlays — neutral ink-tinted */
   --glass-bg:rgba(17,24,39,.72);
@@ -219,30 +218,30 @@ body{
   --text-main: #F4F4F5;
   --text-muted: #A1A1AA;
   --border-color: #27272A;
-  --primary: #7B82E5;             /* осветлён для контраста на тёмном */
-  --primary-hover: #9098E8;
-  --secondary: #A8B4DC;
-  --secondary-hover: #BCC5E5;
+  --primary: #C4404E;             /* осветлён для контраста на тёмном */
+  --primary-hover: #D4555F;
+  --secondary: #D48890;
+  --secondary-hover: #E0A0A7;
   --shadow-color: rgba(0, 0, 0, 0.5);
 
   /* Legacy mapping */
   --bg-editor: var(--bg-app);
   --bg-bar: var(--bg-panel);
   --border: var(--border-color);
-  --hover: rgba(123, 130, 229, 0.10);
+  --hover: rgba(196, 64, 78, 0.10);
   --workspace-bg: var(--bg-app);
   --text: var(--text-main);
   --muted: var(--text-muted);
 
   --accent: var(--primary);
   --accent2: var(--primary-hover);
-  --accent-dim: rgba(123, 130, 229, 0.16);
-  --accent-glow: rgba(123, 130, 229, 0.28);
-  --accent-soft: rgba(123, 130, 229, 0.10);
-  --accent-edge: rgba(123, 130, 229, 0.32);
-  --accent-strong: #9098E8;
-  --link: #9098E8;
-  --link-bg: rgba(123, 130, 229, 0.12);
+  --accent-dim: rgba(196, 64, 78, 0.16);
+  --accent-glow: rgba(196, 64, 78, 0.28);
+  --accent-soft: rgba(196, 64, 78, 0.10);
+  --accent-edge: rgba(196, 64, 78, 0.32);
+  --accent-strong: #D4555F;
+  --link: #D4555F;
+  --link-bg: rgba(196, 64, 78, 0.12);
   --gold: #D4A54C;
   --green:#34D399;     --green-soft:rgba(52,211,153,.14);   --green-ink:#A7F3D0;
   --orange:#FBBF24;    --orange-soft:rgba(251,191,36,.14);  --orange-ink:#FDE68A;
@@ -253,11 +252,11 @@ body{
   --shadow:0 2px 6px rgba(0,0,0,.35),0 8px 28px rgba(0,0,0,.35),0 0 0 .5px rgba(255,255,255,.04);
   --shadow-lg:0 4px 16px rgba(0,0,0,.5),0 22px 64px rgba(0,0,0,.5),0 0 0 .5px rgba(255,255,255,.05);
   --shadow-glow:0 0 0 1px var(--accent-edge),0 8px 32px var(--accent-glow);
-  --grad-accent:linear-gradient(135deg,#9098E8 0%,#7B82E5 50%,#5C66DE 100%);
-  --grad-accent-dual:linear-gradient(135deg,#7B82E5 0%,#A8B4DC 100%);
-  --grad-text:linear-gradient(135deg,#F3F4F6 0%,#9098E8 60%,#F3F4F6 100%);
-  --grad-text-soft:linear-gradient(135deg,#F3F4F6 0%,#9098E8 100%);
-  --grad-mesh:radial-gradient(ellipse 50% 40% at 18% 12%,rgba(123,130,229,.14),transparent 60%),radial-gradient(ellipse 45% 35% at 82% 88%,rgba(168,180,220,.12),transparent 60%);
+  --grad-accent:linear-gradient(135deg,#D4555F 0%,#C4404E 50%,#8B1E2D 100%);
+  --grad-accent-dual:linear-gradient(135deg,#C4404E 0%,#D48890 100%);
+  --grad-text:linear-gradient(135deg,#F3F4F6 0%,#D4555F 60%,#F3F4F6 100%);
+  --grad-text-soft:linear-gradient(135deg,#F3F4F6 0%,#D4555F 100%);
+  --grad-mesh:radial-gradient(ellipse 50% 40% at 18% 12%,rgba(196,64,78,.14),transparent 60%),radial-gradient(ellipse 45% 35% at 82% 88%,rgba(212,136,144,.12),transparent 60%);
   --glass-bg:rgba(20,25,37,.78);
   --glass-bg-strong:rgba(20,25,37,.92);
   --glass-border:rgba(255,255,255,.08);
