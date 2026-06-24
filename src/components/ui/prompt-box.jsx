@@ -81,6 +81,7 @@ export const PromptBox = ({
       <textarea
         id={id}
         ref={taRef}
+        rows={1}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
