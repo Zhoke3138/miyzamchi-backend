@@ -3157,7 +3157,7 @@ const ICONS={
 /* ═══ Brand Logo — Kyrgyz tunduk + М (Мыйзамчы) ═══ */
 const LogoIcon=({sz=44,glow})=>(
   <span className="ico myz-brand-logo" style={{width:sz,height:sz,...(glow?{filter:'drop-shadow(0 0 10px var(--accent-glow)) drop-shadow(0 0 20px var(--accent-glow))'}:{})}}>
-    <img src="../logo/Logo.png" alt="Мыйзамчы" draggable="false"/>
+    <img src="../logo/Logo.png?v=3" alt="Мыйзамчы" draggable="false"/>
   </span>
 );
 
@@ -8115,7 +8115,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             {ex.ai && (<div className="myz-ai-wrap">
               <div className="myz-ai-brand-row">
                 <span className="myz-brand-logo myz-ai-brand-logo">
-                  <img src="../logo/Logo.png" alt="" draggable="false"/>
+                  <img src="../logo/Logo.png?v=3" alt="" draggable="false"/>
                 </span>
                 <span className="myz-ai-brand-name">Мыйзамчы</span>
               </div>
@@ -8153,7 +8153,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           <div className="myz-skel-row">
             <div className="myz-skel-logo">
               <span className="myz-brand-logo myz-ai-brand-logo">
-                <img src="../logo/Logo.png" alt="" draggable="false"/>
+                <img src="../logo/Logo.png?v=3" alt="" draggable="false"/>
               </span>
             </div>
             <div className="msg-skel">
