@@ -5692,21 +5692,21 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
     });
   };
 
-  // Короткое название НПА из текста статьи
+  // Полное название НПА из текста статьи
   const getNpaShort = (ft) => {
     const t = (ft || '').toLowerCase();
-    if (t.includes('уголовно-процессуальный кодекс')) return 'УПК КР';
-    if (t.includes('гражданско-процессуальный кодекс') || t.includes('гражданский процессуальный кодекс')) return 'ГПК КР';
-    if (t.includes('кодекс об административн')) return 'КоАО КР';
-    if (t.includes('уголовный кодекс')) return 'УК КР';
-    if (t.includes('гражданский кодекс')) return 'ГК КР';
-    if (t.includes('трудовой кодекс') || t.includes('кодекс труда')) return 'ТК КР';
-    if (t.includes('семейный кодекс')) return 'СК КР';
-    if (t.includes('налоговый кодекс')) return 'НК КР';
-    if (t.includes('земельный кодекс')) return 'ЗК КР';
-    if (t.includes('жилищный кодекс')) return 'ЖК КР';
-    if (t.includes('бюджетный кодекс')) return 'БК КР';
-    if (t.includes('таможенный кодекс')) return 'ТамК КР';
+    if (t.includes('уголовно-процессуальный кодекс')) return 'Уголовно-процессуальный кодекс';
+    if (t.includes('гражданско-процессуальный кодекс') || t.includes('гражданский процессуальный кодекс')) return 'Гражданский процессуальный кодекс';
+    if (t.includes('кодекс об административн')) return 'Кодекс об административной ответственности';
+    if (t.includes('уголовный кодекс')) return 'Уголовный кодекс';
+    if (t.includes('гражданский кодекс')) return 'Гражданский кодекс';
+    if (t.includes('трудовой кодекс') || t.includes('кодекс труда')) return 'Трудовой кодекс';
+    if (t.includes('семейный кодекс')) return 'Семейный кодекс';
+    if (t.includes('налоговый кодекс')) return 'Налоговый кодекс';
+    if (t.includes('земельный кодекс')) return 'Земельный кодекс';
+    if (t.includes('жилищный кодекс')) return 'Жилищный кодекс';
+    if (t.includes('бюджетный кодекс')) return 'Бюджетный кодекс';
+    if (t.includes('таможенный кодекс')) return 'Таможенный кодекс';
     if (t.includes('водный кодекс')) return 'Водный кодекс';
     if (t.includes('лесной кодекс')) return 'Лесной кодекс';
     return null;
@@ -5800,9 +5800,6 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
                     </span>
                   )}
                 </div>
-                {!isOpen && preview && (
-                  <div className="src-item-preview">{preview}</div>
-                )}
                 {isOpen && fullText && (
                   <div className="src-item-body">
                     <div className="src-item-text">{fullText}</div>
