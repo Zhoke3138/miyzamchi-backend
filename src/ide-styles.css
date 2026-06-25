@@ -6020,8 +6020,11 @@ body.dk .myz-chat-mode-tab--active {
   color: var(--text-muted);
 }
 .myz-chat-mode-tab--inactive:hover {
-  background: var(--hover);
+  background: rgba(0,0,0,.06);
   color: var(--text-main);
+}
+body.dk .myz-chat-mode-tab--inactive:hover {
+  background: rgba(255,255,255,.08);
 }
 
 /* ════════════════════════════════════════════════════════════════════
