@@ -56,7 +56,6 @@ const OpenAI = require('openai');
 const { AsyncLocalStorage } = require('async_hooks');
 const path = require('path');
 const bot = require('./telegram/bot');
-const { searchQdrant } = require('./services/qdrantService');
 const { searchSupabase } = require('./services/supabaseService');
 
 const app = express();
@@ -309,7 +308,7 @@ app.all('/api/minjust/*', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 // --- НАСТРОЙКИ ИЗ RENDER (Environment Variables) ---
-const { GEMINI_API_KEY, GEMINI_API_KEYS, QDRANT_URL, QDRANT_API_KEY } = process.env;
+const { GEMINI_API_KEY, GEMINI_API_KEYS } = process.env;
 const SUPABASE_URL      = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
@@ -595,38 +594,8 @@ async function searchPinecone(vector, queryText = '', topK = 15) {
     return searchSupabase(vector, queryText, topK);
 }
 
-// ════════════════════════════════════════════════════════════════════
-// MULTI-RAG ROUTING — определяем источник до embedding-запроса
-// Возвращает: 'supabase' | 'qdrant' | 'both'
-//   supabase — правовые запросы (кодексы, нормы, статьи, иски) → hybrid search
-//   qdrant   — процедурные FAQ (ЦОН, налоги, паспорт, справки, порталы)
-//   both     — смешанные / неоднозначные → параллельный поиск
-// ════════════════════════════════════════════════════════════════════
-function classifyQuerySource(query) {
-    const q = query.toLowerCase();
-
-    // Процедурные/административные → Qdrant
-    const faqRe = /паспорт|загранпаспорт|прописк|регистрац|цон|гнс|налогов|инн|пенси|пособи|субсиди|льгот|патент|лицензи|разрешен|справк|заявлен|электронн|как получить|как оформить|как подать|как зарегистр|сдать отчет|декларац|ндс|снс|акциз|регистрация ип|регистрация юр|госпошлин|портал|тундук|госуслуг|ЦОН|ГНС|МФЦ|очередь|записаться|онлайн|сервис|инструкц|руководств|порядок оформлен|шаги|что нужно для|куда обратиться|кто выдает|где получить|сколько стоит|стоимость|срок изготовлен|медстрах|соцстрах|пенсионн|фонд|взнос/i;
-
-    // Правовые/нормативные → Pinecone
-    const legalRe = /статья|кодекс|закон|гк кр|тк кр|ук кр|упк|гпк|коап|нк кр|нпа|норм|правовой|юридическ|иск|жалоб|апелляц|суд|ответственность|санкц|штраф|расторжен|недействительн|ничтожн|оспоримый|правоспособ|дееспособ|наследств|залог|ипотек|обязательств|неустойк|форс.мажор|ст\.\s*\d|п\.\s*\d/i;
-
-    const isFaq = faqRe.test(q);
-    const isLegal = legalRe.test(q);
-
-    if (isFaq && !isLegal) return 'qdrant';
-    if (isLegal && !isFaq) return 'supabase';
-    return 'both';
-}
-
-// Форматирование FAQ-результатов из Qdrant (отдельный блок в промпте)
-function formatQdrantContext(matches) {
-    if (!matches.length) return '';
-    return matches.map(m => {
-        const md = m.metadata || {};
-        return `[📋 FAQ — ${md.npa_title} | ${md.article_title}]\nИсточник: ${md.npa_title}\nТема: ${md.article_title}\nСодержание: ${md.full_text}`;
-    }).join('\n\n---\n\n');
-}
+// Все запросы идут в Supabase (единая база НПА + FAQ)
+function classifyQuerySource() { return 'supabase'; }
 
 function sendStatus(res, text, icon) {
     if (!res || res.writableEnded) return;
@@ -688,7 +657,7 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     const absoluteMinScore = opts.absoluteMinScore ?? 0.45;
     const coreScoreThreshold = opts.coreScoreThreshold ?? 0.75;
     const elbowDropRatio = opts.elbowDropRatio ?? 0.15;
-    // source: 'supabase' | 'qdrant' | 'both'. Дефолт 'supabase' — НПА через Supabase hybrid search.
+    // source: всегда 'supabase' — единая база НПА + FAQ в Supabase.
     const source = opts.source ?? 'supabase';
 
     const streamStatuses = res && mode === 'thinking';
@@ -700,45 +669,10 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     }
     if (streamStatuses) sendStatus(res, 'Преобразую ваш вопрос в вектор...', '🧬');
 
-    // --- Этап 2: Поиск (источник определяет модель embeddings и БД) ---
-    let matches = [];
-
-    if (source === 'qdrant') {
-        if (streamStatuses) sendStatus(res, `Ищу в базе FAQ/инструкций...`, '🔎');
-        const embedding = await getEmbedding(expandedQuery);   // 768d Gemini — для Qdrant
-        const qdrantMatches = await searchQdrant(embedding, {
-            url: QDRANT_URL, apiKey: QDRANT_API_KEY, topK: maxK, scoreThreshold: absoluteMinScore
-        });
-        console.log(`[Retrieval] ${mode} | source=qdrant | query: ${query.length}ch | results: ${qdrantMatches.length}`);
-        // Для Qdrant не применяем elbow — возвращаем как есть (уже отфильтровано threshold)
-        const core = qdrantMatches.filter(m => (m.score || 0) >= coreScoreThreshold);
-        const context = qdrantMatches.filter(m => (m.score || 0) < coreScoreThreshold);
-        if (streamStatuses) sendStatus(res, `Найдено ${qdrantMatches.length} инструкций/FAQ`, '✅');
-        return { core, context, all: qdrantMatches, _source: 'qdrant' };
-    }
-
-    if (source === 'both') {
-        if (streamStatuses) sendStatus(res, 'Ищу в базе НПА и справочнике FAQ...', '🔎');
-        // Два embedding параллельно: 1536d для Supabase НПА, 768d для Qdrant FAQ
-        const [embedding1536, embedding768] = await Promise.all([
-            getEmbeddingForSupabase(expandedQuery),
-            getEmbedding(expandedQuery)
-        ]);
-        const [supabaseMatches, qdrantMatches] = await Promise.all([
-            searchPinecone(embedding1536, expandedQuery, maxK),
-            searchQdrant(embedding768, {
-                url: QDRANT_URL, apiKey: QDRANT_API_KEY, topK: Math.ceil(maxK / 2), scoreThreshold: absoluteMinScore
-            })
-        ]);
-        // Объединяем и сортируем по score (Supabase-нормы имеют приоритет при равном score)
-        matches = [...supabaseMatches, ...qdrantMatches].sort((a, b) => (b.score || 0) - (a.score || 0));
-        console.log(`[Retrieval] ${mode} | source=both | supabase: ${supabaseMatches.length} | qdrant: ${qdrantMatches.length}`);
-    } else {
-        // source === 'supabase' (дефолт — hybrid search НПА)
-        if (streamStatuses) sendStatus(res, `Ищу в базе ${maxK} ближайших статей НПА...`, '🔎');
-        const embedding = await getEmbeddingForSupabase(expandedQuery);  // 1536d OpenAI
-        matches = await searchPinecone(embedding, expandedQuery, maxK);
-    }
+    // --- Этап 2: Поиск в Supabase (hybrid: vector 1536d + full-text) ---
+    if (streamStatuses) sendStatus(res, `Ищу в базе ${maxK} ближайших статей НПА...`, '🔎');
+    const embedding = await getEmbeddingForSupabase(expandedQuery);
+    const matches = await searchPinecone(embedding, expandedQuery, maxK);
 
     if (matches.length === 0) {
         if (streamStatuses) sendStatus(res, 'База не вернула результатов', '⚠️');
@@ -2272,25 +2206,18 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
         const queryForEmbedding = (userQuery && userQuery.trim()) || message;
         const isCasual = isCasualMessage(queryForEmbedding);
         if (!isCasual && intent === 'RAG_AGENT') {
-            const agentSource = classifyQuerySource(queryForEmbedding);
             const qLen = queryForEmbedding.length;
             const adaptiveMaxK = qLen > 200 ? 22 : qLen > 60 ? 15 : 10;
             const adaptiveMinK = qLen > 200 ? 6  : qLen > 60 ? 4  : 3;
-            console.log(`[AGENT] Multi-RAG retrieval: source=${agentSource} | query=${qLen}ch → maxK=${adaptiveMaxK} minK=${adaptiveMinK}`);
+            console.log(`[AGENT] Supabase retrieval: query=${qLen}ch → maxK=${adaptiveMaxK} minK=${adaptiveMinK}`);
             const retrieval = await adaptiveRetrieval(queryForEmbedding, 'agent', null, {
-                maxK: adaptiveMaxK, minK: adaptiveMinK, source: agentSource
+                maxK: adaptiveMaxK, minK: adaptiveMinK
             });
-            const { core = [], context = [], all = [], _source } = retrieval || {};
+            const { core = [], context = [], all = [] } = retrieval || {};
             allMatches = all;
             if (all.length > 0) {
-                const isFaqResult = _source === 'qdrant' || agentSource === 'qdrant';
-                const formatted = isFaqResult
-                    ? formatQdrantContext(all)
-                    : formatContextWithHierarchy(core, context);
-                const ctxLabel = isFaqResult
-                    ? `КОНТЕКСТ — ${all.length} инструкций/FAQ (официальные источники КР)`
-                    : `КОНТЕКСТ — ${all.length} релевантных статей НПА КР (используй для цитирования)`;
-                contextBlock = `\n\n═══ ${ctxLabel} ═══\n\n${formatted}\n\n═══ КОНЕЦ КОНТЕКСТА ═══\n`;
+                const formatted = formatContextWithHierarchy(core, context);
+                contextBlock = `\n\n═══ КОНТЕКСТ — ${all.length} релевантных статей НПА КР (используй для цитирования) ═══\n\n${formatted}\n\n═══ КОНЕЦ КОНТЕКСТА ═══\n`;
             }
         }
     } catch (retErr) {
@@ -2526,23 +2453,11 @@ async function handleSimpleConsultation(message, history, res, userQuery = null)
     const userQ = (userQuery && userQuery.trim()) || message;
     const cleanHistory = sanitizeHistory(history);
 
-    // Определяем источник RAG до embedding-запроса
-    const querySource = classifyQuerySource(userQ);
-    const isFaqMode = querySource === 'qdrant';
-    const isBothMode = querySource === 'both';
-
-    const retrieveLabel = isFaqMode
-        ? 'Ищу в справочнике FAQ/инструкций'
-        : isBothMode ? 'Ищу в базе НПА и справочнике FAQ'
-        : 'Ищу релевантные статьи НПА';
-
     sendStep(res, { id: 'classify', status: 'success', text: 'Простой справочный запрос', reason: 'Использую быстрый путь поиска' });
-    sendStep(res, { id: 'retrieve', status: 'loading', text: retrieveLabel });
+    sendStep(res, { id: 'retrieve', status: 'loading', text: 'Ищу релевантные статьи НПА' });
     sendStatus(res, '🔎 Ищу релевантные статьи...');
 
-    console.log(`[SimpleConsult] query source: ${querySource} | query: "${userQ.slice(0, 60)}"`);
-
-    const retrieval = await adaptiveRetrieval(userQ, 'thinking', null, { maxK: 10, minK: 4, source: querySource });
+    const retrieval = await adaptiveRetrieval(userQ, 'thinking', null, { maxK: 10, minK: 4 });
     const { core = [], context = [], all = [] } = retrieval;
 
     sendStep(res, {
@@ -2560,24 +2475,14 @@ async function handleSimpleConsultation(message, history, res, userQuery = null)
     sendStep(res, { id: 'answer', status: 'loading', text: 'Формулирую ответ' });
     sendStatus(res, '✍️ Формулирую ответ...');
 
-    // Формируем контекст и промпт в зависимости от источника
-    let contextText, finalPrompt, systemPrompt;
-
-    if (isFaqMode) {
-        contextText = formatQdrantContext(all);
-        systemPrompt = BASE_CONSULTANT_PROMPT + `\n\nТЫ ОТВЕЧАЕШЬ НА ПРОЦЕДУРНЫЙ ВОПРОС. В контексте — официальные инструкции и FAQ государственных органов КР (ЦОН, ГНС, портал Tunduk). Опирайся строго на эти инструкции. Отвечай чётко, по шагам, официальным тоном. Если есть конкретные сроки, стоимость или перечень документов — укажи их.`;
-        finalPrompt = `Вопрос пользователя: "${userQ}"\n\nОфициальные инструкции/FAQ (${all.length} документов):\n\n${contextText}`;
-    } else {
-        contextText = formatContextWithHierarchy(core, context);
-        const isL4 = detectL4Request(userQ);
-        systemPrompt = BASE_CONSULTANT_PROMPT;
-        if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
-        if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
-        const prefix = isBothMode
-            ? `Контекст — ${all.length} документов из баз НПА и FAQ:`
-            : `Контекст — ${all.length} релевантных статей НПА КР (⭐ ${core.length} ключевых + 📚 ${context.length} вспомогательных):`;
-        finalPrompt = `Вопрос пользователя: "${userQ}"\n\n${prefix}\n\n${contextText}`;
-    }
+    // Формируем контекст и промпт
+    const contextText = formatContextWithHierarchy(core, context);
+    const isL4 = detectL4Request(userQ);
+    let systemPrompt = BASE_CONSULTANT_PROMPT;
+    if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
+    if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
+    const prefix = `Контекст — ${all.length} релевантных статей НПА КР (⭐ ${core.length} ключевых + 📚 ${context.length} вспомогательных):`;
+    const finalPrompt = `Вопрос пользователя: "${userQ}"\n\n${prefix}\n\n${contextText}`;
 
     try {
         await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res);
