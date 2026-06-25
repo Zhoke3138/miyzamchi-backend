@@ -310,9 +310,8 @@ const PORT = process.env.PORT || 3000;
 
 // --- НАСТРОЙКИ ИЗ RENDER (Environment Variables) ---
 const { GEMINI_API_KEY, GEMINI_API_KEYS, QDRANT_URL, QDRANT_API_KEY } = process.env;
-const SUPABASE_URL          = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY     = process.env.SUPABASE_ANON_KEY;
-const OPENAI_EMBEDDING_API_KEY = process.env.OPENAI_EMBEDDING_API_KEY;
+const SUPABASE_URL      = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const rawKeys = GEMINI_API_KEY || GEMINI_API_KEYS;
 const KEYS = rawKeys ? rawKeys.split(',').map(k => k.trim()) : [];
@@ -324,10 +323,6 @@ if (KEYS.length === 0) {
 }
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     console.error("ОШИБКА: SUPABASE_URL и SUPABASE_ANON_KEY обязательны — база НПА перенесена в Supabase!");
-    process.exit(1);
-}
-if (!OPENAI_EMBEDDING_API_KEY) {
-    console.error("ОШИБКА: OPENAI_EMBEDDING_API_KEY обязателен для 1536d embeddings (text-embedding-3-small)!");
     process.exit(1);
 }
 
@@ -553,37 +548,45 @@ async function getEmbedding(text, retryCount = 0, forceKey = null) {
     }
 }
 
-// --- EMBEDDING 1536d (OpenAI text-embedding-3-small) — для Supabase hybrid search ---
+// --- EMBEDDING 1536d (gemini-embedding-2.0-flash, те же Gemini-ключи) — для Supabase ---
+const EMBEDDING_MODEL_V2 = 'models/gemini-embedding-2.0-flash';
 const embeddingCacheSupabase = new Map();
-async function getEmbeddingForSupabase(text) {
+async function getEmbeddingForSupabase(text, retryCount = 0, forceKey = null) {
     const cacheKey = 'sb_' + text.substring(0, 8000);
     if (embeddingCacheSupabase.has(cacheKey)) {
         serverStats.cacheHits++;
         return embeddingCacheSupabase.get(cacheKey);
     }
-    if (!OPENAI_EMBEDDING_API_KEY) throw new Error('OPENAI_EMBEDDING_API_KEY не задан');
-    const response = await fetch('https://api.openai.com/v1/embeddings', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${OPENAI_EMBEDDING_API_KEY}`,
-            'Content-Type':  'application/json'
-        },
-        body: JSON.stringify({
-            model: 'text-embedding-3-small',
-            input: text.substring(0, 8000)
-        })
-    });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(`OpenAI Embedding: ${err.error?.message || response.status}`);
+    const activeKey = forceKey || getActiveKey();
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/${EMBEDDING_MODEL_V2}:embedContent?key=${activeKey}`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: EMBEDDING_MODEL_V2,
+                content: { parts: [{ text: text.substring(0, 8000) }] },
+                outputDimensionality: 1536,
+                taskType: 'RETRIEVAL_QUERY'
+            })
+        });
+        const data = await response.json();
+        if (response.status === 429 && retryCount < KEYS.length) {
+            blockKey(activeKey);
+            currentKeyIndex = (currentKeyIndex + 1) % KEYS.length;
+            return getEmbeddingForSupabase(text, retryCount + 1);
+        }
+        if (!response.ok) throw new Error(data.error?.message || JSON.stringify(data));
+        const embedding = data.embedding.values;
+        if (embeddingCacheSupabase.size >= 200) {
+            embeddingCacheSupabase.delete(embeddingCacheSupabase.keys().next().value);
+        }
+        embeddingCacheSupabase.set(cacheKey, embedding);
+        return embedding;
+    } catch (error) {
+        console.error('Ошибка gemini-embedding-2:', error.message);
+        throw error;
     }
-    const data = await response.json();
-    const embedding = data.data[0].embedding; // 1536d
-    if (embeddingCacheSupabase.size >= 200) {
-        embeddingCacheSupabase.delete(embeddingCacheSupabase.keys().next().value);
-    }
-    embeddingCacheSupabase.set(cacheKey, embedding);
-    return embedding;
 }
 
 // --- ПОИСК (обёртка над Supabase, сохраняет имя для dep-injection в routes/analyze.js) ---
