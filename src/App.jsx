@@ -5803,15 +5803,6 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
                 {isOpen && fullText && (
                   <div className="src-item-body">
                     <div className="src-item-text">{fullText}</div>
-                    {onSourceClick && (
-                      <button
-                        type="button"
-                        className="src-item-action"
-                        onClick={(e) => { e.stopPropagation(); onSourceClick(rawStr, i, null); }}
-                      >
-                        <Ico k="book" sz={10}/> Открыть полностью
-                      </button>
-                    )}
                   </div>
                 )}
               </div>
