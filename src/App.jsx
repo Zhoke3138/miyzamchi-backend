@@ -2048,17 +2048,20 @@ const LegalToolsMode = ({ onToast }) => (
 const DocumentsMode = ({ onToast }) => {
   const { tr } = useI18n();
   const [tab, setTab] = useState('analyze');
-  const tabBtn = (k, label) => (
-    <button key={k} type="button" onClick={() => setTab(k)}
-      className={`myz-docs-tab ${tab === k ? 'myz-docs-tab--active' : 'myz-docs-tab--inactive'}`}>
-      {label}
-    </button>
-  );
+  const DOC_TABS = [
+    { k: 'analyze', label: tr('docs_tab_analyze'), desc: 'Загрузи файл → проверка по НПА КР' },
+    { k: 'create',  label: tr('docs_tab_create'),  desc: 'Интервьюер → документ с нуля' },
+  ];
   return (
     <div className="myz-documents-root">
       <div className="myz-docs-tabbar">
-        {tabBtn('analyze', tr('docs_tab_analyze'))}
-        {tabBtn('create', tr('docs_tab_create'))}
+        {DOC_TABS.map(({ k, label, desc }) => (
+          <button key={k} type="button" onClick={() => setTab(k)}
+            className={`myz-docs-tab ${tab === k ? 'myz-docs-tab--active' : 'myz-docs-tab--inactive'}`}>
+            <span className="myz-docs-tab-label">{label}</span>
+            <span className="myz-docs-tab-desc">{desc}</span>
+          </button>
+        ))}
       </div>
       <div className="myz-documents-content">
         {tab === 'analyze' ? <AnalyzeDocsMode /> : <CreateDocMode onToast={onToast} />}
@@ -8036,9 +8039,9 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           {/* Переключатель режима Чат / Агент — пилюля с двумя сегментами */}
           <div role="tablist" aria-label="Режим работы ИИ" className="myz-mode-pill">
             {[
-              {k:'chat',       labelKey:'mode_chat',      icon:'sparkles',  title:'Чат — консультация без правки документа'},
-              {k:'agent',      labelKey:'mode_agent',     icon:'edit',      title:'Агент — редактирует открытый документ'},
-              {k:'documents',  labelKey:'mode_documents', icon:'file',      title:'Документы — анализ загруженного файла или создание нового документа'}
+              {k:'chat',       labelKey:'mode_chat',      icon:'sparkles',  title:'Чат — консультация без правки документа',              desc:'Консультация по нормам'},
+              {k:'agent',      labelKey:'mode_agent',     icon:'edit',      title:'Агент — редактирует открытый документ',                 desc:'Правка документа'},
+              {k:'documents',  labelKey:'mode_documents', icon:'file',      title:'Документы — анализ загруженного файла или создание нового документа', desc:'Анализ и создание'}
             ].map(opt => {
               const active = chatMode === opt.k;
               return (
@@ -8051,8 +8054,11 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                   title={opt.title}
                   className={`myz-chat-mode-tab${active ? ' myz-chat-mode-tab--active' : ' myz-chat-mode-tab--inactive'}`}
                 >
-                  <Ico k={opt.icon} sz={13} col={active ? '#fff' : 'currentColor'}/>
-                  {tr(opt.labelKey)}
+                  <div className="myz-chat-mode-tab-top">
+                    <Ico k={opt.icon} sz={12} col={active ? '#fff' : 'currentColor'}/>
+                    <span className="myz-chat-mode-tab-label">{tr(opt.labelKey)}</span>
+                  </div>
+                  <span className="myz-chat-mode-tab-desc">{opt.desc}</span>
                 </button>
               );
             })}
