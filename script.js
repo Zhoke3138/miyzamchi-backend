@@ -1122,9 +1122,23 @@ function renderSources(msgDiv, sources, metadata) {
         if (!raw) return;
 
         const meta = md[i] || {};
-        const npaTitle = String(meta.npa_title || '').trim();
-        const articleTitle = String(meta.article_title || '').trim();
-        const fullText = String(meta.full_text || '').trim();
+        const rawNpaTitle = String(meta.npa_title || '').trim();
+        const rawArticleTitle = String(meta.article_title || '').trim();
+        const rawFullText = String(meta.full_text || '').trim();
+
+        // Нормализация метки источника: английские технические названия → Русский
+        const FAQ_LABELS = new Set(['instructions', 'instruction', 'faq', 'guide', 'guides']);
+        const isFaqSource = FAQ_LABELS.has(rawNpaTitle.toLowerCase());
+        const npaTitle = isFaqSource ? 'Инструкция' : rawNpaTitle;
+        // Для FAQ скрываем технический ID типа faq_tson_1781788459157_762_17
+        const articleTitle = isFaqSource ? '' : rawArticleTitle;
+
+        // Срезаем служебные строки "Документ" и "Категория: ..." из начала текста
+        const fullText = rawFullText
+            .replace(/^Документ\s*\n?/i, '')
+            .replace(/^Категория:[^\n]*\n?/im, '')
+            .trim();
+
         const hasMetaText = fullText.length > 0;
         const preview = hasMetaText
             ? (fullText.length > 240 ? fullText.slice(0, 240).trim() + '…' : fullText)
