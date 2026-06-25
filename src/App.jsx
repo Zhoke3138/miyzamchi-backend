@@ -5692,14 +5692,35 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
     });
   };
 
+  // Короткое название НПА из текста статьи
+  const getNpaShort = (ft) => {
+    const t = (ft || '').toLowerCase();
+    if (t.includes('уголовно-процессуальный кодекс')) return 'УПК КР';
+    if (t.includes('гражданско-процессуальный кодекс') || t.includes('гражданский процессуальный кодекс')) return 'ГПК КР';
+    if (t.includes('кодекс об административн')) return 'КоАО КР';
+    if (t.includes('уголовный кодекс')) return 'УК КР';
+    if (t.includes('гражданский кодекс')) return 'ГК КР';
+    if (t.includes('трудовой кодекс') || t.includes('кодекс труда')) return 'ТК КР';
+    if (t.includes('семейный кодекс')) return 'СК КР';
+    if (t.includes('налоговый кодекс')) return 'НК КР';
+    if (t.includes('земельный кодекс')) return 'ЗК КР';
+    if (t.includes('жилищный кодекс')) return 'ЖК КР';
+    if (t.includes('бюджетный кодекс')) return 'БК КР';
+    if (t.includes('таможенный кодекс')) return 'ТамК КР';
+    if (t.includes('водный кодекс')) return 'Водный кодекс';
+    if (t.includes('лесной кодекс')) return 'Лесной кодекс';
+    return null;
+  };
+
   // Читаемый заголовок источника
   const getTitle = (m) => {
     const npa = (m.npa_title || '').trim();
     const artId = (m.article_title || '').trim();
     const ft = (m.full_text || '').trim();
+    const isFaq = /^faq_/i.test(artId) || npa === 'Instructions';
 
-    // FAQ / Qdrant / Instructions — вытаскиваем название органа из full_text
-    if (!npa || npa === 'Instructions' || /^faq_/i.test(artId)) {
+    // FAQ / Qdrant — название органа из full_text
+    if (isFaq) {
       if (ft) {
         const rcpt = ft.match(/\[Получатель\]\s*:\s*([^\[]+)/);
         if (rcpt) {
@@ -5715,26 +5736,24 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
       return /^faq_tax/i.test(artId) ? 'Справочник ГНС / Тундук' : 'FAQ / Инструкция';
     }
 
-    // НПА — показываем «Ст. N» как главный заголовок
-    if (artId) {
-      const artNum = artId.match(/стат(?:ья|ьи)?\s*([0-9]{1,4})/i);
-      if (artNum) return `Ст. ${artNum[1]}`;
-      return artId.length <= 60 ? artId : artId.slice(0, 57) + '…';
-    }
-    return npa;
+    // НПА — «УК КР · Ст. 122»
+    const npaShort = getNpaShort(ft) || (npa && npa.length <= 20 ? npa : null);
+    const artNum = artId.match(/art[-_](\d{1,4})\b/i)?.[1]
+                || ft.match(/Стать[яи]\s+(\d{1,4})/i)?.[1];
+    if (npaShort && artNum) return `${npaShort} · Ст. ${artNum}`;
+    if (npaShort) return npaShort;
+    if (artNum) return `Ст. ${artNum}`;
+    return npa || 'НПА';
   };
 
-  // Читаемая подпись источника
+  // Подпись: для НПА не нужна (всё в заголовке), для FAQ — тип источника
   const getSubtitle = (m) => {
     const npa = (m.npa_title || '').trim();
     const artId = (m.article_title || '').trim();
-
-    // FAQ / Qdrant — тип источника как подпись
-    if (!npa || npa === 'Instructions' || /^faq_/i.test(artId)) {
+    if (/^faq_/i.test(artId) || npa === 'Instructions') {
       return /^faq_tax/i.test(artId) ? 'Справочник ГНС / Тундук' : 'FAQ / Инструкция';
     }
-    // НПА — название закона как подпись
-    return npa || null;
+    return null;
   };
 
   return (
