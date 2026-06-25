@@ -393,7 +393,7 @@ body::before{
 }
 
 /* ════ SELECTION & CARET ══════════════════════════════════════════════ */
-input,textarea,[contenteditable="true"]{caret-color:var(--accent)}
+input,textarea,[contenteditable="true"]{caret-color:var(--text-main)}
 ::selection{background:rgba(0,139,139,.20);color:var(--text)}
 
 /* ════ A11Y UTILITIES ════════════════════════════════════════════════ */
@@ -441,9 +441,9 @@ input,textarea,[contenteditable="true"]{caret-color:var(--accent)}
   position:relative;
 }
 .myz-pane-tab:hover{
-  background:var(--accent-dim);
-  color:var(--accent-strong);
-  box-shadow:inset 0 0 0 1px var(--accent-edge);
+  background:rgba(0,0,0,.06);
+  color:var(--text-main);
+  box-shadow:none;
 }
 .myz-pane-tab:active{transform:translateY(0.5px)}
 .myz-pane-tab .myz-pane-tab-chev{
@@ -2625,17 +2625,17 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
   box-shadow:var(--shadow-inset);
 }
 .fb-btn:hover:not(:disabled){
-  background:var(--hover);
-  border-color:var(--accent-edge);
-  color:var(--accent-strong);
+  background:rgba(0,0,0,.06);
+  border-color:#1C1C1E;
+  color:var(--text-main);
   transform:translateY(-1px);
-  box-shadow:var(--shadow-inset),0 4px 12px var(--accent-glow);
+  box-shadow:none;
 }
 .fb-btn:disabled{opacity:.42;cursor:not-allowed}
 .fb-btn:active:not(:disabled){transform:translateY(0) scale(.97)}
 
 .fb-btn-primary{
-  background:var(--grad-accent);
+  background:#1C1C1E;
   border-color:transparent;
   color:#fff;font-weight:600;
   box-shadow:
@@ -2651,9 +2651,9 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
   pointer-events:none;
 }
 .fb-btn-primary:hover:not(:disabled){
-  filter:brightness(1.08);
+  background:#2d2d30;
   transform:translateY(-1px);
-  box-shadow:0 5px 20px var(--accent-glow),inset 0 1px 0 rgba(255,255,255,.40);
+  box-shadow:0 3px 10px rgba(0,0,0,.2);
 }
 .fb-btn-primary:hover:not(:disabled)::before{transform:translateX(280%)}
 .fb-ico{font-size:14px;line-height:1}
@@ -4848,19 +4848,19 @@ body.dk .analyze-accordion-content {
   height: 32px;
   border-radius: var(--radius-sm);
   border: none;
-  background: var(--primary);
+  background: #1C1C1E;
   color: #fff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background .18s, color .18s, box-shadow .18s, transform .12s;
-  box-shadow: 0 1px 4px var(--accent-glow);
+  transition: background .12s, transform .12s;
+  box-shadow: none;
 }
 .myz-send-btn:not(:disabled):hover {
-  background: var(--primary-hover);
+  background: #2d2d30;
   transform: scale(1.06);
-  box-shadow: 0 2px 10px var(--accent-glow);
+  box-shadow: none;
 }
 .myz-send-btn:not(:disabled):active { transform: scale(.97); }
 .myz-send-btn:disabled {
@@ -5564,8 +5564,8 @@ body.dk .myz-doc-type-btn:not(:disabled):hover {
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 2px;
-  background: var(--grad-accent);
-  opacity: .7;
+  background: linear-gradient(90deg, #6b7280, #1C1C1E, #6b7280);
+  opacity: .6;
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -5594,9 +5594,9 @@ body.dk .myz-doc-type-btn:not(:disabled):hover {
   width: 100%;
 }
 .myz-clause-btn:hover {
-  border-color: var(--primary);
-  background: var(--accent-soft);
-  box-shadow: 0 2px 10px var(--accent-glow);
+  border-color: #1C1C1E;
+  background: rgba(0,0,0,.04);
+  box-shadow: none;
 }
 .myz-clause-btn-title {
   display: block;
