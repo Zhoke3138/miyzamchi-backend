@@ -5920,47 +5920,50 @@ body.dk .analyze-accordion-content {
 .myz-chat-mode-tab {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 5px var(--s-2h);
-  border-radius: var(--radius-pill);
+  align-items: center;
+  gap: 3px;
+  padding: 6px 14px;
+  border-radius: 8px;
   border: none;
   cursor: pointer;
   font-family: var(--font-sans);
   transition: background .15s, color .15s;
+  min-width: 0;
 }
 .myz-chat-mode-tab-top {
   display: flex;
   align-items: center;
-  gap: var(--s-1);
+  gap: 5px;
+  white-space: nowrap;
 }
 .myz-chat-mode-tab-label {
-  font-size: var(--text-xs);
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
+  white-space: nowrap;
 }
 .myz-chat-mode-tab-desc {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 400;
-  opacity: 0.72;
   line-height: 1;
   white-space: nowrap;
+  opacity: 0.78;
 }
 .myz-chat-mode-tab--active {
   background: var(--primary);
   color: #fff;
-  box-shadow: 0 1px 6px var(--accent-glow);
+  box-shadow: 0 1px 8px var(--accent-glow);
 }
 .myz-chat-mode-tab--active .myz-chat-mode-tab-desc {
-  opacity: 0.88;
+  opacity: 0.9;
 }
 .myz-chat-mode-tab--inactive {
   background: transparent;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 .myz-chat-mode-tab--inactive:hover {
-  background: var(--accent-dim);
-  color: var(--primary);
+  background: var(--hover);
+  color: var(--text-main);
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -6468,27 +6471,28 @@ body.dk .analyze-accordion-content {
    CHAT HEADER — top bar with mode pill + action buttons
    ════════════════════════════════════════════════════════════════════ */
 .myz-chat-header {
-  padding: var(--s-2) var(--s-2h);
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   background: var(--bg-panel);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--s-1h);
+  gap: 8px;
   transition: background-color .3s ease, border-color .3s ease;
 }
-.myz-chat-header-left  { display: flex; align-items: center; gap: var(--s-2); }
-.myz-chat-header-right { display: flex; align-items: center; gap: var(--s-1h); }
+.myz-chat-header-left  { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.myz-chat-header-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
 /* ════════════════════════════════════════════════════════════════════
    MODE PILL — chat / agent / documents segmented control
    ════════════════════════════════════════════════════════════════════ */
 .myz-mode-pill {
   display: inline-flex;
-  padding: 2px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-app);
+  padding: 3px;
+  gap: 2px;
+  border-radius: 10px;
+  background: var(--bg-sidebar);
   border: 1px solid var(--border-color);
   font-family: var(--font-sans);
 }
