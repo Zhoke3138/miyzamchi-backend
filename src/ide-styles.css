@@ -5022,7 +5022,7 @@ body.dk .analyze-accordion-content {
    MENUBAR — glass effect (shows ambient mesh gradient through)
    ════════════════════════════════════════════════════════════════════ */
 .myz-menubar {
-  height: 48px;
+  height: 72px;
   flex-shrink: 0;
   display: flex;
   align-items: center;

@@ -588,9 +588,9 @@ body.sidebar-collapsed .sidebar {
 }
 
 .brand-logo {
-  width: 52px;
-  height: 52px;
-  border-radius: 12px;
+  width: 90px;
+  height: 90px;
+  border-radius: 18px;
   overflow: hidden;
   display: inline-flex;
   align-items: center;
@@ -776,7 +776,7 @@ body.theme-switching .message-content * {
 }
 
 .app-header {
-  height: 64px;
+  height: 100px;
   padding: 0 18px;
   display: flex;
   align-items: center;
@@ -883,8 +883,8 @@ body.theme-switching .message-content * {
 }
 
 .logo-smile {
-  width: 46px;
-  height: 46px;
+  width: 90px;
+  height: 90px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.15);
   background: rgba(255, 255, 255, 0.04);
@@ -1866,7 +1866,7 @@ button.mic-btn,
 
 .bot-message {
   position: relative;
-  padding-top: 58px;   /* avatar 50px + 8px gap below it */
+  padding-top: 88px;   /* avatar 80px + 8px gap below it */
   padding-left: 0;
 }
 
@@ -1892,8 +1892,8 @@ body.light-mode .user-message .message-content {
   position: absolute;
   left: 0;
   top: 0;
-  width: 50px;
-  height: 50px;
+  width: 80px;
+  height: 80px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background-color: rgba(255, 255, 255, 0.03);
@@ -2800,12 +2800,12 @@ body.light-mode .source-item-body {
     line-height: 1.58;
   }
   .bot-message {
-    padding-top: 52px;  /* avatar 44px + 8px gap */
+    padding-top: 72px;  /* avatar 64px + 8px gap */
     padding-left: 0;
   }
   .bot-message::before {
-    width: 44px;
-    height: 44px;
+    width: 64px;
+    height: 64px;
     top: 0;
     background-size: 80%;
   }

@@ -3189,7 +3189,7 @@ const EmptyIllust=()=>(
   <div className="myz-empty-illust">
     <div className="emoji emoji-float">
       <span className="welcome-screen-logo-container myz-welcome-logo">
-        <LogoIcon sz={100} glow/>
+        <LogoIcon sz={190} glow/>
       </span>
     </div>
     <div className="myz-welcome-title">Мыйзамчы Legal IDE</div>
@@ -3527,7 +3527,7 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
     <div className="myz-menubar">
       <div className="myz-menubar-left">
         <div className="myz-menubar-brand">
-          <LogoIcon sz={42} glow/>
+          <LogoIcon sz={80} glow/>
           <span className="myz-menubar-brand-name">Мыйзамчы</span>
         </div>
         {!isMobile && ['Файл','Правка','Вид','Перейти','Черновик','Право','Справка'].map(m=>(
@@ -8076,7 +8076,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
                 <div className="myz-welcome-title">Здравствуйте, коллега</div>
                 <div className="myz-welcome-sub">{agent ? 'Чем могу помочь с этим документом?' : 'Задайте юридический вопрос — пройдусь по всем слоям закона КР.'}</div>
               </div>
-              <LogoIcon sz={32} glow={false} />
+              <LogoIcon sz={64} glow={false} />
             </div>
 
             <div className="myz-welcome-grid">
