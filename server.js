@@ -698,10 +698,10 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
         console.log(`[Retrieval] Аббревиатуры: "${query}" -> "${expandedQuery}"`);
     }
 
-    // --- Тип запроса: npa / faq / hybrid ---
-    const queryType = classifyQueryType(expandedQuery);
-    const npaQuota = queryType === 'faq' ? 0 : qd.npa;
-    const faqQuota = queryType === 'npa' ? 0 : qd.faq;
+    // --- Тип запроса: npa / faq / hybrid (opts.queryType переопределяет авто-классификацию) ---
+    const queryType = opts.queryType || classifyQueryType(expandedQuery);
+    const npaQuota = opts.npaQuota ?? (queryType === 'faq' ? 0 : qd.npa);
+    const faqQuota = opts.faqQuota ?? (queryType === 'npa' ? 0 : qd.faq);
     const totalTarget = npaQuota + faqQuota;
 
     if (streamStatuses) sendStatus(res, 'Преобразую ваш вопрос в вектор...', '🧬');
@@ -2516,7 +2516,7 @@ async function handleSimpleConsultation(message, history, res, userQuery = null)
     sendStep(res, { id: 'retrieve', status: 'loading', text: 'Ищу релевантные статьи НПА' });
     sendStatus(res, '🔎 Ищу релевантные статьи...');
 
-    const retrieval = await adaptiveRetrieval(userQ, 'thinking', null, { maxK: 10, minK: 4 });
+    const retrieval = await adaptiveRetrieval(userQ, 'thinking', null, { queryType: 'npa', npaQuota: 10 });
     const { core = [], context = [], all = [] } = retrieval;
 
     sendStep(res, {
@@ -2587,43 +2587,52 @@ async function reformulateQueries(userMessage) {
     const systemPrompt = `Ты — юридический поисковый эксперт КР.
 По вопросу пользователя-юриста формируешь:
 1) короткую тему запроса (для удержания контекста во всех поисках)
-2) 5 коротких поисковых запросов для разных слоёв законодательства КР
+2) 8 коротких поисковых запросов для разных слоёв законодательства КР
 
 Отвечаешь СТРОГО JSON без markdown без пояснений.`;
     const userPrompt = `Вопрос пользователя: "${userMessage}"
 
 Сформируй компактный пакет поисковых стратегий.
-Каждый запрос — короткая фраза (5-15 слов), оптимизированная под векторный поиск.
+Каждый запрос — короткая фраза (5-15 слов), оптимизированная под векторный поиск по НПА КР.
 
 Формат (ровно такой JSON):
 {
-  "topic":     "тема вопроса в 5-10 словах с указанием отрасли (для prefix-инжекции)",
-  "special":   "узкая специальная норма — точная проблема юриста",
-  "general":   "общие положения и фундаментальные принципы (Кодексы)",
-  "process":   "процессуальные нормы — сроки давности, подсудность, госпошлина",
-  "liability": "ответственность за нарушение — штрафы, неустойка, санкции, расторжение",
-  "bylaws":    "подзаконные акты — правила, инструкции, постановления Кабмина"
+  "topic":       "тема вопроса в 5-10 словах с указанием отрасли (для prefix-инжекции)",
+  "special":     "узкая специальная норма — точная проблема юриста",
+  "general":     "общие положения и фундаментальные принципы (Кодексы)",
+  "process":     "процессуальные нормы — сроки давности, подсудность, госпошлина",
+  "liability":   "ответственность за нарушение — штрафы, неустойка, санкции, расторжение",
+  "bylaws":      "подзаконные акты — правила, инструкции, постановления Кабмина",
+  "rights":      "права и обязанности сторон правоотношения — что вправе требовать, что обязан",
+  "definitions": "определения ключевых понятий — кто является субъектом, что считается нарушением",
+  "evidence":    "доказательственная база — какие документы и факты нужно доказать в суде"
 }
 
 Примеры:
 Вопрос: "Соседи затопили мою квартиру, как взыскать ущерб?"
 {
-  "topic":     "залив квартиры соседями возмещение ущерба",
-  "special":   "возмещение вреда имуществу при заливе квартиры",
-  "general":   "общие положения об обязательствах из причинения вреда ГК КР",
-  "process":   "срок исковой давности подсудность иск о возмещении вреда",
-  "liability": "размер компенсации морального вреда неустойка ответственность виновника",
-  "bylaws":    "правила содержания общего имущества жилых домов"
+  "topic":       "залив квартиры соседями возмещение ущерба",
+  "special":     "возмещение вреда имуществу при заливе квартиры",
+  "general":     "общие положения об обязательствах из причинения вреда ГК КР",
+  "process":     "срок исковой давности подсудность иск о возмещении вреда",
+  "liability":   "размер компенсации морального вреда неустойка ответственность виновника",
+  "bylaws":      "правила содержания общего имущества жилых домов",
+  "rights":      "право требовать возмещения убытков обязанность виновника устранить ущерб",
+  "definitions": "понятие вред имущество убытки реальный ущерб упущенная выгода ГК КР",
+  "evidence":    "доказательства залива акт осмотра независимая оценка ущерба документы"
 }
 
-Вопрос: "Как взыскать долг абонента за тепловую энергию за 3 месяца?"
+Вопрос: "Работодатель не платит зарплату 3 месяца, что делать?"
 {
-  "topic":     "взыскание задолженности абонента за теплоэнергию ЖКХ",
-  "special":   "взыскание задолженности за тепловую энергию с абонента договор теплоснабжения",
-  "general":   "общие положения об обязательствах исполнение оплата по договору ГК КР",
-  "process":   "приказное производство срок исковой давности взыскание задолженности подсудность",
-  "liability": "неустойка пеня за просрочку оплаты коммунальных услуг расторжение договора",
-  "bylaws":    "правила теплоснабжения постановление Кабмина тарифы"
+  "topic":       "задержка выплаты заработной платы трудовые споры",
+  "special":     "задержка выплаты заработной платы работодателем нарушение ТК",
+  "general":     "общие положения трудового договора оплата труда ТК КР",
+  "process":     "срок исковой давности трудовые споры подсудность государственная инспекция труда",
+  "liability":   "ответственность работодателя за задержку зарплаты штраф компенсация",
+  "bylaws":      "минимальный размер оплаты труда постановление Кабмина КР",
+  "rights":      "право работника на своевременную выплату заработной платы ТК КР",
+  "definitions": "заработная плата оклад надбавка премия понятие ТК КР",
+  "evidence":    "доказательства задержки зарплаты расчётный лист трудовой договор выписка"
 }`;
     try {
         const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
@@ -2633,23 +2642,22 @@ async function reformulateQueries(userMessage) {
         const slice = (fi >= 0 && li > fi) ? cleaned.slice(fi, li + 1) : cleaned;
         const parsed = JSON.parse(slice);
         return {
-            topic:     String(parsed.topic     || '').slice(0, 200),
-            special:   String(parsed.special   || userMessage).slice(0, 280),
-            general:   String(parsed.general   || userMessage).slice(0, 280),
-            process:   String(parsed.process   || userMessage).slice(0, 280),
-            liability: String(parsed.liability || userMessage).slice(0, 280),
-            bylaws:    String(parsed.bylaws    || userMessage).slice(0, 280)
+            topic:       String(parsed.topic       || '').slice(0, 200),
+            special:     String(parsed.special     || userMessage).slice(0, 280),
+            general:     String(parsed.general     || userMessage).slice(0, 280),
+            process:     String(parsed.process     || userMessage).slice(0, 280),
+            liability:   String(parsed.liability   || userMessage).slice(0, 280),
+            bylaws:      String(parsed.bylaws      || userMessage).slice(0, 280),
+            rights:      String(parsed.rights      || userMessage).slice(0, 280),
+            definitions: String(parsed.definitions || userMessage).slice(0, 280),
+            evidence:    String(parsed.evidence    || userMessage).slice(0, 280)
         };
     } catch (e) {
         console.error('[Reformulate] failed:', e.message);
-        // Fallback — все запросы = исходный вопрос, topic пустой
         return {
-            topic: '',
-            special: userMessage,
-            general: userMessage,
-            process: userMessage,
-            liability: userMessage,
-            bylaws: userMessage
+            topic: '', special: userMessage, general: userMessage,
+            process: userMessage, liability: userMessage, bylaws: userMessage,
+            rights: userMessage, definitions: userMessage, evidence: userMessage
         };
     }
 }
@@ -2677,39 +2685,53 @@ async function deepRetrievalChain(userMessage, res) {
     const ctxPrefix = queries.topic ? `[Контекст: ${queries.topic.slice(0, 160)}] ` : '';
     const wrap = (q) => ctxPrefix + q;
 
-    // 5 loading-шагов СРАЗУ — пользователь видит весь roadmap
-    sendStep(res, { id: 'special',   status: 'loading', text: 'Ищу специальные нормы по проблеме' });
-    sendStep(res, { id: 'general',   status: 'loading', text: 'Проверяю общие положения Кодекса' });
-    sendStep(res, { id: 'process',   status: 'loading', text: 'Анализирую процессуальные требования' });
-    sendStep(res, { id: 'liability', status: 'loading', text: 'Ищу ответственность и санкции' });
-    sendStep(res, { id: 'bylaws',    status: 'loading', text: 'Проверяю подзаконные акты' });
+    // 8 loading-шагов СРАЗУ — пользователь видит весь roadmap
+    sendStep(res, { id: 'special',     status: 'loading', text: 'Ищу специальные нормы по проблеме' });
+    sendStep(res, { id: 'general',     status: 'loading', text: 'Проверяю общие положения Кодекса' });
+    sendStep(res, { id: 'process',     status: 'loading', text: 'Анализирую процессуальные требования' });
+    sendStep(res, { id: 'liability',   status: 'loading', text: 'Ищу ответственность и санкции' });
+    sendStep(res, { id: 'bylaws',      status: 'loading', text: 'Проверяю подзаконные акты' });
+    sendStep(res, { id: 'rights',      status: 'loading', text: 'Определяю права и обязанности сторон' });
+    sendStep(res, { id: 'definitions', status: 'loading', text: 'Нахожу определения ключевых понятий' });
+    sendStep(res, { id: 'evidence',    status: 'loading', text: 'Анализирую доказательственную базу' });
 
-    // 5 параллельных retrieval — каждый с prefix-контекстом
-    const [specRes, genRes, procRes, liabRes, bylawRes] = await Promise.allSettled([
-        adaptiveRetrieval(wrap(queries.special),   'fast',     null, { maxK: 3,  minK: 2 }),
-        adaptiveRetrieval(wrap(queries.general),   'thinking', null, { maxK: 5,  minK: 3 }),
-        adaptiveRetrieval(wrap(queries.process),   'thinking', null, { maxK: 4,  minK: 2 }),
-        adaptiveRetrieval(wrap(queries.liability), 'fast',     null, { maxK: 3,  minK: 2 }),
-        adaptiveRetrieval(wrap(queries.bylaws),    'fast',     null, { maxK: 3,  minK: 2 })
-    ]);
+    // 8 параллельных retrieval — только НПА (queryType:'npa'), каждый с prefix-контекстом
+    const NPA_ONLY = { queryType: 'npa' };
+    const [specRes, genRes, procRes, liabRes, bylawRes, rightsRes, defRes, evRes] =
+        await Promise.allSettled([
+            adaptiveRetrieval(wrap(queries.special),     'fast',     null, { ...NPA_ONLY, npaQuota: 4 }),
+            adaptiveRetrieval(wrap(queries.general),     'thinking', null, { ...NPA_ONLY, npaQuota: 5 }),
+            adaptiveRetrieval(wrap(queries.process),     'thinking', null, { ...NPA_ONLY, npaQuota: 4 }),
+            adaptiveRetrieval(wrap(queries.liability),   'fast',     null, { ...NPA_ONLY, npaQuota: 4 }),
+            adaptiveRetrieval(wrap(queries.bylaws),      'fast',     null, { ...NPA_ONLY, npaQuota: 3 }),
+            adaptiveRetrieval(wrap(queries.rights),      'fast',     null, { ...NPA_ONLY, npaQuota: 3 }),
+            adaptiveRetrieval(wrap(queries.definitions), 'fast',     null, { ...NPA_ONLY, npaQuota: 3 }),
+            adaptiveRetrieval(wrap(queries.evidence),    'fast',     null, { ...NPA_ONLY, npaQuota: 3 })
+        ]);
 
-    const specMatches  = specRes.status  === 'fulfilled' ? (specRes.value.all  || []) : [];
-    const genMatches   = genRes.status   === 'fulfilled' ? (genRes.value.all   || []) : [];
-    const procMatches  = procRes.status  === 'fulfilled' ? (procRes.value.all  || []) : [];
-    const liabMatches  = liabRes.status  === 'fulfilled' ? (liabRes.value.all  || []) : [];
-    const bylawMatches = bylawRes.status === 'fulfilled' ? (bylawRes.value.all || []) : [];
+    const specMatches  = specRes.status   === 'fulfilled' ? (specRes.value.all   || []) : [];
+    const genMatches   = genRes.status    === 'fulfilled' ? (genRes.value.all    || []) : [];
+    const procMatches  = procRes.status   === 'fulfilled' ? (procRes.value.all   || []) : [];
+    const liabMatches  = liabRes.status   === 'fulfilled' ? (liabRes.value.all   || []) : [];
+    const bylawMatches = bylawRes.status  === 'fulfilled' ? (bylawRes.value.all  || []) : [];
+    const rightsMatches = rightsRes.status === 'fulfilled' ? (rightsRes.value.all || []) : [];
+    const defMatches   = defRes.status    === 'fulfilled' ? (defRes.value.all    || []) : [];
+    const evMatches    = evRes.status     === 'fulfilled' ? (evRes.value.all     || []) : [];
 
-    sendStep(res, { id: 'special',   status: specMatches.length  ? 'success' : 'warning', text: `Специальных норм найдено: ${specMatches.length}` });
-    sendStep(res, { id: 'general',   status: genMatches.length   ? 'success' : 'warning', text: `Общих положений найдено: ${genMatches.length}` });
-    sendStep(res, { id: 'process',   status: procMatches.length  ? 'success' : 'warning', text: `Процессуальных норм найдено: ${procMatches.length}` });
-    sendStep(res, { id: 'liability', status: liabMatches.length  ? 'success' : 'warning', text: `Норм об ответственности: ${liabMatches.length}` });
-    sendStep(res, { id: 'bylaws',    status: bylawMatches.length ? 'success' : 'warning', text: `Подзаконных актов найдено: ${bylawMatches.length}` });
+    sendStep(res, { id: 'special',     status: specMatches.length   ? 'success' : 'warning', text: `Специальных норм: ${specMatches.length}` });
+    sendStep(res, { id: 'general',     status: genMatches.length    ? 'success' : 'warning', text: `Общих положений: ${genMatches.length}` });
+    sendStep(res, { id: 'process',     status: procMatches.length   ? 'success' : 'warning', text: `Процессуальных норм: ${procMatches.length}` });
+    sendStep(res, { id: 'liability',   status: liabMatches.length   ? 'success' : 'warning', text: `Норм об ответственности: ${liabMatches.length}` });
+    sendStep(res, { id: 'bylaws',      status: bylawMatches.length  ? 'success' : 'warning', text: `Подзаконных актов: ${bylawMatches.length}` });
+    sendStep(res, { id: 'rights',      status: rightsMatches.length ? 'success' : 'warning', text: `Прав и обязанностей: ${rightsMatches.length}` });
+    sendStep(res, { id: 'definitions', status: defMatches.length    ? 'success' : 'warning', text: `Определений понятий: ${defMatches.length}` });
+    sendStep(res, { id: 'evidence',    status: evMatches.length     ? 'success' : 'warning', text: `Доказательственных норм: ${evMatches.length}` });
 
-    return { specMatches, genMatches, procMatches, liabMatches, bylawMatches, queries };
+    return { specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches, queries };
 }
 
-// Иерархический контекст для финального LLM — 5 пронумерованных слоёв с дедупликацией
-function formatLayeredContext({ specMatches, genMatches, procMatches, liabMatches, bylawMatches }) {
+// Иерархический контекст для финального LLM — 8 пронумерованных слоёв с дедупликацией
+function formatLayeredContext({ specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches }) {
     const seen = new Set();
     const dedup = (m) => {
         const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
@@ -2720,11 +2742,14 @@ function formatLayeredContext({ specMatches, genMatches, procMatches, liabMatche
     };
 
     const groups = [
-        { label: '⭐ СПЕЦИАЛЬНАЯ НОРМА (главный источник ответа)',  tag: 'СПЕЦИАЛЬНАЯ',  matches: specMatches.map(dedup).filter(Boolean) },
-        { label: '🏛 ОБЩИЕ ПОЛОЖЕНИЯ (фундамент Кодекса)',          tag: 'ОБЩАЯ',        matches: genMatches.map(dedup).filter(Boolean) },
-        { label: '⚖️ ПРОЦЕССУАЛЬНЫЕ НОРМЫ (как действовать)',        tag: 'ПРОЦЕСС',      matches: procMatches.map(dedup).filter(Boolean) },
-        { label: '⚡ ОТВЕТСТВЕННОСТЬ И САНКЦИИ (что грозит)',        tag: 'ОТВЕТСТВЕННОСТЬ', matches: (liabMatches || []).map(dedup).filter(Boolean) },
-        { label: '📋 ПОДЗАКОННЫЕ АКТЫ (детализация)',               tag: 'ПОДЗАКОН',     matches: bylawMatches.map(dedup).filter(Boolean) }
+        { label: '⭐ СПЕЦИАЛЬНАЯ НОРМА (главный источник ответа)',         tag: 'СПЕЦИАЛЬНАЯ',    matches: (specMatches   || []).map(dedup).filter(Boolean) },
+        { label: '🏛 ОБЩИЕ ПОЛОЖЕНИЯ (фундамент Кодекса)',                 tag: 'ОБЩАЯ',          matches: (genMatches    || []).map(dedup).filter(Boolean) },
+        { label: '⚖️ ПРОЦЕССУАЛЬНЫЕ НОРМЫ (сроки, подсудность, пошлина)',  tag: 'ПРОЦЕСС',        matches: (procMatches   || []).map(dedup).filter(Boolean) },
+        { label: '⚡ ОТВЕТСТВЕННОСТЬ И САНКЦИИ (штрафы, неустойка)',        tag: 'ОТВЕТСТВЕННОСТЬ',matches: (liabMatches   || []).map(dedup).filter(Boolean) },
+        { label: '📋 ПОДЗАКОННЫЕ АКТЫ (постановления, правила)',            tag: 'ПОДЗАКОН',       matches: (bylawMatches  || []).map(dedup).filter(Boolean) },
+        { label: '⚖️ ПРАВА И ОБЯЗАННОСТИ СТОРОН (что вправе требовать)',   tag: 'ПРАВА',          matches: (rightsMatches || []).map(dedup).filter(Boolean) },
+        { label: '📖 ОПРЕДЕЛЕНИЯ И ПОНЯТИЯ (как закон трактует термины)',   tag: 'ОПРЕДЕЛЕНИЕ',    matches: (defMatches    || []).map(dedup).filter(Boolean) },
+        { label: '🔍 ДОКАЗАТЕЛЬСТВЕННАЯ БАЗА (что нужно доказать в суде)', tag: 'ДОКАЗАТЕЛЬСТВО', matches: (evMatches     || []).map(dedup).filter(Boolean) }
     ];
 
     return groups
@@ -2748,10 +2773,10 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
     const userQ = (userQuery && userQuery.trim()) || message;
     const cleanHistory = sanitizeHistory(history);
 
-    // Этапы 1-5: 5-слойный retrieval с SSE-шагами
-    const { specMatches, genMatches, procMatches, liabMatches, bylawMatches } = await deepRetrievalChain(userQ, res);
+    // Этапы 1-8: 8-слойный retrieval с SSE-шагами
+    const { specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches } = await deepRetrievalChain(userQ, res);
 
-    const allMatches = [...specMatches, ...genMatches, ...procMatches, ...liabMatches, ...bylawMatches];
+    const allMatches = [...specMatches, ...genMatches, ...procMatches, ...liabMatches, ...bylawMatches, ...rightsMatches, ...defMatches, ...evMatches];
 
     if (allMatches.length === 0) {
         sendStep(res, { id: 'synthesize', status: 'warning', text: 'В базе НПА нет данных по запросу' });
@@ -2759,32 +2784,38 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
         return;
     }
 
-    // Этап 6: финальный синтез с layered context
+    // Этап 9: финальный синтез с layered context
     sendStep(res, { id: 'synthesize', status: 'loading', text: 'Формирую итоговую консультацию' });
     sendStatus(res, '✍️ Формирую итоговую консультацию...');
 
-    const layeredContext = formatLayeredContext({ specMatches, genMatches, procMatches, liabMatches, bylawMatches });
+    const layeredContext = formatLayeredContext({ specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches });
 
     const isL4 = detectL4Request(userQ);
     let systemPrompt = BASE_CONSULTANT_PROMPT + `
 
-═══ ИЕРАРХИЧЕСКИЙ КОНТЕКСТ (5 СЛОЁВ) ═══
-Получаемый ниже контекст разделён на 5 слоёв — используй ВСЕ доступные слои для полного ответа:
+═══ ИЕРАРХИЧЕСКИЙ КОНТЕКСТ (8 СЛОЁВ) ═══
+Получаемый ниже контекст разделён на 8 слоёв — используй ВСЕ доступные слои для полного ответа:
 
 1. ⭐ СПЕЦИАЛЬНАЯ НОРМА — конкретная статья по проблеме (главный источник ответа)
 2. 🏛 ОБЩИЕ ПОЛОЖЕНИЯ — базовые принципы Кодекса (фундамент аргументации)
 3. ⚖️ ПРОЦЕССУАЛЬНЫЕ НОРМЫ — сроки давности, подсудность, госпошлина (как действовать)
 4. ⚡ ОТВЕТСТВЕННОСТЬ И САНКЦИИ — неустойка, штрафы, ответственность сторон (что грозит)
 5. 📋 ПОДЗАКОННЫЕ АКТЫ — правила/инструкции/постановления (детализация)
+6. 🤝 ПРАВА И ОБЯЗАННОСТИ — объём прав и обязанностей сторон (кто что должен)
+7. 📖 ОПРЕДЕЛЕНИЯ — легальные дефиниции понятий (что значит термин по закону)
+8. 🔍 ДОКАЗАТЕЛЬНАЯ БАЗА — нормы о доказательствах и бремени доказывания (что нужно доказать и чем)
 
 Твой ответ ДОЛЖЕН строиться по схеме:
-• специальная норма (что нарушено)
-→ опора на общую (фундамент по Кодексу)
+• специальная норма (что нарушено / применяется)
+→ определение понятий (если термин нуждается в расшифровке)
+→ права и обязанности сторон (кто что должен / вправе)
+→ опора на общие положения (фундамент по Кодексу)
 → процессуальные шаги (срок исковой давности, в какой суд, госпошлина)
+→ доказательная база (что нужно доказать, какими документами)
 → ответственность и санкции (размер взыскания, неустойка, штраф)
 → подзаконные детали (если есть)
 
-Это даёт юристу полную картину: кто прав, в какой суд идти, в какие сроки, сколько госпошлины, какой размер санкций.
+Это даёт юристу полную картину: кто прав, что нужно доказать, в какой суд идти, в какие сроки, сколько госпошлины, какой размер санкций.
 Все номера статей бери ТОЛЬКО из переданного контекста — никогда из памяти.`;
     if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
     if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
@@ -2795,7 +2826,7 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
         await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res);
         sendStep(res, { id: 'synthesize', status: 'success', text: 'Консультация готова' });
 
-        // Источники: top по 2 из каждого слоя
+        // Источники: top из каждого слоя (8 слоёв, до 12 уникальных источников)
         const seenSrc = new Set();
         const pickN = (arr, n) => {
             const out = [];
@@ -2809,12 +2840,15 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
             return out;
         };
         const sourcesArr = [
-            ...pickN(specMatches, 2),
-            ...pickN(genMatches, 2),
-            ...pickN(procMatches, 1),
-            ...pickN(liabMatches, 2),
-            ...pickN(bylawMatches, 1)
-        ].slice(0, 8);
+            ...pickN(specMatches,   2),
+            ...pickN(genMatches,    2),
+            ...pickN(procMatches,   1),
+            ...pickN(liabMatches,   1),
+            ...pickN(bylawMatches,  1),
+            ...pickN(rightsMatches, 1),
+            ...pickN(defMatches,    1),
+            ...pickN(evMatches,     1)
+        ].slice(0, 12);
         const sources = sourcesArr.map(m => `${m.metadata?.npa_title || 'НПА'} — ${m.metadata?.article_title || ''}`);
         const metadata = sourcesArr.map(m => ({
             npa_title: m.metadata?.npa_title || '',
