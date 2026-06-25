@@ -951,7 +951,7 @@ const AnalyzeDocsMode = () => {
                        onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value=''; if (f) handleFile(i, f); }}/>
                 {empty && (
                   <div className="ad-slot-empty">
-                    <div className="ad-slot-icon"><Ico k="clip" sz={28} col="var(--muted)"/></div>
+                    <div className="ad-slot-plus">+</div>
                     <div className="ad-slot-label">{label}</div>
                     <div className="ad-slot-hint">Перетащите или кликните · .pdf .docx .txt</div>
                   </div>
