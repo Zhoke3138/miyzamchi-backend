@@ -603,6 +603,33 @@ async function searchPinecone(vector, queryText = '', topK = 15) {
 // Все запросы идут в Supabase (единая база НПА + FAQ)
 function classifyQuerySource() { return 'supabase'; }
 
+// Категории FAQ/инструкций в поле category (npa_title) Supabase
+const FAQ_CATEGORY_KEYS = new Set(['instructions', 'instruction', 'faq', 'guide', 'guides']);
+function isMatchFaq(match) {
+    return FAQ_CATEGORY_KEYS.has((match.metadata?.npa_title || '').toLowerCase().trim());
+}
+
+// Классификатор типа запроса — определяет квоту НПА vs Инструкции
+// 'npa'    — явный вопрос по статьям законов
+// 'faq'    — явный вопрос о процедуре/адресе/стоимости
+// 'hybrid' — всё остальное (по умолчанию: нужны оба источника)
+function classifyQueryType(query) {
+    const q = (query || '').toLowerCase();
+    const NPA_EXACT = [
+        'что говорит статья', 'какая статья', 'по статье', 'процитируй закон',
+        'текст закона', 'норма закона', 'по какому закону', 'нарушение права',
+        'предусмотрено законом', 'согласно закону', 'по закону', 'по кодексу'
+    ];
+    const FAQ_EXACT = [
+        'куда обратиться', 'куда идти', 'куда позвонить', 'адрес цон', 'адрес органа',
+        'режим работы', 'телефон', 'как записаться', 'номер очереди', 'через тундук',
+        'через gosreestr', 'время работы'
+    ];
+    if (NPA_EXACT.some(k => q.includes(k))) return 'npa';
+    if (FAQ_EXACT.some(k => q.includes(k))) return 'faq';
+    return 'hybrid'; // дефолт — тянем оба типа
+}
+
 function sendStatus(res, text, icon) {
     if (!res || res.writableEnded) return;
     res.write(`data: ${JSON.stringify({ protocolStatus: text, icon })}\n\n`);
@@ -651,69 +678,83 @@ function expandQueryAbbreviations(query) {
 }
 
 async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
-    // --- Настройки (mode задаёт дефолты, opts может переопределить) ---
-    const defaults = {
-        thinking: { maxK: 10, minK: 5 },
-        agent:    { maxK: 15, minK: 4 },
-        fast:     { maxK: 5,  minK: 5 }
+    // --- Квоты НПА + FAQ по режиму (hybrid = оба источника) ---
+    const quotaDefaults = {
+        thinking: { npa: 6, faq: 4 },
+        agent:    { npa: 8, faq: 4 },
+        fast:     { npa: 5, faq: 3 }
     };
-    const base = defaults[mode] || defaults.fast;
-    const maxK = opts.maxK ?? base.maxK;
-    const minK = opts.minK ?? base.minK;
-    const absoluteMinScore = opts.absoluteMinScore ?? 0.45;
-    const coreScoreThreshold = opts.coreScoreThreshold ?? 0.75;
-    const elbowDropRatio = opts.elbowDropRatio ?? 0.15;
-    // source: всегда 'supabase' — единая база НПА + FAQ в Supabase.
+    const qd = quotaDefaults[mode] || quotaDefaults.fast;
+
+    const absoluteMinScore = opts.absoluteMinScore ?? 0.40;
+    const coreScoreThreshold = opts.coreScoreThreshold ?? 0.70;
     const source = opts.source ?? 'supabase';
 
     const streamStatuses = res && mode === 'thinking';
 
-    // --- Этап 1: Расширение аббревиатур (перед embedding) ---
+    // --- Этап 1: Расширение аббревиатур ---
     const expandedQuery = expandQueryAbbreviations(query);
     if (expandedQuery !== query) {
-        console.log(`[Retrieval] Расширили аббревиатуры: "${query}" -> "${expandedQuery}"`);
+        console.log(`[Retrieval] Аббревиатуры: "${query}" -> "${expandedQuery}"`);
     }
+
+    // --- Тип запроса: npa / faq / hybrid ---
+    const queryType = classifyQueryType(expandedQuery);
+    const npaQuota = queryType === 'faq' ? 0 : qd.npa;
+    const faqQuota = queryType === 'npa' ? 0 : qd.faq;
+    const totalTarget = npaQuota + faqQuota;
+
     if (streamStatuses) sendStatus(res, 'Преобразую ваш вопрос в вектор...', '🧬');
 
-    // --- Этап 2: Поиск в Supabase (hybrid: vector 1536d + full-text) ---
-    if (streamStatuses) sendStatus(res, `Ищу в базе ${maxK} ближайших статей НПА...`, '🔎');
+    // --- Этап 2: Широкий поиск (тянем с запасом, чтобы набрать оба типа) ---
+    const rawK = Math.max(totalTarget * 3, 20);
+    if (streamStatuses) sendStatus(res, `Ищу в базе НПА и инструкции (тип: ${queryType})...`, '🔎');
     const embedding = await getEmbeddingForSupabase(expandedQuery);
-    const matches = await searchPinecone(embedding, expandedQuery, maxK);
+    const rawMatches = await searchPinecone(embedding, expandedQuery, rawK);
 
-    if (matches.length === 0) {
+    if (rawMatches.length === 0) {
         if (streamStatuses) sendStatus(res, 'База не вернула результатов', '⚠️');
-        console.log(`[Retrieval] ${mode} | source=${source} | query: ${query.length}ch | ⚠️ пусто`);
-        return { core: [], context: [], all: [] };
+        console.log(`[Retrieval] ${mode} | ${queryType} | ⚠️ пусто`);
+        return { core: [], context: [], all: [], queryType };
     }
 
-    // --- Этап 3: Фильтрация и ранжирование ---
-    if (streamStatuses) sendStatus(res, `Получил ${matches.length} статей, ранжирую...`, '📊');
+    // --- Этап 3: Разделяем на НПА и Инструкции, отбираем по квоте ---
+    const npaRaw = rawMatches.filter(m => !isMatchFaq(m));
+    const faqRaw = rawMatches.filter(m =>  isMatchFaq(m));
 
-    let candidates = matches.filter(m => (m.score || 0) >= absoluteMinScore);
+    const pickBest = (arr, quota) =>
+        arr.filter(m => (m.score || 0) >= absoluteMinScore).slice(0, quota);
 
-    if (candidates.length > minK) {
-        const scores = candidates.map(m => m.score || 0);
-        let elbowIndex = candidates.length;
-        for (let i = minK - 1; i < scores.length - 1; i++) {
-            const drop = scores[i] > 0 ? (scores[i] - scores[i + 1]) / scores[i] : 0;
-            if (drop > elbowDropRatio) { elbowIndex = i + 1; break; }
-        }
-        candidates = candidates.slice(0, elbowIndex);
+    const selectedNpa = pickBest(npaRaw, npaQuota);
+    const selectedFaq = pickBest(faqRaw, faqQuota);
+
+    // Если после фильтрации по score одна из категорий пуста — добираем из другой
+    const shortfall = totalTarget - selectedNpa.length - selectedFaq.length;
+    let extras = [];
+    if (shortfall > 0) {
+        const usedIds = new Set([...selectedNpa, ...selectedFaq].map(m => m.id));
+        extras = rawMatches
+            .filter(m => !usedIds.has(m.id) && (m.score || 0) >= absoluteMinScore)
+            .slice(0, shortfall);
     }
-    if (candidates.length < minK && matches.length >= minK) candidates = matches.slice(0, minK);
 
-    const core = candidates.filter(m => (m.score || 0) >= coreScoreThreshold);
-    const context = candidates.filter(m => (m.score || 0) < coreScoreThreshold);
+    // Объединяем и сортируем по score
+    const candidates = [...selectedNpa, ...selectedFaq, ...extras]
+        .sort((a, b) => (b.score || 0) - (a.score || 0));
 
-    const topScore = (matches[0].score || 0).toFixed(3);
+    const core    = candidates.filter(m => (m.score || 0) >= coreScoreThreshold);
+    const context = candidates.filter(m => (m.score || 0) <  coreScoreThreshold);
+
+    const topScore = rawMatches[0] ? (rawMatches[0].score || 0).toFixed(3) : 'n/a';
     console.log(
-        `[Retrieval] ${mode} | source=${source} | query: ${query.length}ch | ` +
-        `topScore: ${topScore} | ⭐ core: ${core.length} | 📚 context: ${context.length} | total: ${candidates.length}/${matches.length}`
+        `[Retrieval] ${mode} | ${queryType} | topScore:${topScore} | ` +
+        `НПА:${selectedNpa.length}/${npaRaw.length} | FAQ:${selectedFaq.length}/${faqRaw.length} | ` +
+        `⭐core:${core.length} 📚ctx:${context.length} | total:${candidates.length}`
     );
 
-    if (streamStatuses) sendStatus(res, `Отобрал ⭐ ${core.length} ключевых и 📚 ${context.length} смежных`, '✅');
+    if (streamStatuses) sendStatus(res, `Нашёл ${selectedNpa.length} статей НПА и ${selectedFaq.length} инструкций`, '✅');
 
-    return { core, context, all: candidates };
+    return { core, context, all: candidates, queryType };
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -864,11 +905,16 @@ const systemInstruction = [
     "---",
     "",
     "# ИСТОЧНИКИ ЗНАНИЙ (строгий приоритет)",
-    "1. **Приоритет 1 — Контекст (НПА):** Твои ответы должны основываться ИСКЛЮЧИТЕЛЬНО на предоставленных статьях законов КР. Это единственный источник правовой истины.",
-    "2. **⭐ КЛЮЧЕВЫЕ vs 📚 ВСПОМОГАТЕЛЬНЫЕ статьи:** Если в контексте есть статьи с пометкой **[⭐ КЛЮЧЕВАЯ СТАТЬЯ]** — опирайся в первую очередь на них. Статьи с пометкой **[📚 ВСПОМОГАТЕЛЬНАЯ]** используй как дополнительный контекст (смежные нормы, процедурные детали), но НЕ цитируй их как основной ответ на вопрос.",
-    "3. **Приоритет 2 — Твои знания:** Используй ТОЛЬКО для структуры документов, объяснения терминов простым языком и общей юридической логики. НИКОГДА не подменяй ими нормы закона и не дополняй контекст выдуманными статьями.",
-    "4. **Если в контексте нет ответа:** Ты ОБЯЗАН прямо сказать: «К сожалению, в моей текущей базе НПА нет информации по этому вопросу. Рекомендую обратиться к юристу или на сайт cbd.minjust.gov.kg.» Не пытайся ответить из общих знаний.",
-    "5. **КАТЕГОРИЧЕСКИЙ ЗАПРЕТ НА ГАЛЛЮЦИНАЦИИ:** Тебе ЗАПРЕЩЕНО выдумывать номера статей, сроки, суммы или нормы, которых нет в предоставленном контексте. Не используй общие знания о праве, если они не подтверждены контекстом.",
+    "Контекст может содержать два типа источников:",
+    "- **[⭐ КЛЮЧЕВАЯ / 📚 ВСПОМОГАТЕЛЬНАЯ] НОРМАТИВНЫЕ ПРАВОВЫЕ АКТЫ КР** — статьи законов, кодексов, постановлений. Это правовая основа.",
+    "- **[📋 ИНСТРУКЦИЯ]** — официальные инструкции и FAQ Тундук/ЦОН о практических процедурах, документах, стоимости.",
+    "",
+    "1. **НПА — правовая основа:** Опирайся на НПА для ответа ЧТО говорит закон, какое ПРАВО есть у человека, какова ОТВЕТСТВЕННОСТЬ.",
+    "2. **Инструкции — практика:** Используй инструкции для ответа КАК подать документы, КУДА обратиться, СКОЛЬКО стоит, КАКОЙ порядок действий.",
+    "3. **Оба типа вместе:** Если есть и НПА и инструкции — строй ответ по схеме: правовое основание (НПА) → практические шаги (инструкция).",
+    "4. **⭐ КЛЮЧЕВЫЕ vs 📚 ВСПОМОГАТЕЛЬНЫЕ:** КЛЮЧЕВЫЕ — главный ответ. ВСПОМОГАТЕЛЬНЫЕ — смежный контекст, не цитируй их как основу.",
+    "5. **Если в контексте нет ответа:** Прямо скажи «К сожалению, в моей текущей базе нет информации по этому вопросу. Рекомендую обратиться к юристу или на сайт cbd.minjust.gov.kg.» Не отвечай из общих знаний.",
+    "6. **ЗАПРЕТ НА ГАЛЛЮЦИНАЦИИ:** Нельзя выдумывать номера статей, сроки, суммы или нормы, которых нет в контексте.",
     "",
     "---",
     "",
@@ -1998,26 +2044,38 @@ function sanitizeHistory(history) {
     return clean;
 }
 
-// --- Форматирование контекста с иерархией ⭐/📚 ---
+// --- Форматирование контекста: НПА и Инструкции в отдельных секциях ---
 function formatContextWithHierarchy(core, context) {
+    const all = [...core, ...context];
+    if (all.length === 0) return '';
+
+    const npaItems = all.filter(m => !isMatchFaq(m));
+    const faqItems = all.filter(m =>  isMatchFaq(m));
+
+    const fmtNpa = (m, i) => {
+        const md = m.metadata || {};
+        const tier = (m.score || 0) >= 0.70 ? '⭐ КЛЮЧЕВАЯ' : '📚 ВСПОМОГАТЕЛЬНАЯ';
+        return `[${tier} — ${md.npa_title} | ${md.article_title}]\nДокумент: ${md.npa_title}\nСтатья: ${md.article_title}\nТекст: ${md.full_text}`;
+    };
+
+    const fmtFaq = (m, i) => {
+        const md = m.metadata || {};
+        // Срезаем служебные строки "Документ\n" и "Категория: ...\n"
+        const cleanText = (md.full_text || '')
+            .replace(/^Документ\s*\n?/i, '')
+            .replace(/^Категория:[^\n]*\n?/im, '')
+            .trim();
+        return `[📋 ИНСТРУКЦИЯ — ${md.article_title || 'Процедура'}]\nТекст: ${cleanText}`;
+    };
+
     const parts = [];
-    
-    if (core.length > 0) {
-        const coreText = core.map((match) => {
-            const md = match.metadata || {};
-            return `[⭐ КЛЮЧЕВАЯ СТАТЬЯ — ${md.npa_title} | ${md.article_title}]\nДокумент: ${md.npa_title}\nСтатья: ${md.article_title}\nТекст: ${md.full_text}`;
-        }).join('\n\n---\n\n');
-        parts.push(coreText);
+    if (npaItems.length > 0) {
+        parts.push('══ НОРМАТИВНЫЕ ПРАВОВЫЕ АКТЫ КР ══\n\n' + npaItems.map(fmtNpa).join('\n\n---\n\n'));
     }
-    
-    if (context.length > 0) {
-        const contextText = context.map((match) => {
-            const md = match.metadata || {};
-            return `[📚 ВСПОМОГАТЕЛЬНАЯ — ${md.npa_title} | ${md.article_title}]\nДокумент: ${md.npa_title}\nСтатья: ${md.article_title}\nТекст: ${md.full_text}`;
-        }).join('\n\n---\n\n');
-        parts.push(contextText);
+    if (faqItems.length > 0) {
+        parts.push('══ ОФИЦИАЛЬНЫЕ ИНСТРУКЦИИ И ПРОЦЕДУРЫ ══\n\n' + faqItems.map(fmtFaq).join('\n\n---\n\n'));
     }
-    
+
     return parts.join('\n\n════════════════════\n\n');
 }
 
