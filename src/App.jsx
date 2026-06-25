@@ -8078,8 +8078,8 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
             <button className="ai-act-btn" onClick={()=>{navigator.clipboard&&navigator.clipboard.writeText(m.text);onToast&&onToast('copy','Скопировано')}}>
               <Ico k="copy" sz={11}/><span>Копировать</span>
             </button>
-            <button className="ai-act-btn" onClick={()=>handleInsertToQuill(m.text)} style={{borderColor:'var(--accent)',color:'var(--accent)'}}>
-              <Ico k="file" sz={11} col="var(--accent)"/><span>Вставить в редактор</span>
+            <button className="ai-act-btn" onClick={()=>handleInsertToQuill(m.text)}>
+              <Ico k="file" sz={11} col="currentColor"/><span>Вставить в редактор</span>
             </button>
           </div>
         )}

@@ -1825,22 +1825,22 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
   position:relative;
   display:inline-flex;align-items:center;gap:6px;
   padding:5px 11px;
-  border:1px solid var(--accent-edge);
+  border:1px solid #d0d0d0;
   border-radius:8px;
-  background:var(--accent-soft);
+  background:var(--bg-app);
   cursor:pointer;
-  color:var(--primary);font-size:11px;
+  color:var(--text-main);font-size:11px;
   font-family:var(--font-body);font-weight:500;
   letter-spacing:-.005em;
-  transition:all .18s var(--ease);
-  box-shadow:var(--shadow-inset);
+  transition:border-color .12s, background .12s, color .12s;
+  box-shadow:none;
 }
 .ai-act-btn:hover{
-  background:var(--hover);
-  color:var(--primary-hover);
-  border-color:var(--primary);
-  transform:translateY(-1px);
-  box-shadow:var(--shadow-inset),0 4px 12px var(--accent-glow);
+  background:rgba(0,0,0,.06);
+  color:var(--text-main);
+  border-color:#1C1C1E;
+  transform:none;
+  box-shadow:none;
 }
 
 /* ════════════════════════════════════════════════════════════════════
