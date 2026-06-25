@@ -6003,12 +6003,16 @@ body.dk .myz-docs-tab--inactive {
   opacity: 0.78;
 }
 .myz-chat-mode-tab--active {
-  background: var(--primary);
+  background: #1C1C1E;
   color: #fff;
-  box-shadow: 0 1px 8px var(--accent-glow);
+  box-shadow: none;
 }
 .myz-chat-mode-tab--active .myz-chat-mode-tab-desc {
-  opacity: 0.9;
+  opacity: 0.85;
+}
+body.dk .myz-chat-mode-tab--active {
+  background: #E4E4E7;
+  color: #1C1C1E;
 }
 .myz-chat-mode-tab--inactive {
   background: transparent;
