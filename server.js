@@ -719,24 +719,19 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     }
 
     // --- Этап 3: Разделяем на НПА и Инструкции, отбираем по квоте ---
+    // Supabase hybrid score имеет другой диапазон чем Pinecone — не фильтруем по порогу,
+    // просто берём топ-N из каждой категории (Supabase уже сортирует по релевантности).
     const npaRaw = rawMatches.filter(m => !isMatchFaq(m));
     const faqRaw = rawMatches.filter(m =>  isMatchFaq(m));
 
-    const pickBest = (arr, quota) =>
-        arr.filter(m => (m.score || 0) >= absoluteMinScore).slice(0, quota);
+    const selectedNpa = npaRaw.slice(0, npaQuota);
+    const selectedFaq = faqRaw.slice(0, faqQuota);
 
-    const selectedNpa = pickBest(npaRaw, npaQuota);
-    const selectedFaq = pickBest(faqRaw, faqQuota);
-
-    // Если после фильтрации по score одна из категорий пуста — добираем из другой
-    const shortfall = totalTarget - selectedNpa.length - selectedFaq.length;
-    let extras = [];
-    if (shortfall > 0) {
-        const usedIds = new Set([...selectedNpa, ...selectedFaq].map(m => m.id));
-        extras = rawMatches
-            .filter(m => !usedIds.has(m.id) && (m.score || 0) >= absoluteMinScore)
-            .slice(0, shortfall);
-    }
+    // Если одна из категорий пуста — добираем из оставшихся rawMatches
+    const usedIds = new Set([...selectedNpa, ...selectedFaq].map(m => m.id));
+    const extras = rawMatches
+        .filter(m => !usedIds.has(m.id))
+        .slice(0, Math.max(0, totalTarget - selectedNpa.length - selectedFaq.length));
 
     // Объединяем и сортируем по score
     const candidates = [...selectedNpa, ...selectedFaq, ...extras]
