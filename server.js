@@ -2662,72 +2662,131 @@ async function reformulateQueries(userMessage) {
     }
 }
 
-// 5-слойный retrieval со streaming step-событиями + prefix-контекст topic
-// во всех 5 embedding-запросах (удерживает поиск в правильной отрасли права).
-// Все 5 поисков идут параллельно — общее время ≈ max времени одного слоя.
-async function deepRetrievalChain(userMessage, res) {
-    // Шаг 0: реформулировка (1 LLM-вызов) → topic + 5 запросов
-    sendStep(res, { id: 'reformulate', status: 'loading', text: 'Разлагаю вопрос на 5 поисковых стратегий' });
+// ════════════════════════════════════════════════════════════════════
+// ADAPTIVE DEEP RETRIEVAL — 1-8 слоёв в зависимости от сложности
+// Classifier (Gemini Flash Lite, ~1с) → level 1-4 → нужный набор слоёв
+// Все retrieval идут параллельно — время ≈ max одного слоя
+// ════════════════════════════════════════════════════════════════════
+
+const LAYER_CONFIGS = [
+    { id: 1, stepId: 'special',     key: 'specMatches',   queryKey: 'special',     quota: 4, mode: 'fast',     stepText: 'Ищу специальные нормы по проблеме',    resultText: n => `Специальных норм: ${n}` },
+    { id: 2, stepId: 'general',     key: 'genMatches',    queryKey: 'general',     quota: 5, mode: 'thinking', stepText: 'Проверяю общие положения Кодекса',      resultText: n => `Общих положений: ${n}` },
+    { id: 3, stepId: 'process',     key: 'procMatches',   queryKey: 'process',     quota: 4, mode: 'thinking', stepText: 'Анализирую процессуальные требования',  resultText: n => `Процессуальных норм: ${n}` },
+    { id: 4, stepId: 'liability',   key: 'liabMatches',   queryKey: 'liability',   quota: 4, mode: 'fast',     stepText: 'Ищу нормы об ответственности',          resultText: n => `Норм об ответственности: ${n}` },
+    { id: 5, stepId: 'bylaws',      key: 'bylawMatches',  queryKey: 'bylaws',      quota: 3, mode: 'fast',     stepText: 'Проверяю подзаконные акты',             resultText: n => `Подзаконных актов: ${n}` },
+    { id: 6, stepId: 'rights',      key: 'rightsMatches', queryKey: 'rights',      quota: 3, mode: 'fast',     stepText: 'Определяю права и обязанности сторон',  resultText: n => `Прав и обязанностей: ${n}` },
+    { id: 7, stepId: 'definitions', key: 'defMatches',    queryKey: 'definitions', quota: 3, mode: 'fast',     stepText: 'Нахожу определения ключевых понятий',   resultText: n => `Определений понятий: ${n}` },
+    { id: 8, stepId: 'evidence',    key: 'evMatches',     queryKey: 'evidence',    quota: 3, mode: 'fast',     stepText: 'Анализирую доказательственную базу',    resultText: n => `Доказательственных норм: ${n}` },
+];
+
+// Наборы слоёв для каждого уровня сложности
+const LEVEL_LAYER_IDS = {
+    1: [1, 3],              // Простой факт: spec + process (срок, куда обращаться)
+    2: [1, 3, 4],           // Практическая ситуация: + liability (алгоритм действий)
+    3: [1, 2, 3, 4, 5],    // Правовой спор: 5 классических слоёв
+    4: [1,2,3,4,5,6,7,8],  // Экспертный анализ: все 8
+};
+
+const LEVEL_META = {
+    1: { label: 'Простой факт',           emoji: '📌' },
+    2: { label: 'Практическая ситуация',  emoji: '📋' },
+    3: { label: 'Правовой спор',          emoji: '⚖️' },
+    4: { label: 'Экспертный анализ',      emoji: '🔬' },
+};
+
+// Classifier: Gemini Flash Lite → уровень 1-4
+async function classifyComplexity(query) {
+    const sys = `Ты — классификатор сложности юридических вопросов. Отвечаешь ТОЛЬКО JSON.`;
+    const usr = `Вопрос юриста: "${query}"
+
+Определи уровень (1-4):
+1 — ПРОСТОЙ ФАКТ: срок, размер штрафа, определение термина → ответ из одной статьи
+2 — ПРАКТИЧЕСКАЯ СИТУАЦИЯ: порядок действий, типовая процедура, что делать при конкретном случае
+3 — ПРАВОВОЙ СПОР: иск, несколько норм и кодексов, ответственность сторон при нарушении
+4 — ЭКСПЕРТНЫЙ АНАЛИЗ: стратегия, доказательства, несколько сторон, нужна полная правовая картина
+
+JSON строго: {"level": 2}`;
+    try {
+        const raw = await callOnce(getNextKey(), sys, usr, 1);
+        const m = String(raw || '').match(/"level"\s*:\s*([1-4])/);
+        const lvl = m ? parseInt(m[1]) : 3;
+        return Math.min(4, Math.max(1, lvl));
+    } catch (e) {
+        console.warn('[Complexity] fallback L3:', e.message);
+        return 3;
+    }
+}
+
+// Схема ответа для каждого уровня сложности
+function buildThinkingSchema(level) {
+    const schemas = {
+        1: `Ответь кратко и конкретно — это простой фактический вопрос:
+• Назови конкретную статью (только из полученного контекста)
+• Дай прямой ответ в 1-2 предложениях
+• Укажи исключения если они есть в контексте
+Не пиши длинных введений — юрист спрашивает конкретный факт.`,
+        2: `Ответь по практической схеме:
+• Специальная норма (что применяется к ситуации)
+→ Порядок действий и сроки (куда обращаться, в какие сроки)
+→ Ответственность и последствия нарушения
+Дай готовый алгоритм действий — юристу нужно понять что делать прямо сейчас.`,
+        3: `Ответь по схеме правового спора:
+• Специальная норма (что нарушено / применяется)
+→ Общие положения (фундамент Кодекса)
+→ Процессуальные шаги (срок ИД, в какой суд, госпошлина)
+→ Ответственность и санкции (размер взыскания, неустойка)
+→ Подзаконные детали (если есть в контексте)`,
+        4: `Ответь полной экспертной схемой:
+• Специальная норма (что нарушено / применяется)
+→ Определение понятий (если термин нуждается в расшифровке)
+→ Права и обязанности сторон (кто что должен / вправе требовать)
+→ Общие положения (фундамент Кодекса)
+→ Процессуальные шаги (срок ИД, суд, госпошлина)
+→ Доказательная база (что нужно доказать, какими документами)
+→ Ответственность и санкции (размер взыскания, неустойка, штраф)
+→ Подзаконные детали (если есть)
+Это даёт юристу полную картину: кто прав, что доказать, куда идти, в какие сроки, размер санкций.`
+    };
+    return schemas[level] || schemas[3];
+}
+
+// Адаптивный N-слойный retrieval с SSE-шагами.
+// activeLayerIds: массив ID слоёв для этого запроса (из LEVEL_LAYER_IDS).
+async function deepRetrievalChain(userMessage, res, activeLayerIds = [1,2,3,4,5,6,7,8]) {
+    const activeCfgs = LAYER_CONFIGS.filter(c => activeLayerIds.includes(c.id));
+
+    // Шаг 0: реформулировка (1 LLM-вызов) — всегда 8 стратегий, используем нужные
+    sendStep(res, { id: 'reformulate', status: 'loading', text: `Разлагаю вопрос на ${activeCfgs.length} поисковых стратегий` });
     sendStatus(res, '🧠 Формирую поисковые стратегии...');
     const queries = await reformulateQueries(userMessage);
-    const topicLabel = queries.topic ? queries.topic : 'без явной темы';
-    sendStep(res, {
-        id: 'reformulate',
-        status: 'success',
-        text: 'Стратегии готовы',
-        reason: queries.topic ? `Тема: ${queries.topic}` : null
-    });
-    console.log(`[DeepThink] Topic="${topicLabel}" special="${queries.special.slice(0,60)}"`);
+    sendStep(res, { id: 'reformulate', status: 'success', text: 'Стратегии готовы', reason: queries.topic ? `Тема: ${queries.topic}` : null });
+    console.log(`[DeepThink] Topic="${queries.topic||'?'}" layers=[${activeLayerIds.join(',')}]`);
 
-    // PREFIX-контекст: удерживает все 5 embedding-векторов в одной отрасли.
-    // Без него `срок исковой давности подсудность` мог уйти в трудовое право,
-    // хотя юрист спрашивал про теплоэнергию.
+    // PREFIX-контекст: удерживает все embedding-векторы в одной отрасли права
     const ctxPrefix = queries.topic ? `[Контекст: ${queries.topic.slice(0, 160)}] ` : '';
     const wrap = (q) => ctxPrefix + q;
 
-    // 8 loading-шагов СРАЗУ — пользователь видит весь roadmap
-    sendStep(res, { id: 'special',     status: 'loading', text: 'Ищу специальные нормы по проблеме' });
-    sendStep(res, { id: 'general',     status: 'loading', text: 'Проверяю общие положения Кодекса' });
-    sendStep(res, { id: 'process',     status: 'loading', text: 'Анализирую процессуальные требования' });
-    sendStep(res, { id: 'liability',   status: 'loading', text: 'Ищу ответственность и санкции' });
-    sendStep(res, { id: 'bylaws',      status: 'loading', text: 'Проверяю подзаконные акты' });
-    sendStep(res, { id: 'rights',      status: 'loading', text: 'Определяю права и обязанности сторон' });
-    sendStep(res, { id: 'definitions', status: 'loading', text: 'Нахожу определения ключевых понятий' });
-    sendStep(res, { id: 'evidence',    status: 'loading', text: 'Анализирую доказательственную базу' });
+    // Emit loading-шаги только для активных слоёв
+    for (const cfg of activeCfgs) {
+        sendStep(res, { id: cfg.stepId, status: 'loading', text: cfg.stepText });
+    }
 
-    // 8 параллельных retrieval — только НПА (queryType:'npa'), каждый с prefix-контекстом
+    // Параллельный retrieval только для активных слоёв (НПА-only)
     const NPA_ONLY = { queryType: 'npa' };
-    const [specRes, genRes, procRes, liabRes, bylawRes, rightsRes, defRes, evRes] =
-        await Promise.allSettled([
-            adaptiveRetrieval(wrap(queries.special),     'fast',     null, { ...NPA_ONLY, npaQuota: 4 }),
-            adaptiveRetrieval(wrap(queries.general),     'thinking', null, { ...NPA_ONLY, npaQuota: 5 }),
-            adaptiveRetrieval(wrap(queries.process),     'thinking', null, { ...NPA_ONLY, npaQuota: 4 }),
-            adaptiveRetrieval(wrap(queries.liability),   'fast',     null, { ...NPA_ONLY, npaQuota: 4 }),
-            adaptiveRetrieval(wrap(queries.bylaws),      'fast',     null, { ...NPA_ONLY, npaQuota: 3 }),
-            adaptiveRetrieval(wrap(queries.rights),      'fast',     null, { ...NPA_ONLY, npaQuota: 3 }),
-            adaptiveRetrieval(wrap(queries.definitions), 'fast',     null, { ...NPA_ONLY, npaQuota: 3 }),
-            adaptiveRetrieval(wrap(queries.evidence),    'fast',     null, { ...NPA_ONLY, npaQuota: 3 })
-        ]);
+    const results = await Promise.allSettled(
+        activeCfgs.map(cfg => adaptiveRetrieval(wrap(queries[cfg.queryKey]), cfg.mode, null, { ...NPA_ONLY, npaQuota: cfg.quota }))
+    );
 
-    const specMatches  = specRes.status   === 'fulfilled' ? (specRes.value.all   || []) : [];
-    const genMatches   = genRes.status    === 'fulfilled' ? (genRes.value.all    || []) : [];
-    const procMatches  = procRes.status   === 'fulfilled' ? (procRes.value.all   || []) : [];
-    const liabMatches  = liabRes.status   === 'fulfilled' ? (liabRes.value.all   || []) : [];
-    const bylawMatches = bylawRes.status  === 'fulfilled' ? (bylawRes.value.all  || []) : [];
-    const rightsMatches = rightsRes.status === 'fulfilled' ? (rightsRes.value.all || []) : [];
-    const defMatches   = defRes.status    === 'fulfilled' ? (defRes.value.all    || []) : [];
-    const evMatches    = evRes.status     === 'fulfilled' ? (evRes.value.all     || []) : [];
+    // Собираем результаты; неактивные слои получают []
+    const out = {};
+    for (const cfg of LAYER_CONFIGS) out[cfg.key] = [];
+    activeCfgs.forEach((cfg, i) => {
+        const r = results[i];
+        out[cfg.key] = r.status === 'fulfilled' ? (r.value?.all || []) : [];
+        sendStep(res, { id: cfg.stepId, status: out[cfg.key].length ? 'success' : 'warning', text: cfg.resultText(out[cfg.key].length) });
+    });
 
-    sendStep(res, { id: 'special',     status: specMatches.length   ? 'success' : 'warning', text: `Специальных норм: ${specMatches.length}` });
-    sendStep(res, { id: 'general',     status: genMatches.length    ? 'success' : 'warning', text: `Общих положений: ${genMatches.length}` });
-    sendStep(res, { id: 'process',     status: procMatches.length   ? 'success' : 'warning', text: `Процессуальных норм: ${procMatches.length}` });
-    sendStep(res, { id: 'liability',   status: liabMatches.length   ? 'success' : 'warning', text: `Норм об ответственности: ${liabMatches.length}` });
-    sendStep(res, { id: 'bylaws',      status: bylawMatches.length  ? 'success' : 'warning', text: `Подзаконных актов: ${bylawMatches.length}` });
-    sendStep(res, { id: 'rights',      status: rightsMatches.length ? 'success' : 'warning', text: `Прав и обязанностей: ${rightsMatches.length}` });
-    sendStep(res, { id: 'definitions', status: defMatches.length    ? 'success' : 'warning', text: `Определений понятий: ${defMatches.length}` });
-    sendStep(res, { id: 'evidence',    status: evMatches.length     ? 'success' : 'warning', text: `Доказательственных норм: ${evMatches.length}` });
-
-    return { specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches, queries };
+    return { ...out, queries };
 }
 
 // Иерархический контекст для финального LLM — 8 пронумерованных слоёв с дедупликацией
@@ -2767,14 +2826,23 @@ function formatLayeredContext({ specMatches, genMatches, procMatches, liabMatche
         .join('\n\n══════════════════════════════════\n\n');
 }
 
-// Оркестратор: 4-слойный retrieval + финальный синтез по консультант-промпту.
+// Оркестратор: адаптивный 1-8 слойный retrieval + финальный синтез по консультант-промпту.
+// Сначала Gemini Flash Lite классифицирует сложность (1-4) → выбирается набор слоёв.
 // Подходит для любого юридического вопроса без приложенного документа.
 async function handleDeepThinking(message, history, res, userQuery = null) {
     const userQ = (userQuery && userQuery.trim()) || message;
     const cleanHistory = sanitizeHistory(history);
 
-    // Этапы 1-8: 8-слойный retrieval с SSE-шагами
-    const { specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches } = await deepRetrievalChain(userQ, res);
+    // Шаг 0: классификация сложности (Gemini Flash Lite, ~1-2с)
+    sendStep(res, { id: 'classify', status: 'loading', text: 'Оцениваю сложность вопроса...' });
+    const level = await classifyComplexity(userQ);
+    const lm = LEVEL_META[level];
+    const layerIds = LEVEL_LAYER_IDS[level];
+    sendStep(res, { id: 'classify', status: 'success', text: `${lm.emoji} ${lm.label} — ${layerIds.length} слоёв`, reason: `Уровень ${level}/4` });
+
+    // Retrieval: только нужные слои в параллели
+    const { specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches } =
+        await deepRetrievalChain(userQ, res, layerIds);
 
     const allMatches = [...specMatches, ...genMatches, ...procMatches, ...liabMatches, ...bylawMatches, ...rightsMatches, ...defMatches, ...evMatches];
 
@@ -2791,32 +2859,14 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
     const layeredContext = formatLayeredContext({ specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches });
 
     const isL4 = detectL4Request(userQ);
+    const schema = buildThinkingSchema(level);
     let systemPrompt = BASE_CONSULTANT_PROMPT + `
 
-═══ ИЕРАРХИЧЕСКИЙ КОНТЕКСТ (8 СЛОЁВ) ═══
-Получаемый ниже контекст разделён на 8 слоёв — используй ВСЕ доступные слои для полного ответа:
+═══ ИЕРАРХИЧЕСКИЙ КОНТЕКСТ (${layerIds.length} СЛОЁВ) ═══
+Контекст ниже разделён на слои — используй ВСЕ доступные слои для ответа.
+Все номера статей бери ТОЛЬКО из переданного контекста — никогда из памяти.
 
-1. ⭐ СПЕЦИАЛЬНАЯ НОРМА — конкретная статья по проблеме (главный источник ответа)
-2. 🏛 ОБЩИЕ ПОЛОЖЕНИЯ — базовые принципы Кодекса (фундамент аргументации)
-3. ⚖️ ПРОЦЕССУАЛЬНЫЕ НОРМЫ — сроки давности, подсудность, госпошлина (как действовать)
-4. ⚡ ОТВЕТСТВЕННОСТЬ И САНКЦИИ — неустойка, штрафы, ответственность сторон (что грозит)
-5. 📋 ПОДЗАКОННЫЕ АКТЫ — правила/инструкции/постановления (детализация)
-6. 🤝 ПРАВА И ОБЯЗАННОСТИ — объём прав и обязанностей сторон (кто что должен)
-7. 📖 ОПРЕДЕЛЕНИЯ — легальные дефиниции понятий (что значит термин по закону)
-8. 🔍 ДОКАЗАТЕЛЬНАЯ БАЗА — нормы о доказательствах и бремени доказывания (что нужно доказать и чем)
-
-Твой ответ ДОЛЖЕН строиться по схеме:
-• специальная норма (что нарушено / применяется)
-→ определение понятий (если термин нуждается в расшифровке)
-→ права и обязанности сторон (кто что должен / вправе)
-→ опора на общие положения (фундамент по Кодексу)
-→ процессуальные шаги (срок исковой давности, в какой суд, госпошлина)
-→ доказательная база (что нужно доказать, какими документами)
-→ ответственность и санкции (размер взыскания, неустойка, штраф)
-→ подзаконные детали (если есть)
-
-Это даёт юристу полную картину: кто прав, что нужно доказать, в какой суд идти, в какие сроки, сколько госпошлины, какой размер санкций.
-Все номера статей бери ТОЛЬКО из переданного контекста — никогда из памяти.`;
+${schema}`;
     if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
     if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
 
