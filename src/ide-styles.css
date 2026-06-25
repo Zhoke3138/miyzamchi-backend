@@ -56,7 +56,7 @@ body{
   --bg-editor: var(--bg-app);
   --bg-bar: var(--bg-panel);
   --border: var(--border-color);
-  --hover: #FBEEF0;               /* нежно-бордо ховер */
+  --hover: rgba(0,0,0,.06);       /* нейтральный серый ховер */
   --workspace-bg: var(--bg-app);
 
   /* Ink — mapped to new tokens */
@@ -228,7 +228,7 @@ body{
   --bg-editor: var(--bg-app);
   --bg-bar: var(--bg-panel);
   --border: var(--border-color);
-  --hover: rgba(196, 64, 78, 0.10);
+  --hover: rgba(255,255,255,.09);
   --workspace-bg: var(--bg-app);
   --text: var(--text-main);
   --muted: var(--text-muted);
