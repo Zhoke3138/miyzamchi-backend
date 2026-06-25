@@ -929,14 +929,8 @@ async function sendMessage() {
         let finalSources = [];
         let finalMetadata = [];
         if (accumulatedSources && accumulatedSources.length) {
-            const metaList = accumulatedMetadata || [];
-            accumulatedSources.forEach((src, i) => {
-                const meta = metaList[i] || {};
-                if (isSourceUsed(botResponseText, src, meta)) {
-                    finalSources.push(src);
-                    finalMetadata.push(meta);
-                }
-            });
+            finalSources = accumulatedSources;
+            finalMetadata = accumulatedMetadata || [];
         }
 
         if (finalSources.length > 0) {
