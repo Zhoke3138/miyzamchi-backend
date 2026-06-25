@@ -965,7 +965,7 @@ const AnalyzeDocsMode = () => {
                 )}
                 {ready && (
                   <div className="ad-slot-state ad-slot-state--ready">
-                    <div className="ad-slot-icon"><Ico k="file" sz={26} col="var(--accent)"/></div>
+                    <div className="ad-slot-icon"><Ico k="file" sz={26} col="#6b7280"/></div>
                     <div className="ad-slot-name" title={slot.name}>{slot.name}</div>
                     <div className="ad-slot-meta">{_fmtBytes(slot.size)} · {Math.round(slot.text.length/100)/10}k симв.</div>
                     <button type="button" className="ad-slot-remove" onClick={(e) => { e.stopPropagation(); removeSlot(i); }} title="Удалить">×</button>
