@@ -755,9 +755,11 @@ async function sendMessage() {
     try {
         const BACKEND_URL = 'https://miyzamchi-backend.onrender.com/api/chat';
 
+        const _chatHeaders = { 'Content-Type': 'application/json' };
+        if (window.__CLIENT_TOKEN) _chatHeaders['X-Client-Token'] = window.__CLIENT_TOKEN;
         const response = await fetch(BACKEND_URL, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: _chatHeaders,
             signal: currentAbortController?.signal,
             body: JSON.stringify({
                 message: text,
@@ -770,7 +772,7 @@ async function sendMessage() {
             let errorText = "Произошла ошибка связи с сервером.";
             try {
                 const data = await response.json();
-                errorText = data.reply || data.answer;
+                errorText = data.reply || data.answer || data.error || JSON.stringify(data);
             } catch (e) {
                 errorText = await response.text();
             }

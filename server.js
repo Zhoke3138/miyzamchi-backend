@@ -181,7 +181,13 @@ app.use((req, res, next) => {
 // Эти роуты СТОЯТ ДО express.static, иначе статика отдала бы сырой index.html.
 const STATIC_FRONTEND_URL = (process.env.STATIC_FRONTEND_URL || 'https://miyzamchi-web.onrender.com').replace(/\/+$/, '');
 app.get('/workspace.html', (req, res) => res.redirect(302, STATIC_FRONTEND_URL + '/workspace.html'));
-app.get(['/', '/index.html'], (req, res) => res.sendFile(path.join(__dirname, 'chat.html')));
+app.get(['/', '/index.html'], (req, res) => {
+    const fs = require('fs');
+    let html = fs.readFileSync(path.join(__dirname, 'chat.html'), 'utf8');
+    // Inject CLIENT_TOKEN for script.js so the chat can authenticate against the API
+    html = html.replace('</head>', `<script>window.__CLIENT_TOKEN=${JSON.stringify(CLIENT_TOKEN||'')};</script>\n</head>`);
+    res.type('html').send(html);
+});
 
 // dotfiles: 'deny' — express вернёт 403 на .env, .git и любые dotfiles,
 // даже если кто-то обойдёт regex выше через ../ или хитрые URL.
