@@ -5679,11 +5679,12 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
    и возможностью раскрыть полный текст или открыть в модалке.
 ═════════════════════════════════════════════════════════════════ */
 const SourceList = ({sources, metadata, onSourceClick}) => {
+  const [listOpen, setListOpen] = useState(false);
   const [openSet, setOpenSet] = useState(() => new Set());
   if (!Array.isArray(sources) || sources.length === 0) return null;
   const md = Array.isArray(metadata) ? metadata : [];
 
-  const toggle = (i) => {
+  const toggleItem = (i) => {
     setOpenSet(prev => {
       const next = new Set(prev);
       if (next.has(i)) next.delete(i); else next.add(i);
@@ -5691,61 +5692,95 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
     });
   };
 
+  // Читаемый заголовок источника
+  const getTitle = (m) => {
+    const npa = (m.npa_title || '').trim();
+    if (npa && npa !== 'Instructions') return npa;
+    const artId = (m.article_title || '').trim();
+    if (/^faq_tax/i.test(artId)) return 'Инструкция ГНС / Тундук';
+    if (/^faq_/i.test(artId)) return 'FAQ / Инструкция';
+    return 'Инструкция';
+  };
+
+  // Читаемая подпись источника
+  const getSubtitle = (m) => {
+    const npa = (m.npa_title || '').trim();
+    if (npa && npa !== 'Instructions') return (m.article_title || '').trim() || null;
+    // Для FAQ/Instructions — извлекаем [Получатель] или тип документа
+    const ft = (m.full_text || '').trim();
+    if (!ft) return null;
+    const rcpt = ft.match(/\[Получатель\]\s*:\s*([^\[]+)/);
+    if (rcpt) return rcpt[1].trim().replace(/\s+/g, ' ').slice(0, 60);
+    const doc = ft.match(/Документ\s+([А-Яа-яЁё\s'"]+?):/);
+    if (doc) return doc[1].trim();
+    return null;
+  };
+
   return (
     <div className="msg-sources">
-      <div className="msg-sources-title">
+      <button
+        type="button"
+        className={`msg-sources-toggle${listOpen ? ' is-open' : ''}`}
+        onClick={() => setListOpen(o => !o)}
+      >
         <Ico k="book" sz={11} col="var(--link)"/>
         <span>Источники</span>
         <span className="msg-sources-count">{sources.length}</span>
-      </div>
-      <div className="msg-sources-list">
-        {sources.map((src, i) => {
-          const m = md[i] || {};
-          const isOpen = openSet.has(i);
-          const rawStr = String(src || '').trim();
-          const npaTitle = (m.npa_title || '').trim() || rawStr;
-          const articleTitle = (m.article_title || '').trim();
-          const fullText = (m.full_text || '').trim();
-          const preview = fullText
-            ? (fullText.length > 240 ? fullText.slice(0, 240).trim() + '…' : fullText)
-            : '';
-
-          return (
-            <div key={i} className={`src-item ${isOpen ? 'is-open' : ''}`}>
-              <div className="src-item-header" onClick={() => fullText ? toggle(i) : (onSourceClick && onSourceClick(rawStr, i, null))}>
-                <span className="src-item-icon"><Ico k="book" sz={10} col="var(--link)"/></span>
-                <div className="src-item-title">
-                  <span className="src-item-npa">{npaTitle}</span>
-                  {articleTitle && <span className="src-item-art"> · {articleTitle}</span>}
-                </div>
-                {fullText && (
-                  <span className="src-item-chev" title={isOpen ? 'Свернуть' : 'Развернуть текст'}>
-                    <Ico k={isOpen ? 'chevD' : 'chevR'} sz={10}/>
-                  </span>
-                )}
-              </div>
-              {!isOpen && preview && (
-                <div className="src-item-preview">{preview}</div>
-              )}
-              {isOpen && fullText && (
-                <div className="src-item-body">
-                  <div className="src-item-text">{fullText}</div>
-                  {onSourceClick && (
-                    <button
-                      type="button"
-                      className="src-item-action"
-                      onClick={(e) => { e.stopPropagation(); onSourceClick(rawStr, i, null); }}
-                      title="Открыть статью в режиме чтения"
-                    >
-                      <Ico k="book" sz={10}/> Открыть полностью
-                    </button>
+        <span className="msg-sources-chev">
+          <Ico k={listOpen ? 'chevD' : 'chevR'} sz={10}/>
+        </span>
+      </button>
+      {listOpen && (
+        <div className="msg-sources-list">
+          {sources.map((src, i) => {
+            const m = md[i] || {};
+            const isOpen = openSet.has(i);
+            const rawStr = String(src || '').trim();
+            const title = getTitle(m);
+            const subtitle = getSubtitle(m);
+            const fullText = (m.full_text || '').trim();
+            const preview = fullText
+              ? (fullText.length > 200 ? fullText.slice(0, 200).trim() + '…' : fullText)
+              : '';
+            return (
+              <div key={i} className={`src-item${isOpen ? ' is-open' : ''}`}>
+                <div
+                  className="src-item-header"
+                  onClick={() => fullText ? toggleItem(i) : (onSourceClick && onSourceClick(rawStr, i, null))}
+                >
+                  <span className="src-item-icon"><Ico k="book" sz={10} col="var(--link)"/></span>
+                  <div className="src-item-title">
+                    <span className="src-item-npa">{title}</span>
+                    {subtitle && <span className="src-item-art"> · {subtitle}</span>}
+                  </div>
+                  {fullText && (
+                    <span className="src-item-chev">
+                      <Ico k={isOpen ? 'chevD' : 'chevR'} sz={10}/>
+                    </span>
                   )}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                {!isOpen && preview && (
+                  <div className="src-item-preview">{preview}</div>
+                )}
+                {isOpen && fullText && (
+                  <div className="src-item-body">
+                    <div className="src-item-text">{fullText}</div>
+                    {onSourceClick && (
+                      <button
+                        type="button"
+                        className="src-item-action"
+                        onClick={(e) => { e.stopPropagation(); onSourceClick(rawStr, i, null); }}
+                      >
+                        <Ico k="book" sz={10}/> Открыть полностью
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

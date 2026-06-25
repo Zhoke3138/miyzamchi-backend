@@ -1675,22 +1675,46 @@ button:not(.tb-btn):not(.tb-color):not([data-no-touch-target]),
   padding-top:8px;
   border-top:1px dashed var(--border);
 }
-.msg-sources-title{
+/* Кнопка-тоггл "Источники [N]" — свёрнута по умолчанию */
+.msg-sources-toggle{
   display:inline-flex;align-items:center;gap:6px;
-  font-size:10.5px;color:var(--muted);
-  font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  padding:4px 8px 4px 6px;
+  background:transparent;
+  border:1px solid var(--border);
+  border-radius:6px;
+  cursor:pointer;
+  font-size:11px;font-weight:600;
+  color:var(--text-muted);
+  font-family:var(--font-sans);
+  transition:background .12s, border-color .12s, color .12s;
+}
+.msg-sources-toggle:hover{
+  background:var(--hover);
+  border-color:var(--accent-edge);
+  color:var(--text-main);
+}
+.msg-sources-toggle.is-open{
+  background:var(--accent-dim);
+  border-color:var(--link-dim);
+  color:var(--link);
   margin-bottom:6px;
 }
-.msg-sources-title .msg-sources-count{
+.msg-sources-count{
   display:inline-flex;align-items:center;justify-content:center;
   min-width:18px;height:16px;padding:0 5px;
   border-radius:8px;background:var(--link-bg);color:var(--link);
-  font-size:10px;font-weight:700;letter-spacing:0;
+  font-size:9.5px;font-weight:700;
   text-transform:none;
+}
+.msg-sources-chev{
+  display:inline-flex;align-items:center;
+  opacity:.6;margin-left:1px;
 }
 .msg-sources-list{
   display:flex;flex-direction:column;gap:5px;
+  animation:src-list-in .15s ease;
 }
+@keyframes src-list-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
 .src-item{
   border:1px solid var(--border);
   border-radius:6px;
