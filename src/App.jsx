@@ -5763,7 +5763,7 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
         className={`msg-sources-toggle${listOpen ? ' is-open' : ''}`}
         onClick={() => setListOpen(o => !o)}
       >
-        <Ico k="book" sz={11} col="var(--link)"/>
+        <Ico k="book" sz={11} col="currentColor"/>
         <span>Источники</span>
         <span className="msg-sources-count">{sources.length}</span>
         <span style={{flex:1}}/>
@@ -5789,7 +5789,7 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
                   className="src-item-header"
                   onClick={() => fullText ? toggleItem(i) : (onSourceClick && onSourceClick(rawStr, i, null))}
                 >
-                  <span className="src-item-icon"><Ico k="book" sz={10} col="var(--link)"/></span>
+                  <span className="src-item-icon"><Ico k="book" sz={10} col="currentColor"/></span>
                   <div className="src-item-title">
                     <span className="src-item-npa">{title}</span>
                     {subtitle && <span className="src-item-art"> · {subtitle}</span>}
