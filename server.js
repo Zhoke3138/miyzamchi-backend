@@ -57,6 +57,7 @@ const { AsyncLocalStorage } = require('async_hooks');
 const path = require('path');
 const bot = require('./telegram/bot');
 const { searchQdrant } = require('./services/qdrantService');
+const { searchSupabase } = require('./services/supabaseService');
 
 const app = express();
 app.set('trust proxy', 1); // Доверие к прокси Render
@@ -308,18 +309,27 @@ app.all('/api/minjust/*', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 // --- НАСТРОЙКИ ИЗ RENDER (Environment Variables) ---
-const { GEMINI_API_KEY, GEMINI_API_KEYS, PINECONE_API_KEY, PINECONE_HOST, QDRANT_URL, QDRANT_API_KEY } = process.env;
+const { GEMINI_API_KEY, GEMINI_API_KEYS, QDRANT_URL, QDRANT_API_KEY } = process.env;
+const SUPABASE_URL          = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY     = process.env.SUPABASE_ANON_KEY;
+const OPENAI_EMBEDDING_API_KEY = process.env.OPENAI_EMBEDDING_API_KEY;
 
 const rawKeys = GEMINI_API_KEY || GEMINI_API_KEYS;
 const KEYS = rawKeys ? rawKeys.split(',').map(k => k.trim()) : [];
 let currentKeyIndex = 0;
 
-if (KEYS.length === 0 || !PINECONE_API_KEY || !PINECONE_HOST) {
-    console.error("ОШИБКА: Проверь переменные GEMINI_API_KEY, PINECONE_API_KEY и PINECONE_HOST на Render!");
+if (KEYS.length === 0) {
+    console.error("ОШИБКА: Проверь переменную GEMINI_API_KEY на Render!");
     process.exit(1);
 }
-
-const cleanPineconeHost = PINECONE_HOST.replace(/\/$/, '');
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.error("ОШИБКА: SUPABASE_URL и SUPABASE_ANON_KEY обязательны — база НПА перенесена в Supabase!");
+    process.exit(1);
+}
+if (!OPENAI_EMBEDDING_API_KEY) {
+    console.error("ОШИБКА: OPENAI_EMBEDDING_API_KEY обязателен для 1536d embeddings (text-embedding-3-small)!");
+    process.exit(1);
+}
 
 // --- ТЕЛЕМЕТРИЯ ---
 // ADMIN_SECRET ОБЯЗАТЕЛЬНО ставится через env (Render Environment Variables).
@@ -371,19 +381,16 @@ app.get('/ping', (req, res) => {
 
 // --- HEALTH CHECK ---
 app.get('/health', async (req, res) => {
-    let pineconeStatus = 'Error';
+    let supabaseStatus = 'Error';
     try {
-        const zeroVector = new Array(768).fill(0);
-        const pcRes = await fetch(cleanPineconeHost + '/query', {
-            method: 'POST',
-            headers: { 'Api-Key': PINECONE_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ vector: zeroVector, topK: 1, includeMetadata: false })
+        const sbRes = await fetch(`${SUPABASE_URL}/rest/v1/`, {
+            headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
         });
-        if (pcRes.ok) pineconeStatus = 'Connected';
+        if (sbRes.ok || sbRes.status === 200) supabaseStatus = 'Connected';
     } catch (e) {
-        console.error('Health check Pinecone error:', e.message);
+        console.error('Health check Supabase error:', e.message);
     }
-    res.json({ status: 'OK', keys_total: KEYS.length, pinecone: pineconeStatus });
+    res.json({ status: 'OK', keys_total: KEYS.length, supabase: supabaseStatus });
 });
 
 // --- СЕКРЕТНАЯ АДМИНКА (ТЕЛЕМЕТРИЯ) ---
@@ -546,35 +553,49 @@ async function getEmbedding(text, retryCount = 0, forceKey = null) {
     }
 }
 
-// --- ПОИСК В PINECONE (с таймаутом 4с) ---
-async function searchPinecone(vector, topK = 15) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
-    try {
-        const response = await fetch(cleanPineconeHost + '/query', {
-            method: 'POST',
-            headers: { 'Api-Key': PINECONE_API_KEY, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ vector, topK, includeMetadata: true }),
-            signal: controller.signal
-        });
-        const data = await response.json();
-        return data.matches || [];
-    } catch (error) {
-        if (error.name === 'AbortError') {
-            console.warn('[WARN] Pinecone Timeout (4s)');
-            return [];
-        }
-        console.error("Ошибка Pinecone:", error.message);
-        return [];
-    } finally {
-        clearTimeout(timeout);
+// --- EMBEDDING 1536d (OpenAI text-embedding-3-small) — для Supabase hybrid search ---
+const embeddingCacheSupabase = new Map();
+async function getEmbeddingForSupabase(text) {
+    const cacheKey = 'sb_' + text.substring(0, 8000);
+    if (embeddingCacheSupabase.has(cacheKey)) {
+        serverStats.cacheHits++;
+        return embeddingCacheSupabase.get(cacheKey);
     }
+    if (!OPENAI_EMBEDDING_API_KEY) throw new Error('OPENAI_EMBEDDING_API_KEY не задан');
+    const response = await fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${OPENAI_EMBEDDING_API_KEY}`,
+            'Content-Type':  'application/json'
+        },
+        body: JSON.stringify({
+            model: 'text-embedding-3-small',
+            input: text.substring(0, 8000)
+        })
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(`OpenAI Embedding: ${err.error?.message || response.status}`);
+    }
+    const data = await response.json();
+    const embedding = data.data[0].embedding; // 1536d
+    if (embeddingCacheSupabase.size >= 200) {
+        embeddingCacheSupabase.delete(embeddingCacheSupabase.keys().next().value);
+    }
+    embeddingCacheSupabase.set(cacheKey, embedding);
+    return embedding;
+}
+
+// --- ПОИСК (обёртка над Supabase, сохраняет имя для dep-injection в routes/analyze.js) ---
+// Сигнатура: (vector, queryText, topK) — queryText нужен для full-text части hybrid search
+async function searchPinecone(vector, queryText = '', topK = 15) {
+    return searchSupabase(vector, queryText, topK);
 }
 
 // ════════════════════════════════════════════════════════════════════
 // MULTI-RAG ROUTING — определяем источник до embedding-запроса
-// Возвращает: 'pinecone' | 'qdrant' | 'both'
-//   pinecone — правовые запросы (кодексы, нормы, статьи, иски)
+// Возвращает: 'supabase' | 'qdrant' | 'both'
+//   supabase — правовые запросы (кодексы, нормы, статьи, иски) → hybrid search
 //   qdrant   — процедурные FAQ (ЦОН, налоги, паспорт, справки, порталы)
 //   both     — смешанные / неоднозначные → параллельный поиск
 // ════════════════════════════════════════════════════════════════════
@@ -591,7 +612,7 @@ function classifyQuerySource(query) {
     const isLegal = legalRe.test(q);
 
     if (isFaq && !isLegal) return 'qdrant';
-    if (isLegal && !isFaq) return 'pinecone';
+    if (isLegal && !isFaq) return 'supabase';
     return 'both';
 }
 
@@ -664,24 +685,24 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     const absoluteMinScore = opts.absoluteMinScore ?? 0.45;
     const coreScoreThreshold = opts.coreScoreThreshold ?? 0.75;
     const elbowDropRatio = opts.elbowDropRatio ?? 0.15;
-    // source: 'pinecone' | 'qdrant' | 'both'. Дефолт 'pinecone' — 100% обратная совместимость.
-    const source = opts.source ?? 'pinecone';
+    // source: 'supabase' | 'qdrant' | 'both'. Дефолт 'supabase' — НПА через Supabase hybrid search.
+    const source = opts.source ?? 'supabase';
 
     const streamStatuses = res && mode === 'thinking';
 
-    // --- Этап 1: Эмбеддинг запроса ---
+    // --- Этап 1: Расширение аббревиатур (перед embedding) ---
     const expandedQuery = expandQueryAbbreviations(query);
     if (expandedQuery !== query) {
         console.log(`[Retrieval] Расширили аббревиатуры: "${query}" -> "${expandedQuery}"`);
     }
     if (streamStatuses) sendStatus(res, 'Преобразую ваш вопрос в вектор...', '🧬');
-    const embedding = await getEmbedding(expandedQuery);
 
-    // --- Этап 2: Поиск (один или оба источника) ---
+    // --- Этап 2: Поиск (источник определяет модель embeddings и БД) ---
     let matches = [];
 
     if (source === 'qdrant') {
         if (streamStatuses) sendStatus(res, `Ищу в базе FAQ/инструкций...`, '🔎');
+        const embedding = await getEmbedding(expandedQuery);   // 768d Gemini — для Qdrant
         const qdrantMatches = await searchQdrant(embedding, {
             url: QDRANT_URL, apiKey: QDRANT_API_KEY, topK: maxK, scoreThreshold: absoluteMinScore
         });
@@ -695,19 +716,25 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
 
     if (source === 'both') {
         if (streamStatuses) sendStatus(res, 'Ищу в базе НПА и справочнике FAQ...', '🔎');
-        const [pineconeMatches, qdrantMatches] = await Promise.all([
-            searchPinecone(embedding, maxK),
-            searchQdrant(embedding, {
+        // Два embedding параллельно: 1536d для Supabase НПА, 768d для Qdrant FAQ
+        const [embedding1536, embedding768] = await Promise.all([
+            getEmbeddingForSupabase(expandedQuery),
+            getEmbedding(expandedQuery)
+        ]);
+        const [supabaseMatches, qdrantMatches] = await Promise.all([
+            searchPinecone(embedding1536, expandedQuery, maxK),
+            searchQdrant(embedding768, {
                 url: QDRANT_URL, apiKey: QDRANT_API_KEY, topK: Math.ceil(maxK / 2), scoreThreshold: absoluteMinScore
             })
         ]);
-        // Объединяем и сортируем по score (Pinecone-нормы имеют приоритет при равном score)
-        matches = [...pineconeMatches, ...qdrantMatches].sort((a, b) => (b.score || 0) - (a.score || 0));
-        console.log(`[Retrieval] ${mode} | source=both | pinecone: ${pineconeMatches.length} | qdrant: ${qdrantMatches.length}`);
+        // Объединяем и сортируем по score (Supabase-нормы имеют приоритет при равном score)
+        matches = [...supabaseMatches, ...qdrantMatches].sort((a, b) => (b.score || 0) - (a.score || 0));
+        console.log(`[Retrieval] ${mode} | source=both | supabase: ${supabaseMatches.length} | qdrant: ${qdrantMatches.length}`);
     } else {
-        // source === 'pinecone' (дефолт — старое поведение)
+        // source === 'supabase' (дефолт — hybrid search НПА)
         if (streamStatuses) sendStatus(res, `Ищу в базе ${maxK} ближайших статей НПА...`, '🔎');
-        matches = await searchPinecone(embedding, maxK);
+        const embedding = await getEmbeddingForSupabase(expandedQuery);  // 1536d OpenAI
+        matches = await searchPinecone(embedding, expandedQuery, maxK);
     }
 
     if (matches.length === 0) {
@@ -4102,7 +4129,7 @@ require('./routes/compare')({
 // ============================================================
 require('./routes/analyze')({
     app,
-    getEmbedding,
+    getEmbedding: getEmbeddingForSupabase,
     callOnce,
     searchPinecone,
     getNextKey,
@@ -4139,7 +4166,7 @@ const server = app.listen(PORT, () => {
     console.log('\n==========================================');
     console.log('Мыйзамчи запущен на порту ' + PORT);
     console.log('Загружено ключей Gemini: ' + KEYS.length);
-    console.log('Адрес базы: ' + cleanPineconeHost);
+    console.log('Supabase URL: ' + SUPABASE_URL);
     console.log('==========================================\n');
 
     // Запуск Telegram бота
