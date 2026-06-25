@@ -3978,13 +3978,13 @@ body.dk .analyze-accordion-content {
   box-shadow:0 3px 16px rgba(0,0,0,.08);
 }
 .ad-slot--drag{
-  border-color:#1a1a1a; background:var(--accent-dim);
+  border-color:#1a1a1a; background:rgba(0,0,0,.04);
   box-shadow:0 4px 20px rgba(0,0,0,.12);
 }
-.ad-slot--loading{ cursor:wait; border-color:var(--accent); border-style:solid; background:var(--accent-dim); }
+.ad-slot--loading{ cursor:wait; border-color:#6b7280; border-style:solid; background:rgba(107,114,128,.06); }
 .ad-slot--ready{
-  cursor:default; border-style:solid; border-color:var(--accent);
-  background:linear-gradient(135deg, var(--accent-dim), var(--bg-panel));
+  cursor:default; border-style:solid; border-color:#1C1C1E;
+  background:var(--bg-app);
 }
 .ad-slot--error{ cursor:pointer; border-style:solid; border-color:#e5484d; background:rgba(229,72,77,.06); }
 
