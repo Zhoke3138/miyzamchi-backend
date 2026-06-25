@@ -5634,7 +5634,7 @@ body.dk .analyze-accordion-content {
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-family: var(--font-sans);
-  transition: background .15s, color .15s, box-shadow .15s;
+  transition: background .08s, color .08s;
 }
 .myz-docs-tab-label {
   font-size: var(--text-sm);
@@ -5644,21 +5644,29 @@ body.dk .analyze-accordion-content {
 .myz-docs-tab-desc {
   font-size: 9px;
   font-weight: 400;
-  opacity: 0.68;
+  opacity: 0.72;
   line-height: 1;
   white-space: nowrap;
 }
+/* Светлая тема: активная = почти чёрная */
 .myz-docs-tab--active {
-  background: var(--primary);
+  background: #1C1C1E;
   color: #fff;
-  box-shadow: 0 2px 8px var(--accent-glow);
 }
 .myz-docs-tab--active .myz-docs-tab-desc {
-  opacity: 0.88;
+  opacity: 0.82;
+}
+/* Тёмная тема: активная = почти белая */
+body.dk .myz-docs-tab--active {
+  background: #E4E4E7;
+  color: #1C1C1E;
 }
 .myz-docs-tab--inactive {
   background: transparent;
-  color: var(--text-muted);
+  color: #3f3f46;
+}
+body.dk .myz-docs-tab--inactive {
+  color: #a1a1aa;
 }
 .myz-docs-tab--inactive:hover {
   background: var(--hover);
