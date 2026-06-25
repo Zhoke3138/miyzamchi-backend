@@ -29,6 +29,31 @@ const { buildDocx } = require('../lib/docxGenerator');
 const clients = require('../services/llmClients');
 const { getTemplate, buildChecklist } = require('../lib/docTemplates');
 
+// ── Токенометрия (SSE-телеметрия) ─────────────────────────────────────────────
+// Цены совпадают с MODEL_PRICING в server.js. Актуально на 2026-06-25.
+const MODEL_PRICING_V2 = {
+  'gemini-3.1-flash-lite': { input: 0.25,  output: 1.50 },
+  'gemini-2.5-flash':      { input: 0.30,  output: 2.50 },
+  'deepseek-v4-flash':     { input: 0.14,  output: 0.28 },
+  'deepseek-v4-pro':       { input: 0.435, output: 0.87 },
+};
+function calcCostV2(model, inp, out) {
+  const r = MODEL_PRICING_V2[String(model).replace(/^models\//, '')] || { input: 0, output: 0 };
+  return Number(((inp / 1e6) * r.input + (out / 1e6) * r.output).toFixed(6));
+}
+function emitTele(res, { model, inputTokens, outputTokens, label }) {
+  if (!res || res.writableEnded || !(inputTokens || outputTokens)) return;
+  try {
+    res.write(`data: ${JSON.stringify({ telemetry: {
+      model, label,
+      inputTokens, outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      cost: calcCostV2(model, inputTokens, outputTokens),
+    } })}\n\n`);
+    if (typeof res.flush === 'function') res.flush();
+  } catch (_) {}
+}
+
 // Загрузка во ВРЕМЕННЫЙ файл с уникальным именем (ZDR-friendly: parserService удалит).
 // multer/express подключаются ЛЕНИВО внутри фабрики — чтобы импорт чистых функций
 // (_internals) в smoke-тестах не тянул web-зависимости.
@@ -1017,6 +1042,7 @@ ${tpl.courtDoc
         const raw = await clients.geminiJson({
           systemPrompt: PLANNER_SYS(tpl), userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON-план.`,
           model: 'gemini-3.1-flash-lite', maxOutputTokens: 2048, timeoutMs: 18000,
+          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'draft:planner' }),
         });
         return parseObj(raw) || {};
       })(), 20000, {});
@@ -1029,6 +1055,7 @@ ${tpl.courtDoc
           const raw = await clients.geminiJson({
             systemPrompt: researcherSys(agent), userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON с queries.`,
             model: 'gemini-3.1-flash-lite', maxOutputTokens: 1024, timeoutMs: 15000,
+            onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: `draft:researcher:${cat}` }),
           });
           const o = parseObj(raw);
           if (o && Array.isArray(o.queries)) queries = o.queries.slice(0, 6);
@@ -1247,12 +1274,15 @@ ${tpl.courtDoc
       const effTitle = tpl.titleWord
         || String((plan.facts && (plan.facts.docName || plan.facts.title)) || '').trim().toUpperCase()
         || '';
-      const { text: draftText, model: usedModel } = await clients.deepseekReason({
+      const { text: draftText, model: usedModel, usage: drafterUsage } = await clients.deepseekReason({
         systemPrompt: DRAFTER_SYS(tpl, effTitle),
         userPrompt: drafterUser,
         model: 'deepseek-v4-pro', reasoning_effort: 'high', thinking: 'enabled',
         onDelta,
       });
+      if (drafterUsage && (drafterUsage.inputTokens || drafterUsage.outputTokens)) {
+        emitTele(res, { model: usedModel, inputTokens: drafterUsage.inputTokens, outputTokens: drafterUsage.outputTokens, label: 'draft:drafter' });
+      }
 
       // Финальный парс целиком ([...] или {blocks:[...]}) — канонический результат
       // и фолбэк, если стрим-парсер что-то не выдернул (или формат-обёртка).
@@ -1326,6 +1356,7 @@ ${tpl.courtDoc
           systemPrompt: SELFCHECK_SYS,
           userPrompt: `ЭТАЛОННЫЕ НОРМЫ:\n${refBlock}\n\nГОТОВЫЙ ДОКУМЕНТ:\n${docText.slice(0, 20000)}\n\nВерни JSON-вывод проверки.`,
           model: 'gemini-3.1-flash-lite', maxOutputTokens: 2500, timeoutMs: 22000,
+          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'draft:selfcheck' }),
         }))(), 25000, null);
         const rev = parseObj(rawRev);
         if (rev && typeof rev === 'object') {
@@ -1450,6 +1481,7 @@ ${checklist}
         systemPrompt: FINDER_SYS,
         userPrompt: `ДОКУМЕНТ:\n${docText.slice(0, 20000)}\n\nНайди все нарушения и верни JSON-массив.`,
         model: 'gemini-3.1-flash-lite', maxOutputTokens: 3000, timeoutMs: 28000,
+        onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'deepcheck:finder' }),
       }))(), 32000, null);
 
       let candidates = dcArrParseObj(rawFindings);
@@ -1476,6 +1508,7 @@ ${checklist}
           systemPrompt: VERIFIER_SYS,
           userPrompt: `ЗАМЕЧАНИЕ: ${finding.claim}\nМЕСТО: ${finding.location}\n\nФРАГМЕНТ ДОКУМЕНТА:\n${docText.slice(0, 8000)}\n\nПодтверди или опровергни. Верни JSON.`,
           model: 'gemini-3.1-flash-lite', maxOutputTokens: 400, timeoutMs: 18000,
+          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'deepcheck:verifier' }),
         }))(), 20000, null);
         const v = dcParseObj(raw);
         if (!v || typeof v.confirmed !== 'boolean') return { ...finding, confirmed: true, reason: '' };
@@ -1600,6 +1633,7 @@ ${checklist}
         systemPrompt: PATCH_SYS,
         userPrompt: `ДОКУМЕНТ (блоки):\n${blockSummary}\n\nЗАМЕЧАНИЯ:\n${issuesList}\n\nВерни JSON исправлений.`,
         model: 'gemini-3.1-flash-lite', maxOutputTokens: 2500, timeoutMs: 22000,
+        onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'patch:editor' }),
       }))(), 25000, null);
 
       const patchResult = pParseObj(rawPatch);
@@ -1650,6 +1684,7 @@ ${checklist}
           systemPrompt: SELFCHECK_PATCH,
           userPrompt: `ДОКУМЕНТ:\n${docText.slice(0, 12000)}\n\nВерни JSON-вывод проверки.`,
           model: 'gemini-3.1-flash-lite', maxOutputTokens: 1200, timeoutMs: 15000,
+          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'patch:selfcheck' }),
         }))(), 18000, null);
 
         const rev = pParseObj(rawRev);

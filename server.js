@@ -1984,11 +1984,11 @@ const MODEL_PRICING = {
     // ═══ DEEPSEEK V4 (CNY → USD, courses fixed via CNY_TO_USD const above) ═══
     // JUDGE tier — reasoning-модель для финального синтеза. reasoning_effort='high'
     // (не max) чтобы не платить за избыточную цепочку мысли.
-    // V4 Pro: ¥3/¥6 miss + ¥0.025 cache hit (input)
+    // V4 Pro: официальные USD (api-docs.deepseek.com/quick_start/pricing, 2026-06-25)
     'deepseek-v4-pro':   {
-        input:      Number((3.00  * CNY_TO_USD).toFixed(4)),  // ≈ $0.42
-        output:     Number((6.00  * CNY_TO_USD).toFixed(4)),  // ≈ $0.84
-        inputCache: Number((0.025 * CNY_TO_USD).toFixed(6)),  // ≈ $0.0035
+        input:      0.435,    // $0.435/M cache miss
+        output:     0.87,     // $0.87/M
+        inputCache: 0.003625, // $0.003625/M cache hit
         tier: 'judge'
     },
     // V4 Flash: ¥1/¥2 miss + ¥0.02 cache hit — альтернатива worker tier,

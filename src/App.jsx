@@ -1567,6 +1567,7 @@ const CreateDocMode = ({ onToast }) => {
 
   const generate = async () => {
     if (genBusy) return; setGenBusy(true); setGenStatus('Запускаю агентов…'); setGenDone(false); setGenReview(null); setDeepReview(null);
+    try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-start', {})); } catch(_) {}
     try {
       // Фаза 2B: мультиагентная research-коллегия (SSE):
       // планировщик → RAG по 4 группам норм → отборщик → драфтер v4-pro.
@@ -1608,6 +1609,9 @@ const CreateDocMode = ({ onToast }) => {
               if (editor) { try { await _appendLegalBlock(editor, evt.block); } catch (_) { failed = true; } }
             }
           }
+          else if (evt.telemetry) {
+            try { window.dispatchEvent(new CustomEvent('miyzamchi:raw-telemetry', { detail: evt.telemetry })); } catch(_) {}
+          }
           else if (evt.stage) setGenStatus(evt.stage);
           else if (evt.error) errMsg = evt.error;
           else if (evt.done) {
@@ -1642,7 +1646,10 @@ const CreateDocMode = ({ onToast }) => {
     } catch (e) {
       console.error('[draft-document]', e);
       onToast && onToast('warning', 'Ошибка генерации: ' + ((e && e.message) || e));
-    } finally { setGenBusy(false); setGenStatus(''); }
+    } finally {
+      try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-done', {})); } catch(_) {}
+      setGenBusy(false); setGenStatus('');
+    }
   };
 
   // ── Точечное исправление замечаний самопроверки ──
@@ -1652,6 +1659,7 @@ const CreateDocMode = ({ onToast }) => {
     const issuesToFix = genReview.issues.filter(i => i.severity !== 'low');
     const blocksSnapshot = genBlocks.slice();
     setPatchBusy(true); setGenBusy(true); setGenStatus('🔎 Анализирую замечания…'); setGenReview(null);
+    try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-start', {})); } catch(_) {}
     try {
       const res = await fetch(`${_ensureBackend()}/api/v2/patch-document`, {
         method: 'POST', headers: jsonHeaders(),
@@ -1677,7 +1685,10 @@ const CreateDocMode = ({ onToast }) => {
           const payload = line.slice(5).trim();
           if (payload === '[DONE]') continue;
           let evt; try { evt = JSON.parse(payload); } catch (_) { continue; }
-          if (evt.stage) setGenStatus(evt.stage);
+          if (evt.telemetry) {
+            try { window.dispatchEvent(new CustomEvent('miyzamchi:raw-telemetry', { detail: evt.telemetry })); } catch(_) {}
+          }
+          else if (evt.stage) setGenStatus(evt.stage);
           else if (evt.error) errMsg = evt.error;
           else if (evt.done) result = evt;
         }
@@ -1693,13 +1704,17 @@ const CreateDocMode = ({ onToast }) => {
     } catch (e) {
       console.error('[patch-document]', e);
       onToast && onToast('warning', 'Ошибка исправления: ' + ((e && e.message) || e));
-    } finally { setPatchBusy(false); setGenBusy(false); setGenStatus(''); }
+    } finally {
+      try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-done', {})); } catch(_) {}
+      setPatchBusy(false); setGenBusy(false); setGenStatus('');
+    }
   };
 
   // ── Глубокая проверка документа (по кнопке) ──
   const runDeepCheck = async () => {
     if (deepBusy || genBusy || !genBlocks.length) return;
     setDeepBusy(true); setDeepReview(null);
+    try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-start', {})); } catch(_) {}
     try {
       const res = await fetch(`${_ensureBackend()}/api/v2/deep-check-document`, {
         method: 'POST', headers: jsonHeaders(),
@@ -1725,7 +1740,10 @@ const CreateDocMode = ({ onToast }) => {
           const payload = line.slice(5).trim();
           if (payload === '[DONE]') continue;
           let evt; try { evt = JSON.parse(payload); } catch (_) { continue; }
-          if (evt.error) errMsg = evt.error;
+          if (evt.telemetry) {
+            try { window.dispatchEvent(new CustomEvent('miyzamchi:raw-telemetry', { detail: evt.telemetry })); } catch(_) {}
+          }
+          else if (evt.error) errMsg = evt.error;
           else if (evt.done) result = evt;
         }
       }
@@ -1734,7 +1752,10 @@ const CreateDocMode = ({ onToast }) => {
     } catch (e) {
       console.error('[deep-check]', e);
       onToast && onToast('warning', 'Ошибка глубокой проверки: ' + ((e && e.message) || e));
-    } finally { setDeepBusy(false); }
+    } finally {
+      try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-done', {})); } catch(_) {}
+      setDeepBusy(false);
+    }
   };
 
   // ── ШАГ 1: выбор типа ──

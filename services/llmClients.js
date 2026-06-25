@@ -89,8 +89,9 @@ async function geminiJson({
   model = 'gemini-3.1-flash-lite',
   temperature = 0.2, maxOutputTokens = 2048, timeoutMs = 15000,
   thinkingConfig = null,
+  onTokens = null,  // optional: (model, inputTokens, outputTokens) => void
 }) {
-  const { text } = await callGeminiSingle({
+  const { text, usage } = await callGeminiSingle({
     apiKey: getNextKey(),
     modelName: model,
     systemPrompt,
@@ -101,6 +102,9 @@ async function geminiJson({
     maxOutputTokens,
     thinkingConfig,
   });
+  if (onTokens && (usage.promptTokens || usage.completionTokens)) {
+    try { onTokens(model, usage.promptTokens || 0, usage.completionTokens || 0); } catch (_) {}
+  }
   return text;
 }
 
@@ -174,6 +178,7 @@ async function deepseekReason({
 
   let text = '';
   let reasoning = '';
+  let finalUsage = null;
   for await (const chunk of stream) {
     const delta = (chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta) || {};
     if (delta.reasoning_content) {
@@ -184,11 +189,18 @@ async function deepseekReason({
       text += delta.content;
       emit({ text: delta.content });
     }
+    if (chunk.usage) finalUsage = chunk.usage;
   }
   if (reasoning) {
     console.log(`[DeepSeek DEBUG] ${model} reasoning_content: ${reasoning.length}ch (streamed)`);
   }
-  return { text, model, reasoning };
+  return {
+    text, model, reasoning,
+    usage: {
+      inputTokens:  finalUsage ? (finalUsage.prompt_tokens     || 0) : 0,
+      outputTokens: finalUsage ? (finalUsage.completion_tokens || 0) : 0,
+    },
+  };
 }
 
 module.exports = {
