@@ -549,7 +549,7 @@ async function getEmbedding(text, retryCount = 0, forceKey = null) {
 }
 
 // --- EMBEDDING 1536d (gemini-embedding-2.0-flash, те же Gemini-ключи) — для Supabase ---
-const EMBEDDING_MODEL_V2 = 'models/gemini-embedding-2.0-flash';
+const EMBEDDING_MODEL_V2 = 'models/gemini-embedding-2';
 const embeddingCacheSupabase = new Map();
 async function getEmbeddingForSupabase(text, retryCount = 0, forceKey = null) {
     const cacheKey = 'sb_' + text.substring(0, 8000);
