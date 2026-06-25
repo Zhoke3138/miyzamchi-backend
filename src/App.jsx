@@ -8129,7 +8129,6 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           </div>
         </div>
         <div className="myz-chat-header-right">
-          <button className="btn myz-chat-header-clear" onClick={()=>{updateChatMessages(()=>[]);onToast&&onToast('trash','Очищено')}} title="Очистить чат">Очистить</button>
           {onCollapse && (
             <button type="button" onClick={onCollapse} title="Свернуть чат" aria-label="Свернуть ИИ-чат" className="myz-chat-header-close">
               <Ico k="x" sz={14} col="currentColor"/>
