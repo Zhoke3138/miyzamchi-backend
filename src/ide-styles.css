@@ -309,10 +309,8 @@ body.dk .myz-brand-logo img,
 body.dark-mode .myz-brand-logo img,
 body.dk .chat-logo img,
 body.dark-mode .chat-logo img {
-  /* Step 1: Remove white background via SVG chroma-key */
-  /* Step 2: Force everything to black via brightness(0) */
-  /* Step 3: Invert black to white via invert(1) */
   filter: url('#logo-chroma') brightness(0) invert(1) drop-shadow(0 0 8px rgba(255, 255, 255, 0.15)) !important;
+  mix-blend-mode: normal !important;
   background-color: transparent !important;
   opacity: 0.98;
 }
@@ -496,14 +494,16 @@ input,textarea,[contenteditable="true"]{caret-color:var(--accent)}
   transform:scale(1.30);
   transform-origin:center;
 }
-/* Точный цвет через SVG flood-фильтр — заменил неточный hue-rotate стек.
-   Цвет совпадает с --primary до пикселя. */
-body:not(.dk) .myz-brand-logo img{ filter:url('#logo-recolor-light'); }
-.dk .myz-brand-logo img{ filter:url('#logo-recolor-dark'); }
-/* Модификатор: лого в белом, для использования на индиго-фоне кнопки */
+/* mix-blend-mode:multiply убирает белый фон PNG без SVG-фильтра */
+body:not(.dk) .myz-brand-logo img{ filter:none; mix-blend-mode:multiply; }
+.dk .myz-brand-logo img{ filter:none; mix-blend-mode:normal; }
+/* on-accent: белый куб на тёмном/акцентном фоне */
 .myz-brand-logo.on-accent img,
 body:not(.dk) .myz-brand-logo.on-accent img,
-.dk .myz-brand-logo.on-accent img{ filter:url('#logo-recolor-white'); }
+.dk .myz-brand-logo.on-accent img{
+  filter: url('#logo-chroma') brightness(0) invert(1);
+  mix-blend-mode: normal;
+}
 
 /* ════ NOISE TEXTURE — sub-perceptual film grain ══════════════════════ */
 .grain::after{
