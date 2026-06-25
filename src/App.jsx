@@ -5695,25 +5695,46 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
   // Читаемый заголовок источника
   const getTitle = (m) => {
     const npa = (m.npa_title || '').trim();
-    if (npa && npa !== 'Instructions') return npa;
     const artId = (m.article_title || '').trim();
-    if (/^faq_tax/i.test(artId)) return 'Инструкция ГНС / Тундук';
-    if (/^faq_/i.test(artId)) return 'FAQ / Инструкция';
-    return 'Инструкция';
+    const ft = (m.full_text || '').trim();
+
+    // FAQ / Qdrant / Instructions — вытаскиваем название органа из full_text
+    if (!npa || npa === 'Instructions' || /^faq_/i.test(artId)) {
+      if (ft) {
+        const rcpt = ft.match(/\[Получатель\]\s*:\s*([^\[]+)/);
+        if (rcpt) {
+          const s = rcpt[1].trim().replace(/\s+/g, ' ').replace(/^\d+\s+/, '');
+          if (s) return s.slice(0, 55);
+        }
+        const ugns = ft.match(/\[Наименование УГНС\]\s*:\s*([^\[]+)/);
+        if (ugns) {
+          const s = ugns[1].trim().replace(/\s+/g, ' ');
+          if (s) return s.slice(0, 55);
+        }
+      }
+      return /^faq_tax/i.test(artId) ? 'Справочник ГНС / Тундук' : 'FAQ / Инструкция';
+    }
+
+    // НПА — показываем «Ст. N» как главный заголовок
+    if (artId) {
+      const artNum = artId.match(/стат(?:ья|ьи)?\s*([0-9]{1,4})/i);
+      if (artNum) return `Ст. ${artNum[1]}`;
+      return artId.length <= 60 ? artId : artId.slice(0, 57) + '…';
+    }
+    return npa;
   };
 
   // Читаемая подпись источника
   const getSubtitle = (m) => {
     const npa = (m.npa_title || '').trim();
-    if (npa && npa !== 'Instructions') return (m.article_title || '').trim() || null;
-    // Для FAQ/Instructions — извлекаем [Получатель] или тип документа
-    const ft = (m.full_text || '').trim();
-    if (!ft) return null;
-    const rcpt = ft.match(/\[Получатель\]\s*:\s*([^\[]+)/);
-    if (rcpt) return rcpt[1].trim().replace(/\s+/g, ' ').slice(0, 60);
-    const doc = ft.match(/Документ\s+([А-Яа-яЁё\s'"]+?):/);
-    if (doc) return doc[1].trim();
-    return null;
+    const artId = (m.article_title || '').trim();
+
+    // FAQ / Qdrant — тип источника как подпись
+    if (!npa || npa === 'Instructions' || /^faq_/i.test(artId)) {
+      return /^faq_tax/i.test(artId) ? 'Справочник ГНС / Тундук' : 'FAQ / Инструкция';
+    }
+    // НПА — название закона как подпись
+    return npa || null;
   };
 
   return (
@@ -5726,6 +5747,7 @@ const SourceList = ({sources, metadata, onSourceClick}) => {
         <Ico k="book" sz={11} col="var(--link)"/>
         <span>Источники</span>
         <span className="msg-sources-count">{sources.length}</span>
+        <span style={{flex:1}}/>
         <span className="msg-sources-chev">
           <Ico k={listOpen ? 'chevD' : 'chevR'} sz={10}/>
         </span>
