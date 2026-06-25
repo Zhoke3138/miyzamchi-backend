@@ -3622,23 +3622,23 @@ const ActBar=({active,onSet})=>{
   ];
   return(
     <nav className="global-nav myz-actbar" aria-label="Навигация рабочих областей">
-      <div className="myz-actbar-top-icon"><Ico k="shield" sz={20}/></div>
+      <div className="myz-actbar-top-icon"><Ico k="shield" sz={22}/></div>
       {items.map(it=>{
         const on=active===it.id;
         return(
           <button key={it.id} type="button" title={it.label} aria-label={it.label} aria-pressed={on?'true':'false'} onClick={()=>onSet(on?null:it.id)}
             className={`btn myz-actbar-item ${on?'myz-actbar-item--on':'myz-actbar-item--off'}`}>
             {on && <span className="myz-actbar-indicator"/>}
-            <Ico k={it.k} sz={17} />
+            <Ico k={it.k} sz={21} />
           </button>
         );
       })}
       <div className="flex-spacer"/>
       <button type="button" title="Пользователи" aria-label="Пользователи" className="btn myz-actbar-item myz-actbar-item--off">
-        <Ico k="users" sz={17}/>
+        <Ico k="users" sz={21}/>
       </button>
       <button type="button" title="Настройки" aria-label="Настройки" className="btn myz-actbar-item myz-actbar-item--off">
-        <Ico k="settings" sz={17}/>
+        <Ico k="settings" sz={21}/>
       </button>
     </nav>
   );
