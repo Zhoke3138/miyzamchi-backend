@@ -6017,7 +6017,7 @@ body.dk .myz-chat-mode-tab--active {
 }
 .myz-chat-mode-tab--inactive {
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-main);
 }
 .myz-chat-mode-tab--inactive:hover {
   background: rgba(0,0,0,.06);
