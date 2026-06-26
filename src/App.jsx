@@ -8448,83 +8448,192 @@ const LoginScreen = () => (
   </div>
 );
 
+const PLAN_FEATURES = {
+  basic: [
+    { title: '50 AI-анализов',        desc: 'Загружайте договоры и жалобы — система найдёт противоречия с НПА' },
+    { title: '20 документов',          desc: 'Исковые заявления, претензии, доверенности и 9 других типов' },
+    { title: '30 дней доступа',        desc: 'Ежемесячное продление без ограничений по сроку' },
+    { title: 'Все 4 фазы анализа',     desc: 'Сегментация → RAG → Верификаторы → Final Judge' },
+    { title: 'Генерация документов',   desc: 'Мультиагентная генерация с правовым обоснованием' },
+  ],
+  standard: [
+    { title: '150 AI-анализов',        desc: 'Загружайте договоры и жалобы — система найдёт противоречия с НПА' },
+    { title: '60 документов',          desc: 'Исковые заявления, претензии, доверенности и 9 других типов' },
+    { title: '30 дней доступа',        desc: 'Ежемесячное продление без ограничений по сроку' },
+    { title: 'Все 4 фазы анализа',     desc: 'Сегментация → RAG → Верификаторы → Final Judge' },
+    { title: 'Генерация документов',   desc: 'Мультиагентная генерация с правовым обоснованием' },
+  ],
+  pro: [
+    { title: '400 AI-анализов',        desc: 'Загружайте договоры и жалобы — система найдёт противоречия с НПА' },
+    { title: '150 документов',         desc: 'Исковые заявления, претензии, доверенности и 9 других типов' },
+    { title: '30 дней доступа',        desc: 'Ежемесячное продление без ограничений по сроку' },
+    { title: 'Все 4 фазы анализа',     desc: 'Сегментация → RAG → Верификаторы → Final Judge' },
+    { title: 'Генерация документов',   desc: 'Мультиагентная генерация с правовым обоснованием' },
+  ],
+};
+const PLAN_DESC = {
+  basic:    'Для небольших дел и разовых консультаций',
+  standard: 'Для активной юридической практики',
+  pro:      'Для юридических бюро и команд',
+};
+
 const PricingScreen = ({ user, subscription, onLogout }) => {
   const [contacting, setContacting] = React.useState(null);
+  const [hovered, setHovered] = React.useState(null);
+
   return (
-    <div style={{minHeight:'100vh',background:'#0f1117',display:'flex',flexDirection:'column',
-      alignItems:'center',justifyContent:'center',padding:24,gap:40}}>
+    <div style={{minHeight:'100vh',background:'#0a0c13',display:'flex',flexDirection:'column',
+      alignItems:'center',justifyContent:'flex-start',padding:'40px 24px 60px',gap:0,overflowY:'auto'}}>
+
       {/* Шапка */}
-      <div style={{textAlign:'center'}}>
-        <div style={{fontSize:44}}>⚖️</div>
-        <h1 style={{fontSize:26,fontWeight:700,color:'#f0f0f0',margin:'8px 0 4px'}}>Мыйзамчы AI</h1>
-        <p style={{color:'#888',fontSize:14,margin:0}}>Выберите тариф для доступа к воркспейсу</p>
-        {user?.email && <p style={{color:'#555',fontSize:12,marginTop:6}}>{user.email}</p>}
+      <div style={{textAlign:'center',marginBottom:48}}>
+        <img src="/logo/Logo_transparent.png" alt="Мыйзамчы"
+          style={{width:72,height:72,objectFit:'contain',marginBottom:16,
+            filter:'drop-shadow(0 0 20px rgba(92,102,222,0.5))'}}/>
+        <h1 style={{fontSize:28,fontWeight:700,color:'#f0f0f0',margin:'0 0 6px',letterSpacing:-0.5}}>
+          Мыйзамчы AI
+        </h1>
+        <p style={{color:'#666',fontSize:14,margin:0}}>Выберите тариф для доступа к воркспейсу</p>
+        {user?.email && <p style={{color:'#444',fontSize:12,marginTop:5}}>{user.email}</p>}
         {subscription?.subscription_status === 'expired' && (
-          <div style={{marginTop:12,padding:'8px 16px',borderRadius:8,background:'#2a1a1a',
-            color:'#f87171',fontSize:13,border:'1px solid #4a2020'}}>
-            Ваша подписка истекла. Пожалуйста, продлите тариф.
+          <div style={{marginTop:14,padding:'9px 18px',borderRadius:8,background:'#1e0f0f',
+            color:'#f87171',fontSize:13,border:'1px solid #3a1a1a',display:'inline-block'}}>
+            Ваша подписка истекла — пожалуйста, продлите тариф.
           </div>
         )}
       </div>
 
-      {/* Карточки тарифов */}
-      <div style={{display:'flex',gap:20,flexWrap:'wrap',justifyContent:'center',maxWidth:900}}>
-        {PRICING_PLANS.map(plan => (
-          <div key={plan.key} style={{
-            background: plan.popular ? '#1a1f35' : '#161b27',
-            border: plan.popular ? '2px solid #4f6ef7' : '1px solid #2a2f45',
-            borderRadius:16,padding:'28px 24px',width:240,position:'relative',
-            display:'flex',flexDirection:'column',gap:16,
-            boxShadow: plan.popular ? '0 8px 40px rgba(79,110,247,0.2)' : 'none'
-          }}>
-            {plan.popular && (
-              <span style={{position:'absolute',top:-12,left:'50%',transform:'translateX(-50%)',
-                background:'#4f6ef7',color:'#fff',fontSize:11,fontWeight:700,
-                padding:'3px 12px',borderRadius:20,whiteSpace:'nowrap'}}>
-                ПОПУЛЯРНЫЙ
-              </span>
-            )}
-            <div>
-              <div style={{color:'#888',fontSize:12,fontWeight:600,letterSpacing:1,textTransform:'uppercase'}}>{plan.name}</div>
-              <div style={{marginTop:8}}>
-                <span style={{fontSize:32,fontWeight:800,color:'#f0f0f0'}}>{plan.price.toLocaleString('ru')}</span>
-                <span style={{color:'#666',fontSize:14}}> сом/мес</span>
-              </div>
-            </div>
-            <ul style={{listStyle:'none',padding:0,margin:0,display:'flex',flexDirection:'column',gap:8}}>
-              {[
-                `${plan.ai} AI-анализов`,
-                `${plan.docs} документов`,
-                '30 дней доступа',
-                'Все 4 фазы анализа',
-                'Генерация документов'
-              ].map(f=>(
-                <li key={f} style={{display:'flex',alignItems:'center',gap:8,color:'#aaa',fontSize:13}}>
-                  <span style={{color:'#4f6ef7',fontSize:16}}>✓</span>{f}
-                </li>
-              ))}
-            </ul>
-            <a
-              href={`${CONTACT_WHATSAPP}+(${plan.name},+${plan.price}+сом)`}
-              target="_blank" rel="noopener noreferrer"
-              onClick={()=>setContacting(plan.key)}
+      {/* Карточки */}
+      <div style={{display:'flex',gap:16,flexWrap:'wrap',justifyContent:'center',
+        maxWidth:980,width:'100%',alignItems:'stretch'}}>
+        {PRICING_PLANS.map(plan => {
+          const features = PLAN_FEATURES[plan.key] || [];
+          const isHov = hovered === plan.key;
+          return (
+            <div key={plan.key}
+              onMouseEnter={()=>setHovered(plan.key)}
+              onMouseLeave={()=>setHovered(null)}
               style={{
-                display:'block',textAlign:'center',padding:'12px 0',borderRadius:10,
-                background: plan.popular ? '#4f6ef7' : '#1e2540',
-                color: plan.popular ? '#fff' : '#aaa',
-                fontWeight:600,fontSize:14,textDecoration:'none',
-                border: plan.popular ? 'none' : '1px solid #2a3050',
-                transition:'opacity 0.15s'
-              }}
-            >
-              {contacting===plan.key ? '✓ Открываю WhatsApp...' : 'Связаться для оплаты'}
-            </a>
-          </div>
-        ))}
+                background: plan.popular ? '#0f1525' : '#0d1020',
+                border: plan.popular
+                  ? '1px solid rgba(79,110,247,0.6)'
+                  : '1px solid rgba(255,255,255,0.07)',
+                borderRadius:16,
+                padding:'32px 28px 28px',
+                width:290,
+                minWidth:260,
+                position:'relative',
+                display:'flex',flexDirection:'column',gap:0,
+                boxShadow: plan.popular
+                  ? '0 0 0 1px rgba(79,110,247,0.15), 0 20px 60px rgba(79,110,247,0.1)'
+                  : isHov ? '0 8px 40px rgba(0,0,0,0.4)' : 'none',
+                transition:'box-shadow 0.2s, transform 0.2s',
+                transform: isHov ? 'translateY(-3px)' : 'none',
+              }}>
+
+              {/* Популярный бейдж */}
+              {plan.popular && (
+                <div style={{position:'absolute',top:-1,left:28,right:28,height:3,
+                  background:'linear-gradient(90deg,#4f6ef7,#7c3aed)',borderRadius:'0 0 3px 3px'}}/>
+              )}
+              {plan.popular && (
+                <span style={{
+                  position:'absolute',top:16,right:20,
+                  background:'rgba(79,110,247,0.15)',
+                  border:'1px solid rgba(79,110,247,0.3)',
+                  color:'#818cf8',fontSize:10,fontWeight:700,
+                  padding:'3px 10px',borderRadius:20,letterSpacing:0.8,textTransform:'uppercase'
+                }}>Популярный</span>
+              )}
+
+              {/* Название + описание */}
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:20,fontWeight:700,color:'#f0f0f0',marginBottom:6}}>
+                  {plan.name}
+                </div>
+                <div style={{fontSize:13,color:'#555',lineHeight:1.5}}>
+                  {PLAN_DESC[plan.key]}
+                </div>
+              </div>
+
+              {/* Цена */}
+              <div style={{marginBottom:28,paddingBottom:24,
+                borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+                <div style={{display:'flex',alignItems:'baseline',gap:4}}>
+                  <span style={{fontSize:42,fontWeight:800,color:'#f0f0f0',letterSpacing:-1}}>
+                    {plan.price.toLocaleString('ru')}
+                  </span>
+                  <span style={{fontSize:15,color:'#444',fontWeight:500}}>сом</span>
+                </div>
+                <div style={{color:'#444',fontSize:12,marginTop:2}}>в месяц · 30 дней доступа</div>
+              </div>
+
+              {/* Фичи */}
+              <ul style={{listStyle:'none',padding:0,margin:'0 0 28px',
+                display:'flex',flexDirection:'column',gap:16,flex:1}}>
+                {features.map(f=>(
+                  <li key={f.title} style={{display:'flex',gap:12,alignItems:'flex-start'}}>
+                    <span style={{
+                      marginTop:2,flexShrink:0,width:16,height:16,borderRadius:'50%',
+                      background:'rgba(79,110,247,0.15)',border:'1px solid rgba(79,110,247,0.3)',
+                      display:'flex',alignItems:'center',justifyContent:'center',
+                      color:'#818cf8',fontSize:9,fontWeight:800
+                    }}>✓</span>
+                    <div>
+                      <div style={{color:'#d0d0d0',fontSize:13,fontWeight:600,marginBottom:2}}>
+                        {f.title}
+                      </div>
+                      <div style={{color:'#444',fontSize:11.5,lineHeight:1.5}}>
+                        {f.desc}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+
+              {/* CTA кнопка */}
+              <a
+                href={`${CONTACT_WHATSAPP}+(${plan.name},+${plan.price}+сом)`}
+                target="_blank" rel="noopener noreferrer"
+                onClick={()=>setContacting(plan.key)}
+                style={{
+                  display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+                  padding:'13px 0',borderRadius:10,textDecoration:'none',
+                  fontWeight:600,fontSize:14,transition:'all 0.15s',
+                  ...(plan.popular
+                    ? {background:'#4f6ef7',color:'#fff',border:'none',
+                       boxShadow:'0 4px 20px rgba(79,110,247,0.4)'}
+                    : {background:'transparent',color:'#888',
+                       border:'1px solid rgba(255,255,255,0.1)'}
+                  )
+                }}
+                onMouseEnter={e=>{
+                  if(plan.popular){e.currentTarget.style.background='#3d5ce6';}
+                  else{e.currentTarget.style.borderColor='rgba(255,255,255,0.25)';e.currentTarget.style.color='#bbb';}
+                }}
+                onMouseLeave={e=>{
+                  if(plan.popular){e.currentTarget.style.background='#4f6ef7';}
+                  else{e.currentTarget.style.borderColor='rgba(255,255,255,0.1)';e.currentTarget.style.color='#888';}
+                }}
+              >
+                {contacting===plan.key
+                  ? <><span>✓</span> Открываю WhatsApp...</>
+                  : <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                        <path d="M11.995 1C5.918 1 1 5.919 1 12c0 1.91.495 3.704 1.36 5.262L1 23l5.897-1.325A10.942 10.942 0 0011.995 23C18.074 23 23 18.081 23 12c0-6.08-4.926-11-11.005-11zm0 20.133a9.098 9.098 0 01-4.636-1.265l-.332-.197-3.5.787.836-3.38-.216-.346A9.086 9.086 0 012.876 12c0-5.027 4.093-9.12 9.12-9.12 5.027 0 9.12 4.093 9.12 9.12 0 5.027-4.093 9.133-9.121 9.133z"/>
+                      </svg>
+                      Связаться для оплаты
+                    </>
+                }
+              </a>
+            </div>
+          );
+        })}
       </div>
 
-      {/* Telegram альтернатива */}
-      <div style={{textAlign:'center',color:'#555',fontSize:13}}>
+      {/* Telegram */}
+      <div style={{textAlign:'center',color:'#3a3f55',fontSize:13,marginTop:32}}>
         Или напишите нам в{' '}
         <a href={CONTACT_TELEGRAM} target="_blank" rel="noopener noreferrer"
            style={{color:'#4f6ef7',textDecoration:'none'}}>Telegram</a>
@@ -8533,8 +8642,12 @@ const PricingScreen = ({ user, subscription, onLogout }) => {
 
       {/* Выход */}
       <button onClick={onLogout}
-        style={{background:'transparent',border:'1px solid #2a2f45',color:'#555',
-          padding:'8px 20px',borderRadius:8,cursor:'pointer',fontSize:13}}>
+        style={{marginTop:20,background:'transparent',border:'none',color:'#2a2f45',
+          padding:'6px 16px',borderRadius:8,cursor:'pointer',fontSize:12,
+          transition:'color 0.15s'}}
+        onMouseEnter={e=>e.currentTarget.style.color='#555'}
+        onMouseLeave={e=>e.currentTarget.style.color='#2a2f45'}
+      >
         Выйти из аккаунта
       </button>
     </div>
