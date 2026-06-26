@@ -850,15 +850,9 @@ ${checklist}
     enforcement: 'АДМИНИСТРАТИВНОЕ И УГОЛОВНОЕ ДАВЛЕНИЕ',
   };
   const PLANNER_SYS = (tpl) => `Ты — ведущий юрист-исследователь ИИ «Мыйзамчы» (Кыргызстан).
-По собранному диалогу подготовь ПЛАН составления документа «${tpl.label}» и СТРАТЕГИЮ поиска норм права КР.
+По собранному диалогу подготовь ПЛАН составления документа «${tpl.label}».
 
 Применимые кодексы/НПА (ориентир): ${(tpl.codesHint || []).join('; ')}.
-
-Сформулируй РАЗВЁРНУТЫЙ набор поисковых запросов в ЧЕТЫРЁХ группах, чтобы найти АБСОЛЮТНО ВСЕ применимые нормы (не скупись — лучше больше запросов):
-• exact      — нормы ПРЯМО по предмету спора (основание требования);
-• related    — связанные институты + СПЕЦИАЛЬНЫЕ ЗАКОНЫ/КОДЕКСЫ по предмету (напр. для земли — Земельный кодекс КР; для потребителя — Закон «О защите прав потребителей»; для аренды/займа/подряда — соответствующие главы), последствия (реституция, убытки, неустойка);
-• general    — общие положения Гражданского кодекса (о сделках, недействительности, обязательствах, праве собственности, представительстве);
-• procedural — процессуальные нормы ГПК КР: подсудность; форма и содержание искового заявления; государственная пошлина (размер, расчёт); исковая давность и сроки; обеспечительные меры; последствия несоблюдения досудебного порядка.
 
 Верни СТРОГО JSON без markdown:
 {
@@ -866,16 +860,10 @@ ${checklist}
     ${(tpl.requiredFields || []).concat(tpl.optionalFields || []).map((f) => `"${f.key}": "<${f.title}: что известно из диалога, дословно факты; '' если не сказано>"`).join(',\n    ')}
   },
   "subject_line": "<краткая формулировка предмета для подзаголовка, напр. 'о признании договора недействительным'>",
-  "legal_questions": ["<1-3 ключевых правовых вопроса дела>"],
-  "queries": {
-    "exact":      ["<3-5 точных запросов>"],
-    "related":    ["<3-5 запросов: спец. законы по предмету + последствия>"],
-    "general":    ["<2-4 запроса по общим положениям ГК КР>"],
-    "procedural": ["<3-5 запросов по ГПК КР: пошлина, сроки/давность, подсудность, форма иска>"]
-  }
+  "legal_questions": ["<1-3 ключевых правовых вопроса дела>"]
 }
 
-ПРАВИЛА: факты бери ТОЛЬКО из диалога, не выдумывай имена/суммы/даты/адреса (нет → ''). Запросы пиши развёрнуто, называя конкретные институты, кодексы и законы КР, чтобы векторный поиск нашёл максимум норм. Обязательно укажи СПЕЦИАЛЬНЫЙ закон/кодекс, профильный для предмета спора.`;
+ПРАВИЛА: факты бери ТОЛЬКО из диалога, не выдумывай имена/суммы/даты/адреса (нет → '').`;
 
   // Всегда-включённые процессуальные запросы (госпошлина / сроки / подсудность /
   // форма иска) — чтобы эти нормы подтягивались независимо от планировщика.
@@ -1096,7 +1084,7 @@ ${tpl.courtDoc
           const key = `${md.npa_title}|${md.article_title}`;
           let rec = pool.get(key);
           if (!rec) {
-            rec = { npa_title: md.npa_title || '', article_title: md.article_title || '', full_text: String(md.full_text || '').slice(0, 1300), score: h.score || 0, cats: new Set() };
+            rec = { npa_title: md.npa_title || '', article_title: md.article_title || '', full_text: String(md.full_text || ''), score: h.score || 0, cats: new Set() };
             pool.set(key, rec);
           }
           rec.cats.add(cat);
@@ -1334,17 +1322,40 @@ ${tpl.courtDoc
 
       console.log(`[draft-document] ${docType} → ${safeBlocks.length} блоков (streamed=${streamedCount}) | norms=${articlesUsed.length} | model=${usedModel}`);
 
-      // ── 5) САМОПРОВЕРКА — контролёр сверяет готовый документ с эталоном RAG ──
-      // Замыкает цикл «создал → проверил»: ловит выдуманные/перепутанные ссылки
-      // и незаполненные обязательные места. Лёгкая модель, бюджет ~18с, graceful.
-      stage('🔎 Проверяю готовый документ…');
-      let review = null;
+      // ── 5) .DOCX — генерируем до отправки done:true ──
+      let docxFileId = null;
       try {
-        const docText = safeBlocks
-          .map((b) => (b.runs || []).map((r) => r.t).join(''))
-          .filter((s) => s.trim())
-          .join('\n');
-        const SELFCHECK_SYS = `Ты — контролёр качества юридического документа (право Кыргызской Республики). Тебе дан ГОТОВЫЙ документ и ЭТАЛОННЫЕ нормы из базы (RAG).
+        const title = String((plan.facts && (plan.facts.docName || plan.facts.title)) || docType || '').trim();
+        const result = await buildDocx(safeBlocks, { docType, title });
+        docxFileId = result.fileId;
+      } catch (e) {
+        console.warn('[draft-document] docx generation failed (non-fatal):', e.message);
+      }
+
+      // ── 6) DONE:TRUE — юрист получает документ немедленно ──
+      // review придёт отдельным SSE-событием после самопроверки (async ниже).
+      sse({
+        done: true,
+        blocks: safeBlocks,
+        streamedCount,
+        articlesUsed,
+        review: null,
+        route: { planner: 'gemini-3.1-flash-lite', retrieval: 'rag-4groups', drafter: usedModel, reviewer: 'gemini-3.1-flash-lite' },
+        ...(docxFileId ? { docxFileId } : {}),
+      });
+
+      // ── 7) САМОПРОВЕРКА — асинхронно, не блокирует юриста ──
+      // done:true уже отправлен → кнопки «Скачать» разблокированы.
+      // Самопроверка идёт в фоне и завершается событием { review }.
+      stage('🔎 Проверяю готовый документ…');
+      (async () => {
+        let review = null;
+        try {
+          const docText = safeBlocks
+            .map((b) => (b.runs || []).map((r) => r.t).join(''))
+            .filter((s) => s.trim())
+            .join('\n');
+          const SELFCHECK_SYS = `Ты — контролёр качества юридического документа (право Кыргызской Республики). Тебе дан ГОТОВЫЙ документ и ЭТАЛОННЫЕ нормы из базы (RAG).
 
 ПРОВЕРЬ ПО ПЯТИ КРИТЕРИЯМ:
 
@@ -1370,43 +1381,25 @@ ${tpl.courtDoc
 Если всё в порядке — ok:true, issues:[].
 НЕ придирайся к шаблонным прочеркам «____» там, где данных не было в досье.
 НЕ считай ошибкой упоминание иностранной валюты, если пользователь сам её назвал в диалоге.`;
-        const rawRev = await withTimeout((async () => clients.geminiJson({
-          systemPrompt: SELFCHECK_SYS,
-          userPrompt: `ЭТАЛОННЫЕ НОРМЫ:\n${refBlock}\n\nГОТОВЫЙ ДОКУМЕНТ:\n${docText.slice(0, 20000)}\n\nВерни JSON-вывод проверки.`,
-          model: 'gemini-3.1-flash-lite', maxOutputTokens: 2500, timeoutMs: 22000,
-          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'draft:selfcheck' }),
-        }))(), 25000, null);
-        const rev = parseObj(rawRev);
-        if (rev && typeof rev === 'object') {
-          const issues = Array.isArray(rev.issues) ? rev.issues
-            .filter((i) => i && i.text)
-            .slice(0, 10)
-            .map((i) => ({ severity: ['high', 'medium', 'low'].includes(i.severity) ? i.severity : 'medium', text: stripCjk(String(i.text)).slice(0, 280) }))
-            : [];
-          review = { ok: !!rev.ok && issues.length === 0, issues };
-        }
-      } catch (e) { console.warn('[draft-document] self-check failed:', e.message); }
-
-      // Этап 4: параллельно с отправкой done — генерируем .docx для ONLYOFFICE
-      let docxFileId = null;
-      try {
-        const title = String((plan.facts && (plan.facts.docName || plan.facts.title)) || docType || '').trim();
-        const result = await buildDocx(safeBlocks, { docType, title });
-        docxFileId = result.fileId;
-      } catch (e) {
-        console.warn('[draft-document] docx generation failed (non-fatal):', e.message);
-      }
-
-      sse({
-        done: true,
-        blocks: safeBlocks,
-        streamedCount,
-        articlesUsed,
-        review,
-        route: { planner: 'gemini-3.1-flash-lite', retrieval: 'rag-4groups', drafter: usedModel, reviewer: 'gemini-3.1-flash-lite' },
-        ...(docxFileId ? { docxFileId } : {}),
-      });
-      return done();
+          const rawRev = await withTimeout((async () => clients.geminiJson({
+            systemPrompt: SELFCHECK_SYS,
+            userPrompt: `ЭТАЛОННЫЕ НОРМЫ:\n${refBlock}\n\nГОТОВЫЙ ДОКУМЕНТ:\n${docText.slice(0, 20000)}\n\nВерни JSON-вывод проверки.`,
+            model: 'gemini-3.1-flash-lite', maxOutputTokens: 2500, timeoutMs: 22000,
+            onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'draft:selfcheck' }),
+          }))(), 25000, null);
+          const rev = parseObj(rawRev);
+          if (rev && typeof rev === 'object') {
+            const issues = Array.isArray(rev.issues) ? rev.issues
+              .filter((i) => i && i.text)
+              .slice(0, 10)
+              .map((i) => ({ severity: ['high', 'medium', 'low'].includes(i.severity) ? i.severity : 'medium', text: stripCjk(String(i.text)).slice(0, 280) }))
+              : [];
+            review = { ok: !!rev.ok && issues.length === 0, issues };
+          }
+        } catch (e) { console.warn('[draft-document] self-check failed:', e.message); }
+        if (!res.writableEnded) { sse({ review }); done(); }
+      })();
+      return; // done() вызовет async IIFE после самопроверки
     } catch (err) {
       console.error('[draft-document] error:', err.message);
       sse({ error: 'Сбой генерации: ' + err.message });

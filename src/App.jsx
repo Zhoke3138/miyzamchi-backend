@@ -1594,7 +1594,7 @@ const CreateDocMode = ({ onToast }) => {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
-      let result = null, errMsg = null;
+      let result = null, errMsg = null, latestReview = null;
       // Прогрессивная отрисовка: открываем редактор на первом блоке и дописываем
       // блоки по мере прихода. failed → переходим на полный рендер в конце.
       const streamed = [];
@@ -1623,6 +1623,7 @@ const CreateDocMode = ({ onToast }) => {
           }
           else if (evt.stage) setGenStatus(evt.stage);
           else if (evt.error) errMsg = evt.error;
+          else if (evt.review !== undefined) latestReview = evt.review;
           else if (evt.done) {
             result = evt;
             // OO mode: открываем готовый .docx в ONLYOFFICE редакторе
@@ -1649,7 +1650,7 @@ const CreateDocMode = ({ onToast }) => {
       }
       const n = (result && result.articlesUsed || []).length;
       if (n) onToast && onToast('law', `Задействовано норм: ${n}`);
-      setGenReview(result && result.review || null);
+      setGenReview(latestReview || (result && result.review) || null);
       setGenBlocks(finalBlocks);
       setGenDone(true);
     } catch (e) {

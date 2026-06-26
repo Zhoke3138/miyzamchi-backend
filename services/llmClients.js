@@ -194,32 +194,39 @@ async function deepseekReason({
     return { text, model: 'gemini-2.5-flash(fallback)' };
   }
 
-  const stream = await _deepseek.chat.completions.create({
-    model,
-    reasoning_effort: effort,
-    max_tokens: 32000,
-    thinking: { type: thinkingType },   // Node-эквивалент Python extra_body
-    stream: true,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-  });
-
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120000); // 2 мин — предотвращает бесконечные зависания
   let text = '';
   let reasoning = '';
   let finalUsage = null;
-  for await (const chunk of stream) {
-    const delta = (chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta) || {};
-    if (delta.reasoning_content) {
-      reasoning += delta.reasoning_content;
-      emit({ reasoning: delta.reasoning_content });
+  try {
+    const stream = await _deepseek.chat.completions.create({
+      model,
+      reasoning_effort: effort,
+      max_tokens: 32000,
+      thinking: { type: thinkingType },   // Node-эквивалент Python extra_body
+      stream: true,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      signal: controller.signal,
+    });
+
+    for await (const chunk of stream) {
+      const delta = (chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta) || {};
+      if (delta.reasoning_content) {
+        reasoning += delta.reasoning_content;
+        emit({ reasoning: delta.reasoning_content });
+      }
+      if (delta.content) {
+        text += delta.content;
+        emit({ text: delta.content });
+      }
+      if (chunk.usage) finalUsage = chunk.usage;
     }
-    if (delta.content) {
-      text += delta.content;
-      emit({ text: delta.content });
-    }
-    if (chunk.usage) finalUsage = chunk.usage;
+  } finally {
+    clearTimeout(timer);
   }
   if (reasoning) {
     console.log(`[DeepSeek DEBUG] ${model} reasoning_content: ${reasoning.length}ch (streamed)`);
