@@ -843,10 +843,11 @@ ${checklist}
   //  SSE: { stage } прогресс → финальный { done:true, blocks[], articlesUsed[] }.
   // ═══════════════════════════════════════════════════════════════════════
   const CAT_LABEL = {
-    exact:      'ТОЧНЫЕ НОРМЫ ПО ПРЕДМЕТУ',
-    related:    'СВЯЗАННЫЕ НОРМЫ',
-    general:    'ОБЩИЕ НОРМЫ',
-    procedural: 'ПРОЦЕССУАЛЬНЫЕ НОРМЫ',
+    exact:       'ТОЧНЫЕ НОРМЫ ПО ПРЕДМЕТУ',
+    related:     'СВЯЗАННЫЕ НОРМЫ',
+    general:     'ОБЩИЕ НОРМЫ',
+    procedural:  'ПРОЦЕССУАЛЬНЫЕ НОРМЫ',
+    enforcement: 'АДМИНИСТРАТИВНОЕ И УГОЛОВНОЕ ДАВЛЕНИЕ',
   };
   const PLANNER_SYS = (tpl) => `Ты — ведущий юрист-исследователь ИИ «Мыйзамчы» (Кыргызстан).
 По собранному диалогу подготовь ПЛАН составления документа «${tpl.label}» и СТРАТЕГИЮ поиска норм права КР.
@@ -962,7 +963,8 @@ ${tpl.courtDoc
 • Отдельный абзац: «Руководствуясь ст. … ГПК КР, прошу:» со ссылками на процессуальные нормы.
 • Для имущественного иска добавь требование о взыскании госпошлины.`
   : `• Порядок и сроки из группы «Порядок и сроки», если применимо.
-• НЕ добавляй блок court, госпошлину, подсудность и ГПК — это НЕ судебный документ. Адресат/заявитель — блоками party_header (справа).${dw ? `\n• Каждое требование в «${dw}:» формулируй чётко (что и в какой срок).` : ''}`}
+• НЕ добавляй блок court, госпошлину, подсудность и ГПК — это НЕ судебный документ. Адресат/заявитель — блоками party_header (справа).${dw ? `\n• Каждое требование в «${dw}:» формулируй чётко (что и в какой срок).` : ''}
+• ЕСЛИ в эталонном списке есть нормы из группы «АДМИНИСТРАТИВНОЕ И УГОЛОВНОЕ ДАВЛЕНИЕ» — обязательно включи их в правовое обоснование отдельным убедительным абзацем: административные штрафы для компании по Кодексу КР о правонарушениях, уголовная ответственность директора/должностного лица по УК КР, полномочия надзорных органов инициировать проверку. Это создаёт максимальное давление для досудебного урегулирования.`}
 
 ЮРИСДИКЦИЯ — КЫРГЫЗСКАЯ РЕСПУБЛИКА (соблюдать СТРОГО):
 • ВАЛЮТА: всегда «сом» (сом КР / KGS). Слова «тенге», «рубль», «гривна» и любая иная иностранная валюта — ЗАПРЕЩЕНЫ, если пользователь явно не указал их в досье.
@@ -1017,22 +1019,28 @@ ${tpl.courtDoc
       //   Каждый исследователь САМ формулирует запросы по своей специализации и
       //   САМ ищет в Pinecone. Все агенты работают ПАРАЛЛЕЛЬНО (Promise.all);
       //   у каждого бюджет ~20с (withTimeout) — медленный агент не тормозит остальных.
-      const cats = ['exact', 'related', 'general', 'procedural'];
+      // pressureDoc (претензия, жалоба) — включает 5-го агента по административному
+      // и уголовному давлению (КоАП КР, УК КР, надзорные органы).
+      const isPressureDoc = !!tpl.pressureDoc;
+      const cats = isPressureDoc
+        ? ['exact', 'related', 'general', 'procedural', 'enforcement']
+        : ['exact', 'related', 'general', 'procedural'];
       const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
       const withTimeout = (p, ms, fb) => Promise.race([
         Promise.resolve(p).catch(() => fb),
         new Promise((r) => setTimeout(() => r(fb), ms)),
       ]);
       const RESEARCH_AGENTS = {
-        exact:      { label: 'Точные нормы',      focus: 'нормы материального права, ПРЯМО обосновывающие требование (основание иска по предмету спора)' },
-        related:    { label: 'Спец. и связанные', focus: 'профильный СПЕЦИАЛЬНЫЙ закон/кодекс по предмету (земля→Земельный кодекс КР, потребитель→Закон «О защите прав потребителей», аренда/заём/подряд→соответствующие главы ГК) + связанные институты и последствия (реституция, убытки, неустойка)' },
-        general:    { label: 'Общие нормы',       focus: 'общие положения Гражданского кодекса КР: о сделках, недействительности сделок, обязательствах, праве собственности, представительстве' },
-        // Специализация 4-го агента зависит от типа документа (иск → ГПК/пошлина;
-        // претензия → досудебный порядок/сроки; заявление → порядок рассмотрения обращений).
-        procedural: { label: 'Порядок и сроки',   focus: tpl.procFocus || 'процессуальные нормы и сроки по предмету обращения' },
+        exact:      { label: 'Точные нормы',           focus: 'нормы материального права, ПРЯМО обосновывающие требование (основание требования по предмету спора): конкретные статьи ГК КР, профильного закона, регулирующие именно это правоотношение' },
+        related:    { label: 'Спец. и связанные нормы', focus: 'профильный СПЕЦИАЛЬНЫЙ закон/кодекс по предмету (земля→Земельный кодекс КР; потребитель→Закон «О защите прав потребителей»; строительство→Закон «О градостроительстве»; аренда/заём/подряд→соответствующие главы ГК) + последствия нарушения (реституция, убытки, неустойка, проценты, понуждение к исполнению в натуре)' },
+        general:    { label: 'Общие нормы ГК',         focus: 'общие положения Гражданского кодекса КР: возникновение и исполнение обязательств; ответственность за неисполнение; сделки и их недействительность; право собственности; публичная оферта; заверения и гарантии застройщика/продавца; представительство и доверенность' },
+        // Специализация 4-го агента зависит от типа документа.
+        procedural: { label: 'Порядок и сроки',        focus: tpl.procFocus || 'процессуальные нормы и сроки по предмету обращения' },
+        // 5-й агент (только для pressureDoc): административное и уголовное давление.
+        enforcement:{ label: 'Администр. и уголовное давление', focus: 'административная ответственность юридических лиц и должностных лиц (Кодекс КР о правонарушениях): составы нарушений по предмету спора, размеры штрафов; уголовная ответственность руководителя/директора организации (УК КР): мошенничество, обман потребителей/покупателей, злоупотребление полномочиями, халатность; полномочия надзорных органов КР (Государственный строительный надзор, Государственная инспекция, ГКНА, прокуратура): право проводить внеплановые проверки и привлекать к ответственности; нарушения строительного законодательства и градостроительных норм' },
       };
       const procDefaults = Array.isArray(tpl.procDefaults) ? tpl.procDefaults : PROC_DEFAULTS;
-      const researcherSys = (agent) => `Ты — юрист-исследователь права Кыргызской Республики, узкая специализация: «${agent.label}». Тебе дан диалог о деле для документа «${tpl.label}». Сформулируй 3-6 ТОЧНЫХ поисковых запросов к векторной базе НПА КР, чтобы найти ВСЕ нормы строго по своей специализации: ${agent.focus}. Верни СТРОГО JSON без markdown: { "queries": ["...", ...] }. Запросы развёрнутые — называй конкретные институты, кодексы и законы КР.`;
+      const researcherSys = (agent) => `Ты — юрист-исследователь права Кыргызской Республики, узкая специализация: «${agent.label}». Тебе дан диалог о деле для документа «${tpl.label}». Сформулируй 4-8 ТОЧНЫХ поисковых запросов к векторной базе НПА КР, чтобы найти ВСЕ нормы строго по своей специализации: ${agent.focus}. Верни СТРОГО JSON без markdown: { "queries": ["...", ...] }. Запросы развёрнутые — называй конкретные институты, кодексы, законы и статьи КР.`;
 
       stage('🧑‍⚖️ Коллегия исследователей ищет нормы параллельно (точные · связанные · общие · процессуальные)…');
       const t0 = Date.now();
@@ -1054,18 +1062,22 @@ ${tpl.courtDoc
         try {
           const raw = await clients.geminiJson({
             systemPrompt: researcherSys(agent), userPrompt: `ДИАЛОГ:\n${convo}\n\nВерни JSON с queries.`,
-            model: 'gemini-3.1-flash-lite', maxOutputTokens: 1024, timeoutMs: 15000,
+            model: 'gemini-3.1-flash-lite', maxOutputTokens: 1536, timeoutMs: 18000,
             onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: `draft:researcher:${cat}` }),
           });
           const o = parseObj(raw);
-          if (o && Array.isArray(o.queries)) queries = o.queries.slice(0, 6);
+          if (o && Array.isArray(o.queries)) queries = o.queries.slice(0, 8);
         } catch (e) { console.warn(`[draft-document] agent ${cat} query failed:`, e.message); }
-        // Агент «Порядок и сроки» всегда добавляет дефолты под тип документа.
-        if (cat === 'procedural') queries = uniq([...queries, ...procDefaults]).slice(0, 8);
+        // Дефолтные запросы по типу агента (независимо от LLM-генерации).
+        if (cat === 'procedural') queries = uniq([...queries, ...procDefaults]).slice(0, 10);
+        if (cat === 'enforcement') {
+          const enfDefs = Array.isArray(tpl.enforcementDefaults) ? tpl.enforcementDefaults : [];
+          queries = uniq([...queries, ...enfDefs]).slice(0, 10);
+        }
         if (!queries.length && cat === 'exact') queries = [String(tpl.label)];
         if (!queries.length) return { cat, hits: [] };
         let hits = [];
-        try { hits = (await resolvedDeps.pineconeSearch?.(queries, null, 8)) || []; }
+        try { hits = (await resolvedDeps.pineconeSearch?.(queries, null, 10)) || []; }
         catch (e) { console.warn(`[draft-document] agent ${cat} RAG failed:`, e.message); }
         // Прогресс конкретного агента в UI (по мере готовности).
         sse({ stage: `   ✓ ${agent.label}: запросов ${queries.length}, найдено статей ${hits.length}`, agent: cat, found: hits.length });
@@ -1096,13 +1108,13 @@ ${tpl.courtDoc
 
       // ── 3) Роль нормы = группа RAG по приоритету (без отдельного агента-отборщика).
       //     Берём ТОП по score внутри каждой роли — широкий охват всех видов норм.
-      const roleOf = (rec) => rec.cats.has('exact') ? 'exact' : rec.cats.has('related') ? 'related' : rec.cats.has('procedural') ? 'procedural' : 'general';
+      const roleOf = (rec) => rec.cats.has('exact') ? 'exact' : rec.cats.has('related') ? 'related' : rec.cats.has('enforcement') ? 'enforcement' : rec.cats.has('procedural') ? 'procedural' : 'general';
       const allNorms = Array.from(pool.values()).sort((a, b) => b.score - a.score);
-      const caps = { exact: 8, related: 7, general: 5, procedural: 7 };
-      const byRole = { exact: [], related: [], general: [], procedural: [] };
+      const caps = { exact: 10, related: 8, general: 6, procedural: 8, enforcement: 7 };
+      const byRole = { exact: [], related: [], general: [], procedural: [], enforcement: [] };
       for (const rec of allNorms) {
         const role = roleOf(rec);
-        if (byRole[role].length < caps[role]) byRole[role].push(rec);
+        if ((byRole[role] || []).length < (caps[role] || 5)) byRole[role].push(rec);
       }
       let refIdx = 0;
       const articlesUsed = [];
@@ -1119,7 +1131,13 @@ ${tpl.courtDoc
       }
       const refBlock = refParts.length ? refParts.join('\n\n') : '(эталонных норм в базе не найдено — составляй фабулу без точных ссылок на статьи)';
       // Точный разброс по категориям — не просто "27 норм" (потолок cap), а реальные числа.
-      const normBreakdown = `точных: ${byRole.exact.length} · связанных: ${byRole.related.length} · процессуальных: ${byRole.procedural.length} · общих: ${byRole.general.length}`;
+      const normBreakdown = [
+        `точных: ${byRole.exact.length}`,
+        `связанных: ${byRole.related.length}`,
+        `процессуальных: ${byRole.procedural.length}`,
+        `общих: ${byRole.general.length}`,
+        byRole.enforcement.length ? `давление: ${byRole.enforcement.length}` : '',
+      ].filter(Boolean).join(' · ');
       stage(`📚 Нашёл ${allNorms.length} норм, беру в работу ${refIdx} (${normBreakdown})`, { found: allNorms.length, used: refIdx });
       console.log(`[draft-document] ${docType} | pool=${allNorms.length} → used=${refIdx} | roles=${JSON.stringify(Object.fromEntries(cats.map((c) => [c, byRole[c].length])))}`);
 
