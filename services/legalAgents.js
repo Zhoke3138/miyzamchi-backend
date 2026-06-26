@@ -13,6 +13,7 @@
 
 const clients = require('./llmClients');
 const { normalizeNpaName, getDbExactName, CANONICAL_NPAS } = require('../lib/npaAliases');
+const { searchSupabase } = require('./supabaseService');
 
 // ═══════════════════════════════════════════════════════════════════════
 // Авто-обнаружение точных DB-названий НПА из результатов Pinecone
@@ -184,77 +185,28 @@ async function expandQuery(chunkText) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Pinecone search — ЖЁСТКАЯ привязка к НПА (фильтр) + soft-fallback
+// Supabase search — замена Pinecone, тот же интерфейс (queries[], npa, topK)
 // ═══════════════════════════════════════════════════════════════════════
-// topKPerQuery=10: берём «шире» эталон (соседние абзацы), чтобы продолжение нормы
-// (напр. лимит «не более 25%») не терялось на стыке чанков → меньше False Positives.
+// Supabase hybrid_search_documents: cosine vector similarity + GIN full-text.
+// npa-фильтр не поддерживается на уровне RPC → семантика сама находит нужный НПА.
+// Формат ответа Supabase уже совместим с Pinecone (supabaseService.js маппит поля).
 async function pineconeSearch(queries, npa = null, topKPerQuery = 10) {
-  // ТОЧНАЯ строка npa_title из базы — сначала статик DB_EXACT_NAMES,
-  // затем рантайм-кеш авто-обнаружения, иначе null → без фильтра.
-  const canonical = npa ? normalizeNpaName(npa) : null;
-  const exact = canonical
-    ? (getDbExactName(canonical) || _runtimeNpaCache.get(canonical) || null)
-    : null;
-  const filter = exact ? { npa_title: { $eq: exact } } : null;
-
-  // Параллельный прогон по всем запросам (Promise.all), merge по id с max score.
-  // Было: sequential for await — 3 запроса × ~0.5с = ~1.5с на блок.
-  // Стало: все запросы стартуют одновременно → ~0.5с на блок.
-  async function run(useFilter) {
-    const allMatches = await Promise.all(queries.map(async (q) => {
-      try {
-        const vector = await clients.getEmbedding(q);
-        return await clients.queryPinecone(vector, topKPerQuery, useFilter ? filter : null);
-      } catch (_) {
-        return []; // graceful: один промах не валит весь поиск
-      }
-    }));
-    const byId = new Map();
-    for (const matches of allMatches) {
-      for (const m of matches) {
-        const prev = byId.get(m.id);
-        if (!prev || m.score > prev.score) byId.set(m.id, m);
-      }
+  const allMatches = await Promise.all(queries.map(async (q) => {
+    try {
+      const vector = await clients.getEmbedding(q);
+      return await searchSupabase(vector, q, topKPerQuery);
+    } catch (_) {
+      return []; // graceful: один промах не валит весь поиск
     }
-    return Array.from(byId.values()).sort((a, b) => b.score - a.score);
-  }
-
-  let hits = await run(!!filter);
-
-  // Soft-fallback: фильтр дал 0 (точная строка всё ещё не совпала) → чистый вектор.
-  if (filter && hits.length === 0) {
-    console.warn(`[Pinecone] фильтр npa_title="${exact}" → 0 результатов, fallback на чистый семантический поиск`);
-    hits = await run(false);
-  }
-
-  // ── Авто-обнаружение DB-названия НПА из результатов ────────────────
-  // Если поиск шёл без фильтра (exact=null) и canonical известен —
-  // сканируем top-5 hits: если npa_title совпадает с нашим canonical,
-  // кешируем для будущих запросов (следующий блок/документ использует фильтр).
-  if (!filter && canonical && !_runtimeNpaCache.has(canonical) && hits.length > 0) {
-    let discovered = null;
-    for (const hit of hits.slice(0, 5)) {
-      const dbTitle = hit.metadata?.npa_title;
-      if (dbTitle && _matchDbTitle(canonical, dbTitle)) {
-        discovered = dbTitle;
-        break;
-      }
-    }
-    // null тоже кешируем — чтобы не повторять сканирование впустую
-    _runtimeNpaCache.set(canonical, discovered);
-    if (discovered) {
-      console.log(`[NPA Auto] "${canonical}" → "${discovered.slice(0, 70)}"`);
+  }));
+  const byId = new Map();
+  for (const matches of allMatches) {
+    for (const m of matches) {
+      const prev = byId.get(m.id);
+      if (!prev || m.score > prev.score) byId.set(m.id, m);
     }
   }
-
-  // DEBUG (временно): сверяем формат npa_title в базе с тем, что мы ищем.
-  if (hits.length) {
-    console.log('[Pinecone DEBUG] npa_title[0] в базе =', JSON.stringify(hits[0].metadata && hits[0].metadata.npa_title),
-      '| искали (exact) =', JSON.stringify(exact), '| npa(raw) =', JSON.stringify(npa));
-  }
-
-  // «Сырые» hits; двухступенчатый score-фильтр применит роут (twoStagePineconeFilter).
-  return hits;
+  return Array.from(byId.values()).sort((a, b) => b.score - a.score);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
