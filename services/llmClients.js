@@ -26,7 +26,7 @@ function getNextKey() {
   return key;
 }
 
-// ── Embeddings (gemini-embedding-001, срез до 768d — как в server.js) ──────
+// ── Embeddings (gemini-embedding-001, 768d — для совместимости со старым кодом) ──
 const EMBEDDING_MODEL = 'models/gemini-embedding-001';
 const _embedCache = new Map();
 
@@ -51,6 +51,36 @@ async function getEmbedding(text) {
   const vector = data.embedding.values.slice(0, 768);
   if (_embedCache.size >= 200) _embedCache.delete(_embedCache.keys().next().value);
   _embedCache.set(slice, vector);
+  return vector;
+}
+
+// ── Embeddings для Supabase (gemini-embedding-2, 1536d — совпадает с индексом) ─
+const EMBEDDING_MODEL_V2 = 'models/gemini-embedding-2';
+const _embedCacheV2 = new Map();
+
+async function getEmbeddingForSupabase(text) {
+  const slice = (text || '').slice(0, 8000);
+  const cacheKey = 'sb_' + slice;
+  if (_embedCacheV2.has(cacheKey)) return _embedCacheV2.get(cacheKey);
+
+  const key = getNextKey();
+  const url = `https://generativelanguage.googleapis.com/v1beta/${EMBEDDING_MODEL_V2}:embedContent?key=${key}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: EMBEDDING_MODEL_V2,
+      content: { parts: [{ text: slice }] },
+      outputDimensionality: 1536,
+      taskType: 'RETRIEVAL_QUERY',
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'embedding-v2 failed');
+
+  const vector = data.embedding.values;
+  if (_embedCacheV2.size >= 200) _embedCacheV2.delete(_embedCacheV2.keys().next().value);
+  _embedCacheV2.set(cacheKey, vector);
   return vector;
 }
 
@@ -206,6 +236,7 @@ async function deepseekReason({
 module.exports = {
   getNextKey,
   getEmbedding,
+  getEmbeddingForSupabase,
   queryPinecone,
   geminiJson,
   deepseekReason,

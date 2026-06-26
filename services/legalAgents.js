@@ -187,13 +187,12 @@ async function expandQuery(chunkText) {
 // ═══════════════════════════════════════════════════════════════════════
 // Supabase search — замена Pinecone, тот же интерфейс (queries[], npa, topK)
 // ═══════════════════════════════════════════════════════════════════════
-// Supabase hybrid_search_documents: cosine vector similarity + GIN full-text.
-// npa-фильтр не поддерживается на уровне RPC → семантика сама находит нужный НПА.
-// Формат ответа Supabase уже совместим с Pinecone (supabaseService.js маппит поля).
+// ВАЖНО: Supabase индексирован через gemini-embedding-2 (1536d).
+// getEmbeddingForSupabase использует ту же модель — без неё совпадений ноль.
 async function pineconeSearch(queries, npa = null, topKPerQuery = 10) {
   const allMatches = await Promise.all(queries.map(async (q) => {
     try {
-      const vector = await clients.getEmbedding(q);
+      const vector = await clients.getEmbeddingForSupabase(q);
       return await searchSupabase(vector, q, topKPerQuery);
     } catch (_) {
       return []; // graceful: один промах не валит весь поиск
