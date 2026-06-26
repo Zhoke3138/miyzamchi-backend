@@ -8411,8 +8411,8 @@ const PRICING_PLANS = [
 ];
 
 // Номер для связи при оплате — обновить на реальный перед запуском
-const CONTACT_WHATSAPP = 'https://wa.me/996700000000?text=Хочу+оформить+подписку+Мыйзамчы+AI';
-const CONTACT_TELEGRAM = 'https://t.me/miyzamchi_support';
+const CONTACT_WHATSAPP = 'https://wa.me/996777886677?text=Хочу+оформить+подписку+Мыйзамчы+AI';
+const CONTACT_TELEGRAM = 'https://t.me/zhasirov';
 
 const LoginScreen = () => (
   <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
