@@ -8920,6 +8920,30 @@ const App=()=>{
     };
   }, []);
 
+  // SuperDoc slot — useMemo на верхнем уровне компонента (до auth gate),
+  // иначе React error #310: число хуков менялось между loading-рендером и workspace-рендером.
+  const _superDocSlot = useMemo(() => {
+    if (OO_MODE) return null;
+    const currentTab = tabs.find(t => t.id === activeTab);
+    const isValidDocx = currentTab?.buffer && currentTab.buffer instanceof ArrayBuffer;
+    const docFile = isValidDocx ? new Blob([currentTab.buffer]) : null;
+    return (
+      <>
+        <SuperDocEditor
+          key={`${activeTab}_${currentTab?.buffer?.byteLength || 0}`}
+          document={docFile}
+          documentMode="editing"
+          fonts={{ assetBaseUrl: '/superdoc-fonts/' }}
+          toolbar={{ groups: ['history', 'text', 'paragraph', 'insert', 'list', 'indent', 'font-controls', 'table', 'tools'], fonts: [{ label: 'Times New Roman', key: 'Times New Roman, serif' }] }}
+          onReady={(e) => { window.superdoc = e.superdoc; }}
+          onEditorCreate={(e) => { window.docEngine = e.editor; }}
+          onEditorUpdate={() => { if (window.__shadowTrigger) window.__shadowTrigger(); }}
+        />
+      </>
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, tabs.find(t => t.id === activeTab)?.buffer]);
+
   // ── Auth gate: все хуки уже вызваны выше, здесь безопасны conditional returns ──
   // Шаг 0: env vars не вошли в сборку — блокируем доступ, нет тихого bypass.
   if(!_SUPA_URL||!_SUPA_KEY) return(
@@ -9118,29 +9142,7 @@ const App=()=>{
         {leftOpen && !isMobile && <Handle onMD={startDrag('l')}/>}
         {/* EDITOR — always full width on mobile */}
         <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
-          {/* useMemo всегда вызывается (нарушение правил хуков при тернаре исправлено).
-              В OO_MODE возвращает null, OOEditorSlot рендерится отдельно ниже. */}
-          {useMemo(() => {
-            if (OO_MODE) return null;
-            // ── SuperDoc режим (продакшн Render, когда OO_MODE=false) ──
-            const currentTab = tabs.find(t => t.id === activeTab);
-            const isValidDocx = currentTab?.buffer && currentTab.buffer instanceof ArrayBuffer;
-            const docFile = isValidDocx ? new Blob([currentTab.buffer]) : null;
-            return (
-              <>
-              <SuperDocEditor
-                key={`${activeTab}_${currentTab?.buffer?.byteLength || 0}`}
-                document={docFile}
-                documentMode="editing"
-                fonts={{ assetBaseUrl: '/superdoc-fonts/' }}
-                toolbar={{ groups: ['history', 'text', 'paragraph', 'insert', 'list', 'indent', 'font-controls', 'table', 'tools'], fonts: [{ label: 'Times New Roman', key: 'Times New Roman, serif' }] }}
-                onReady={(e) => { window.superdoc = e.superdoc; }}
-                onEditorCreate={(e) => { window.docEngine = e.editor; }}
-                onEditorUpdate={() => { if (window.__shadowTrigger) window.__shadowTrigger(); }}
-              />
-            </>
-            );
-          }, [activeTab, tabs.find(t => t.id === activeTab)?.buffer])}
+          {_superDocSlot}
           {/* OO_MODE: ONLYOFFICE-слот (отдельный компонент на уровне модуля) */}
           {OO_MODE && <OOEditorSlot
             activeTab={activeTab}
