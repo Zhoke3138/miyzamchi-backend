@@ -8921,6 +8921,20 @@ const App=()=>{
   }, []);
 
   // ── Auth gate: все хуки уже вызваны выше, здесь безопасны conditional returns ──
+  // Шаг 0: env vars не вошли в сборку — блокируем доступ, нет тихого bypass.
+  if(!_SUPA_URL||!_SUPA_KEY) return(
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
+      background:'#0f1117',flexDirection:'column',gap:16,padding:24,textAlign:'center'}}>
+      <div style={{fontSize:40}}>⚠️</div>
+      <div style={{color:'#f87171',fontSize:16,fontWeight:600}}>Ошибка конфигурации</div>
+      <div style={{color:'#666',fontSize:13,maxWidth:360,lineHeight:1.7}}>
+        Переменные <code style={{color:'#aaa'}}>VITE_SUPABASE_URL</code> и{' '}
+        <code style={{color:'#aaa'}}>VITE_SUPABASE_ANON_KEY</code> не заданы в сборке.
+        Добавьте их в Render и сделайте Manual Deploy.
+      </div>
+    </div>
+  );
+  // Шаг 1: ждём проверку сессии
   if(authLoading) return(
     <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
       background:'#0f1117',flexDirection:'column',gap:16}}>
@@ -8928,7 +8942,9 @@ const App=()=>{
       <div style={{color:'#555',fontSize:14}}>Загрузка…</div>
     </div>
   );
-  if(!authUser&&supabase) return <LoginScreen/>;
+  // Шаг 2: не залогинен → LoginScreen
+  if(!authUser) return <LoginScreen/>;
+  // Шаг 3: залогинен, нет подписки → PricingScreen (Paywall)
   if(showPaywall) return <PricingScreen user={authUser} subscription={subscription} onLogout={handleLogout}/>;
 
   return(
