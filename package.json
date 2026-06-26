@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@supabase/supabase-js": "^2.108.2",
     "@superdoc-dev/react": "^1.10.0",
     "@superdoc-dev/sdk": "^1.15.0",
     "@tiptap/pm": "^3.26.0",

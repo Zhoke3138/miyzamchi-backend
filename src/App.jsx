@@ -12,6 +12,7 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { diff_match_patch } from 'diff-match-patch';
 import { LANGS, t as i18nT, getAppLang, setAppLang, subscribeLang } from './translations.js';
+import { createClient } from '@supabase/supabase-js';
 import './ide-styles.css';
 
 window.React = React;
@@ -49,10 +50,18 @@ const BACKEND_URL = (() => {
 // не так — используем продакшн URL вместо опасного localhost-fallback.
 const _ensureBackend = () => BACKEND_URL && BACKEND_URL.length ? BACKEND_URL : RENDER_BACKEND_URL;
 
-// CLIENT_TOKEN — защита API от скрейпинга. Задаётся через VITE_CLIENT_TOKEN в Render env.
-const CLIENT_TOKEN = import.meta.env.VITE_CLIENT_TOKEN || '';
-const jsonHeaders = () => ({ 'Content-Type': 'application/json', ...(CLIENT_TOKEN ? { 'X-Client-Token': CLIENT_TOKEN } : {}) });
-const tokenHeaders = () => (CLIENT_TOKEN ? { 'X-Client-Token': CLIENT_TOKEN } : {});
+// ── Supabase Auth ────────────────────────────────────────────────────────────
+// VITE_SUPABASE_URL и VITE_SUPABASE_ANON_KEY задаются в Render env фронтенда.
+// Без них приложение работает в dev-режиме (auth-gate отключён).
+const _SUPA_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const _SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabase = (_SUPA_URL && _SUPA_KEY) ? createClient(_SUPA_URL, _SUPA_KEY) : null;
+
+// JWT хранится в module-scope и синхронно читается в jsonHeaders/tokenHeaders.
+// Обновляется через onAuthStateChange listener — все последующие fetch уже имеют токен.
+let _currentJwt = '';
+const jsonHeaders = () => ({ 'Content-Type': 'application/json', ...(_currentJwt ? { 'Authorization': `Bearer ${_currentJwt}` } : {}) });
+const tokenHeaders = () => (_currentJwt ? { 'Authorization': `Bearer ${_currentJwt}` } : {});
 
 const safeJson=(v,fallback)=>{try{return JSON.parse(v)}catch(e){return fallback}};
 
@@ -3603,9 +3612,7 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
             </button>
           ))}
         </div>
-        {!isMobile && <a href="/chat.html" className="btn myz-to-chat-link">
-          <span className="myz-to-chat-ico">💬</span><span>{tr('to_chat')}</span>
-        </a>}
+        {/* chat.html перенесён на отдельный домен — ссылка удалена */}
         {!isMobile && <button onClick={onPalette} className="btn myz-palette-btn">
           <Ico k="cmd" sz={12}/><span>Ctrl+P</span>
         </button>}
@@ -8396,10 +8403,155 @@ function OOEditorSlot({ activeTab, tabFileIds, tabs, onError }) {
   return <OnlyOfficeEditor key={activeTab} fileId={ooFileId} onSaved={()=>{}} onError={onError} />;
 }
 
+/* ═══ Auth Screens ═══ */
+const PRICING_PLANS = [
+  { key: 'basic',    name: 'Базовый',  price: 2500, ai: 50,  docs: 20  },
+  { key: 'standard', name: 'Стандарт', price: 4500, ai: 150, docs: 60  },
+  { key: 'pro',      name: 'Про',      price: 7000, ai: 400, docs: 150, popular: true },
+];
+
+// Номер для связи при оплате — обновить на реальный перед запуском
+const CONTACT_WHATSAPP = 'https://wa.me/996700000000?text=Хочу+оформить+подписку+Мыйзамчы+AI';
+const CONTACT_TELEGRAM = 'https://t.me/miyzamchi_support';
+
+const LoginScreen = () => (
+  <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
+    background:'#0f1117',flexDirection:'column',gap:32,padding:24}}>
+    <div style={{textAlign:'center'}}>
+      <div style={{fontSize:56,marginBottom:12}}>⚖️</div>
+      <h1 style={{fontSize:28,fontWeight:700,color:'#f0f0f0',margin:0,letterSpacing:-0.5}}>Мыйзамчы AI</h1>
+      <p style={{color:'#666',marginTop:8,fontSize:14}}>Профессиональный юридический ИИ-ассистент для КР</p>
+    </div>
+    <button
+      onClick={()=>supabase&&supabase.auth.signInWithOAuth({
+        provider:'google',
+        options:{redirectTo: window.location.origin+'/workspace.html'}
+      })}
+      style={{display:'flex',alignItems:'center',gap:12,padding:'14px 32px',borderRadius:12,
+        background:'#fff',color:'#333',border:'none',fontSize:16,fontWeight:600,
+        cursor:'pointer',boxShadow:'0 4px 20px rgba(0,0,0,0.3)',transition:'transform 0.1s'}}
+      onMouseEnter={e=>e.currentTarget.style.transform='scale(1.02)'}
+      onMouseLeave={e=>e.currentTarget.style.transform='scale(1)'}
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24">
+        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+      </svg>
+      Войти через Google
+    </button>
+    <p style={{color:'#444',fontSize:11,textAlign:'center',maxWidth:280,lineHeight:1.6}}>
+      Доступ только для юристов с активной подпиской.<br/>
+      Используя сервис, вы принимаете условия использования.
+    </p>
+  </div>
+);
+
+const PricingScreen = ({ user, subscription, onLogout }) => {
+  const [contacting, setContacting] = React.useState(null);
+  return (
+    <div style={{minHeight:'100vh',background:'#0f1117',display:'flex',flexDirection:'column',
+      alignItems:'center',justifyContent:'center',padding:24,gap:40}}>
+      {/* Шапка */}
+      <div style={{textAlign:'center'}}>
+        <div style={{fontSize:44}}>⚖️</div>
+        <h1 style={{fontSize:26,fontWeight:700,color:'#f0f0f0',margin:'8px 0 4px'}}>Мыйзамчы AI</h1>
+        <p style={{color:'#888',fontSize:14,margin:0}}>Выберите тариф для доступа к воркспейсу</p>
+        {user?.email && <p style={{color:'#555',fontSize:12,marginTop:6}}>{user.email}</p>}
+        {subscription?.subscription_status === 'expired' && (
+          <div style={{marginTop:12,padding:'8px 16px',borderRadius:8,background:'#2a1a1a',
+            color:'#f87171',fontSize:13,border:'1px solid #4a2020'}}>
+            Ваша подписка истекла. Пожалуйста, продлите тариф.
+          </div>
+        )}
+      </div>
+
+      {/* Карточки тарифов */}
+      <div style={{display:'flex',gap:20,flexWrap:'wrap',justifyContent:'center',maxWidth:900}}>
+        {PRICING_PLANS.map(plan => (
+          <div key={plan.key} style={{
+            background: plan.popular ? '#1a1f35' : '#161b27',
+            border: plan.popular ? '2px solid #4f6ef7' : '1px solid #2a2f45',
+            borderRadius:16,padding:'28px 24px',width:240,position:'relative',
+            display:'flex',flexDirection:'column',gap:16,
+            boxShadow: plan.popular ? '0 8px 40px rgba(79,110,247,0.2)' : 'none'
+          }}>
+            {plan.popular && (
+              <span style={{position:'absolute',top:-12,left:'50%',transform:'translateX(-50%)',
+                background:'#4f6ef7',color:'#fff',fontSize:11,fontWeight:700,
+                padding:'3px 12px',borderRadius:20,whiteSpace:'nowrap'}}>
+                ПОПУЛЯРНЫЙ
+              </span>
+            )}
+            <div>
+              <div style={{color:'#888',fontSize:12,fontWeight:600,letterSpacing:1,textTransform:'uppercase'}}>{plan.name}</div>
+              <div style={{marginTop:8}}>
+                <span style={{fontSize:32,fontWeight:800,color:'#f0f0f0'}}>{plan.price.toLocaleString('ru')}</span>
+                <span style={{color:'#666',fontSize:14}}> сом/мес</span>
+              </div>
+            </div>
+            <ul style={{listStyle:'none',padding:0,margin:0,display:'flex',flexDirection:'column',gap:8}}>
+              {[
+                `${plan.ai} AI-анализов`,
+                `${plan.docs} документов`,
+                '30 дней доступа',
+                'Все 4 фазы анализа',
+                'Генерация документов'
+              ].map(f=>(
+                <li key={f} style={{display:'flex',alignItems:'center',gap:8,color:'#aaa',fontSize:13}}>
+                  <span style={{color:'#4f6ef7',fontSize:16}}>✓</span>{f}
+                </li>
+              ))}
+            </ul>
+            <a
+              href={`${CONTACT_WHATSAPP}+(${plan.name},+${plan.price}+сом)`}
+              target="_blank" rel="noopener noreferrer"
+              onClick={()=>setContacting(plan.key)}
+              style={{
+                display:'block',textAlign:'center',padding:'12px 0',borderRadius:10,
+                background: plan.popular ? '#4f6ef7' : '#1e2540',
+                color: plan.popular ? '#fff' : '#aaa',
+                fontWeight:600,fontSize:14,textDecoration:'none',
+                border: plan.popular ? 'none' : '1px solid #2a3050',
+                transition:'opacity 0.15s'
+              }}
+            >
+              {contacting===plan.key ? '✓ Открываю WhatsApp...' : 'Связаться для оплаты'}
+            </a>
+          </div>
+        ))}
+      </div>
+
+      {/* Telegram альтернатива */}
+      <div style={{textAlign:'center',color:'#555',fontSize:13}}>
+        Или напишите нам в{' '}
+        <a href={CONTACT_TELEGRAM} target="_blank" rel="noopener noreferrer"
+           style={{color:'#4f6ef7',textDecoration:'none'}}>Telegram</a>
+        {' '}— ответим и активируем в течение часа.
+      </div>
+
+      {/* Выход */}
+      <button onClick={onLogout}
+        style={{background:'transparent',border:'1px solid #2a2f45',color:'#555',
+          padding:'8px 20px',borderRadius:8,cursor:'pointer',fontSize:13}}>
+        Выйти из аккаунта
+      </button>
+    </div>
+  );
+};
+
 /* ═══ App ═══ */
 let _tabIdCounter=10;
 const App=()=>{
   const {tr} = useI18n();
+
+  // ── Auth state ────────────────────────────────────────────────────────────
+  const[authUser,setAuthUser]=useState(null);
+  const[subscription,setSubscription]=useState(null);
+  const[authLoading,setAuthLoading]=useState(!!supabase);
+  const[showPaywall,setShowPaywall]=useState(false);
+
   const[dark,setDark]=useState(()=>localStorage.getItem('myz-dk')==='1');
   const[tt,setTt]=useState(false);
   const[leftW,setLeftW]=useState(238);const[rightW,setRightW]=useState(560);const[rightSplit,setRightSplit]=useState(35);
@@ -8426,6 +8578,48 @@ const App=()=>{
     window.addEventListener('resize',onResize);
     return ()=>window.removeEventListener('resize',onResize);
   },[]);
+  // ── Supabase Auth: проверка сессии + подписки при старте ─────────────────
+  useEffect(()=>{
+    if(!supabase){ setAuthLoading(false); return; } // dev-режим без Supabase
+
+    const checkSub = async(token)=>{
+      try{
+        const r=await fetch(`${BACKEND_URL}/api/billing/me`,{
+          headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'}
+        });
+        if(r.ok){
+          const p=await r.json();
+          setSubscription(p);
+          setShowPaywall(p.subscription_status!=='active');
+        } else { setShowPaywall(true); }
+      } catch{ setShowPaywall(true); }
+      finally{ setAuthLoading(false); }
+    };
+
+    // Проверяем текущую сессию (page refresh)
+    supabase.auth.getSession().then(({data:{session}})=>{
+      _currentJwt=session?.access_token||'';
+      if(session?.user){ setAuthUser(session.user); checkSub(session.access_token); }
+      else{ setAuthLoading(false); }
+    });
+
+    // Слушаем изменения сессии (login / logout / token refresh)
+    const{data:{subscription:authListener}}=supabase.auth.onAuthStateChange((event,session)=>{
+      _currentJwt=session?.access_token||'';
+      if(event==='SIGNED_OUT'){ setAuthUser(null);setSubscription(null);setShowPaywall(false);setAuthLoading(false); }
+      if(event==='SIGNED_IN'&&session?.user){ setAuthUser(session.user); checkSub(session.access_token); }
+      if(event==='TOKEN_REFRESHED'&&session){ _currentJwt=session.access_token; }
+    });
+    return()=>authListener.unsubscribe();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  const handleLogout=useCallback(async()=>{
+    if(supabase) await supabase.auth.signOut();
+    _currentJwt='';
+    setAuthUser(null);setSubscription(null);setShowPaywall(false);
+  },[]);
+
   // ── Вкладки НПА: несколько одновременно открытых документов в правой панели ──
   const[npaTabs,setNpaTabs]=useState([]);
   const[activeNpaTabId,setActiveNpaTabId]=useState(null);
@@ -8725,6 +8919,17 @@ const App=()=>{
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, []);
+
+  // ── Auth gate: все хуки уже вызваны выше, здесь безопасны conditional returns ──
+  if(authLoading) return(
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',
+      background:'#0f1117',flexDirection:'column',gap:16}}>
+      <div style={{fontSize:40}}>⚖️</div>
+      <div style={{color:'#555',fontSize:14}}>Загрузка…</div>
+    </div>
+  );
+  if(!authUser&&supabase) return <LoginScreen/>;
+  if(showPaywall) return <PricingScreen user={authUser} subscription={subscription} onLogout={handleLogout}/>;
 
   return(
     <div className={`myz-app-root${dark?' dk':''}${tt?' tt':''} grain`}>

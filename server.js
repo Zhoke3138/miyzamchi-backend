@@ -180,13 +180,10 @@ app.use((req, res, next) => {
 //     открывается без сборки; даёт 2xx, безопасно для health-check Render).
 // Эти роуты СТОЯТ ДО express.static, иначе статика отдала бы сырой index.html.
 const STATIC_FRONTEND_URL = (process.env.STATIC_FRONTEND_URL || 'https://miyzamchi-web.onrender.com').replace(/\/+$/, '');
-app.get('/workspace.html', (req, res) => res.redirect(302, STATIC_FRONTEND_URL + '/workspace.html'));
-app.get(['/', '/index.html'], (req, res) => {
-    const fs = require('fs');
-    let html = fs.readFileSync(path.join(__dirname, 'chat.html'), 'utf8');
-    // Inject CLIENT_TOKEN for script.js so the chat can authenticate against the API
-    html = html.replace('</head>', `<script>window.__CLIENT_TOKEN=${JSON.stringify(CLIENT_TOKEN||'')};</script>\n</head>`);
-    res.type('html').send(html);
+// Весь публичный фронт теперь живёт на Vite-статике (workspace.html).
+// chat.html скрыт из навигации — вынесем на отдельный домен позже (v2.0).
+app.get(['/workspace.html', '/', '/index.html'], (req, res) => {
+    res.redirect(302, STATIC_FRONTEND_URL + '/workspace.html');
 });
 
 // dotfiles: 'deny' — express вернёт 403 на .env, .git и любые dotfiles,
@@ -315,8 +312,12 @@ const PORT = process.env.PORT || 3000;
 
 // --- НАСТРОЙКИ ИЗ RENDER (Environment Variables) ---
 const { GEMINI_API_KEY, GEMINI_API_KEYS } = process.env;
-const SUPABASE_URL      = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_URL           = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY      = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (!SUPABASE_SERVICE_ROLE_KEY) {
+    console.warn('[AUTH] SUPABASE_SERVICE_ROLE_KEY не задан → JWT-авторизация отключена (добавьте в Render env)');
+}
 
 const rawKeys = GEMINI_API_KEY || GEMINI_API_KEYS;
 const KEYS = rawKeys ? rawKeys.split(',').map(k => k.trim()) : [];
@@ -354,6 +355,85 @@ function requireClientToken(req, res, next) {
         return res.status(401).json({ error: 'Unauthorized: missing or invalid X-Client-Token' });
     }
     next();
+}
+
+// ── Supabase JWT Auth middleware ────────────────────────────────────────────
+// Верифицирует Supabase JWT через REST /auth/v1/user (без SDK, через fetch).
+// Устанавливает req.userId и req.userEmail. Если SUPABASE_SERVICE_ROLE_KEY не
+// задан — пропускает всё (backward compat для локальной разработки).
+async function verifySupabaseJWT(req, res, next) {
+    if (!SUPABASE_SERVICE_ROLE_KEY) return next(); // auth отключён в dev
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Authorization header required' });
+    }
+    const token = authHeader.slice(7);
+    try {
+        const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+            headers: { 'Authorization': `Bearer ${token}`, 'apikey': SUPABASE_ANON_KEY }
+        });
+        if (!r.ok) return res.status(401).json({ error: 'Invalid or expired token' });
+        const user = await r.json();
+        req.userId    = user.id;
+        req.userEmail = user.email;
+        next();
+    } catch (err) {
+        console.error('[Auth] JWT verification error:', err.message);
+        return res.status(401).json({ error: 'Auth service unavailable' });
+    }
+}
+
+// Проверяет активную подписку пользователя через Supabase REST (service_role).
+// Блокирует доступ если нет подписки (402) или исчерпан лимит (429).
+async function requireActiveSubscription(req, res, next) {
+    if (!SUPABASE_SERVICE_ROLE_KEY) return next(); // auth отключён в dev
+    if (!req.userId) return res.status(401).json({ error: 'userId not set' });
+    try {
+        const r = await fetch(
+            `${SUPABASE_URL}/rest/v1/user_profiles?id=eq.${req.userId}&select=*&limit=1`,
+            {
+                headers: {
+                    'apikey':        SUPABASE_SERVICE_ROLE_KEY,
+                    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                    'Accept':        'application/json'
+                }
+            }
+        );
+        const rows = await r.json();
+        const profile = Array.isArray(rows) ? rows[0] : null;
+        if (!profile || profile.subscription_status !== 'active') {
+            return res.status(402).json({ error: 'Subscription required', subscription_status: profile?.subscription_status || 'none' });
+        }
+        if (profile.ai_requests_used >= profile.ai_requests_limit) {
+            return res.status(429).json({ error: 'AI request limit reached', used: profile.ai_requests_used, limit: profile.ai_requests_limit });
+        }
+        req.userProfile = profile;
+        next();
+    } catch (err) {
+        console.error('[Auth] Subscription check error:', err.message);
+        return res.status(500).json({ error: 'Subscription check failed' });
+    }
+}
+
+// Атомарно списывает 1 AI-запрос с баланса пользователя (вызывать после успешного ответа).
+async function decrementAiRequest(userId) {
+    if (!SUPABASE_SERVICE_ROLE_KEY || !userId) return;
+    try {
+        await fetch(
+            `${SUPABASE_URL}/rest/v1/rpc/increment_ai_usage`,
+            {
+                method: 'POST',
+                headers: {
+                    'apikey':        SUPABASE_SERVICE_ROLE_KEY,
+                    'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+                    'Content-Type':  'application/json'
+                },
+                body: JSON.stringify({ user_id_param: userId })
+            }
+        );
+    } catch (err) {
+        console.error('[Billing] decrementAiRequest error:', err.message);
+    }
 }
 
 const serverStats = { totalRequests: 0, cacheHits: 0, apiErrors: 0, startTime: Date.now() };
@@ -4339,6 +4419,24 @@ require('./routes/compare')({
     rateLimit,
     logger
 });
+
+// ============================================================
+// JWT-ЗАЩИТА ВСЕХ ПЛАТНЫХ API-РОУТОВ
+// Применяется ДО регистрации обработчиков, поэтому перехватывает любые запросы.
+// Порядок: verifySupabaseJWT → requireActiveSubscription → handler.
+// Если SUPABASE_SERVICE_ROLE_KEY не задан — middleware пропускает всё (dev-режим).
+// ============================================================
+const _authChain = [verifySupabaseJWT, requireActiveSubscription];
+app.use('/api/analyze-document',       ..._authChain);
+app.use('/api/upload-document',        ..._authChain);
+app.use('/api/compare-documents',      ..._authChain);
+app.use('/api/v2',                     ..._authChain);
+app.use('/api/chat',                   ..._authChain);
+app.use('/api/edit',                   ..._authChain);
+app.use('/api/deep-analyze-document',  ..._authChain);
+
+// ── Billing routes ──────────────────────────────────────────────────────────
+app.use('/api/billing', require('./routes/billing')({ SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, verifySupabaseJWT }));
 
 // ============================================================
 // DOCUMENT-GROUNDED ANALYSIS — модульный конвейер проверки документа
