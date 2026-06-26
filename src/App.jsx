@@ -8482,22 +8482,106 @@ const _ACC = '#c0392b';
 const _ACC_BG = 'rgba(192,57,43,0.12)';
 const _ACC_BORDER = 'rgba(192,57,43,0.35)';
 
-const PricingScreen = ({ user, subscription, onLogout }) => {
+// SVG иконки для переключения темы (используются и в PricingScreen)
+const SunSvg = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <circle cx="12" cy="12" r="4"/>
+    <line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/>
+    <line x1="4.22" y1="4.22" x2="7.05" y2="7.05"/><line x1="16.95" y1="16.95" x2="19.78" y2="19.78"/>
+    <line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/>
+    <line x1="4.22" y1="19.78" x2="7.05" y2="16.95"/><line x1="16.95" y1="7.05" x2="19.78" y2="4.22"/>
+  </svg>
+);
+const MoonSvg = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+  </svg>
+);
+
+const PricingScreen = ({ user, subscription, onLogout, dark = true, onToggleDark }) => {
   const [contacting, setContacting] = React.useState(null);
   const [hovered, setHovered] = React.useState(null);
+  const d = dark;
+
+  // Палитра тем
+  const T = d ? {
+    pageBg:    '#0b0d14',
+    titleCol:  '#f2f2f2',
+    subCol:    '#5a5e72',
+    emailCol:  '#3d404f',
+    cardBg:    '#0e1018',
+    cardPopBg: '#111520',
+    cardBdr:   'rgba(255,255,255,0.07)',
+    divider:   'rgba(255,255,255,0.05)',
+    priceCol:  '#f0f0f0',
+    priceSub:  '#40445a',
+    ftTitle:   '#d8d8d8',
+    ftDesc:    '#3a3d52',
+    btnTxt:    '#555',
+    btnBdr:    'rgba(255,255,255,0.09)',
+    btnHovBdr: 'rgba(255,255,255,0.2)',
+    btnHovTxt: '#bbb',
+    tgCol:     '#3a3f55',
+    tgLnk:     '#666',
+    togBg:     'rgba(255,255,255,0.06)',
+    togBdr:    'rgba(255,255,255,0.12)',
+    togCol:    '#aaa',
+    togHov:    'rgba(255,255,255,0.12)',
+  } : {
+    pageBg:    '#f5f6fa',
+    titleCol:  '#111827',
+    subCol:    '#6b7280',
+    emailCol:  '#9ca3af',
+    cardBg:    '#ffffff',
+    cardPopBg: '#fff7f7',
+    cardBdr:   '#e5e7eb',
+    divider:   '#f3f4f6',
+    priceCol:  '#111827',
+    priceSub:  '#9ca3af',
+    ftTitle:   '#374151',
+    ftDesc:    '#9ca3af',
+    btnTxt:    '#6b7280',
+    btnBdr:    '#e5e7eb',
+    btnHovBdr: '#d1d5db',
+    btnHovTxt: '#374151',
+    tgCol:     '#9ca3af',
+    tgLnk:     '#6b7280',
+    togBg:     'rgba(0,0,0,0.05)',
+    togBdr:    'rgba(0,0,0,0.10)',
+    togCol:    '#6b7280',
+    togHov:    'rgba(0,0,0,0.09)',
+  };
 
   return (
-    // position:fixed + overflow:auto = гарантированный скролл на любой высоте экрана
     <div style={{
       position:'fixed',inset:0,
-      background:'#0b0d14',
+      background: T.pageBg,
       overflowY:'auto',
       WebkitOverflowScrolling:'touch',
+      transition:'background 0.3s',
     }}>
       <div style={{
         display:'flex',flexDirection:'column',alignItems:'center',
         padding:'52px 24px 72px',minHeight:'100%',boxSizing:'border-box'
       }}>
+
+        {/* Кнопка темы — правый верхний угол */}
+        {onToggleDark && (
+          <button onClick={onToggleDark} title={d?'Светлая тема':'Тёмная тема'}
+            style={{
+              position:'absolute',top:20,right:24,
+              width:36,height:36,borderRadius:'50%',
+              border:`1px solid ${T.togBdr}`,background:T.togBg,
+              color:T.togCol,cursor:'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',
+              transition:'background 0.2s',zIndex:10
+            }}
+            onMouseEnter={e=>e.currentTarget.style.background=T.togHov}
+            onMouseLeave={e=>e.currentTarget.style.background=T.togBg}
+          >
+            {d ? <SunSvg/> : <MoonSvg/>}
+          </button>
+        )}
 
         {/* Шапка */}
         <div style={{textAlign:'center',marginBottom:52}}>
@@ -8505,14 +8589,14 @@ const PricingScreen = ({ user, subscription, onLogout }) => {
             style={{width:70,height:70,objectFit:'contain',marginBottom:18,
               filter:'sepia(1) saturate(3) hue-rotate(-20deg) brightness(0.9) drop-shadow(0 0 18px rgba(192,57,43,0.55))'
             }}/>
-          <h1 style={{fontSize:30,fontWeight:700,color:'#f2f2f2',margin:'0 0 7px',letterSpacing:-0.5}}>
+          <h1 style={{fontSize:30,fontWeight:700,color:T.titleCol,margin:'0 0 7px',letterSpacing:-0.5}}>
             Мыйзамчы AI
           </h1>
-          <p style={{color:'#5a5e72',fontSize:14,margin:0,lineHeight:1.6}}>
+          <p style={{color:T.subCol,fontSize:14,margin:0,lineHeight:1.6}}>
             Выберите тариф для доступа к воркспейсу
           </p>
           {user?.email && (
-            <p style={{color:'#3d404f',fontSize:12,marginTop:6}}>{user.email}</p>
+            <p style={{color:T.emailCol,fontSize:12,marginTop:6}}>{user.email}</p>
           )}
           {subscription?.subscription_status === 'expired' && (
             <div style={{marginTop:16,padding:'10px 20px',borderRadius:8,
@@ -8537,10 +8621,10 @@ const PricingScreen = ({ user, subscription, onLogout }) => {
                 onMouseEnter={()=>setHovered(plan.key)}
                 onMouseLeave={()=>setHovered(null)}
                 style={{
-                  background: isPop ? '#111520' : '#0e1018',
+                  background: isPop ? T.cardPopBg : T.cardBg,
                   border: isPop
                     ? `1px solid ${_ACC_BORDER}`
-                    : '1px solid rgba(255,255,255,0.07)',
+                    : `1px solid ${T.cardBdr}`,
                   borderRadius:18,
                   padding:'32px 28px 28px',
                   width:298,minWidth:260,flex:'0 1 298px',
@@ -8575,51 +8659,37 @@ const PricingScreen = ({ user, subscription, onLogout }) => {
 
                 {/* Название + описание */}
                 <div style={{marginBottom:22}}>
-                  <div style={{fontSize:22,fontWeight:700,color:'#ececec',marginBottom:7,
-                    letterSpacing:-0.3}}>
+                  <div style={{fontSize:22,fontWeight:700,color:T.titleCol,marginBottom:7,letterSpacing:-0.3}}>
                     {plan.name}
                   </div>
-                  <div style={{fontSize:13,color:'#454860',lineHeight:1.55}}>
+                  <div style={{fontSize:13,color:T.subCol,lineHeight:1.55}}>
                     {PLAN_DESC[plan.key]}
                   </div>
                 </div>
 
                 {/* Цена */}
-                <div style={{marginBottom:24,paddingBottom:22,
-                  borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
+                <div style={{marginBottom:24,paddingBottom:22,borderBottom:`1px solid ${T.divider}`}}>
                   <div style={{display:'flex',alignItems:'baseline',gap:6}}>
-                    <span style={{fontSize:44,fontWeight:800,color:'#f0f0f0',letterSpacing:-2,
-                      fontVariantNumeric:'tabular-nums'}}>
+                    <span style={{fontSize:44,fontWeight:800,color:T.priceCol,letterSpacing:-2,fontVariantNumeric:'tabular-nums'}}>
                       {plan.price.toLocaleString('ru')}
                     </span>
-                    <span style={{fontSize:16,color:'#40445a',fontWeight:500,marginBottom:4}}>
-                      сом
-                    </span>
+                    <span style={{fontSize:16,color:T.priceSub,fontWeight:500,marginBottom:4}}>сом</span>
                   </div>
-                  <div style={{color:'#30334a',fontSize:12,marginTop:3}}>
-                    в месяц · 30 дней доступа
-                  </div>
+                  <div style={{color:T.priceSub,fontSize:12,marginTop:3}}>в месяц · 30 дней доступа</div>
                 </div>
 
                 {/* Фичи */}
-                <ul style={{listStyle:'none',padding:0,margin:'0 0 26px',
-                  display:'flex',flexDirection:'column',gap:14,flex:1}}>
+                <ul style={{listStyle:'none',padding:0,margin:'0 0 26px',display:'flex',flexDirection:'column',gap:14,flex:1}}>
                   {features.map(f=>(
                     <li key={f.title} style={{display:'flex',gap:11,alignItems:'flex-start'}}>
-                      {/* Чекмарк — простая галочка как в референсе */}
-                      <svg style={{flexShrink:0,marginTop:3}} width="14" height="14"
-                        viewBox="0 0 14 14" fill="none">
+                      <svg style={{flexShrink:0,marginTop:3}} width="14" height="14" viewBox="0 0 14 14" fill="none">
                         <polyline points="2,7 5.5,10.5 12,3.5"
-                          stroke={isPop ? _ACC : '#5a5e72'}
+                          stroke={isPop ? _ACC : T.subCol}
                           strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
                       </svg>
                       <div>
-                        <div style={{color:'#d8d8d8',fontSize:13,fontWeight:600,marginBottom:3}}>
-                          {f.title}
-                        </div>
-                        <div style={{color:'#3a3d52',fontSize:12,lineHeight:1.55}}>
-                          {f.desc}
-                        </div>
+                        <div style={{color:T.ftTitle,fontSize:13,fontWeight:600,marginBottom:3}}>{f.title}</div>
+                        <div style={{color:T.ftDesc,fontSize:12,lineHeight:1.55}}>{f.desc}</div>
                       </div>
                     </li>
                   ))}
@@ -8633,22 +8703,19 @@ const PricingScreen = ({ user, subscription, onLogout }) => {
                   style={{
                     display:'flex',alignItems:'center',justifyContent:'center',gap:8,
                     padding:'13px 0',borderRadius:10,textDecoration:'none',
-                    fontWeight:600,fontSize:14,cursor:'pointer',
-                    transition:'all 0.2s',
+                    fontWeight:600,fontSize:14,cursor:'pointer',transition:'all 0.2s',
                     ...(isPop
-                      ? {background:_ACC,color:'#fff',border:'none',
-                         boxShadow:`0 4px 20px rgba(192,57,43,0.4)`}
-                      : {background:'transparent',color:'#555',
-                         border:'1px solid rgba(255,255,255,0.09)'}
+                      ? {background:_ACC,color:'#fff',border:'none',boxShadow:`0 4px 20px rgba(192,57,43,0.4)`}
+                      : {background:'transparent',color:T.btnTxt,border:`1px solid ${T.btnBdr}`}
                     )
                   }}
                   onMouseEnter={e=>{
                     if(isPop){e.currentTarget.style.background='#a93226';e.currentTarget.style.boxShadow='0 6px 28px rgba(192,57,43,0.5)';}
-                    else{e.currentTarget.style.borderColor='rgba(255,255,255,0.2)';e.currentTarget.style.color='#bbb';}
+                    else{e.currentTarget.style.borderColor=T.btnHovBdr;e.currentTarget.style.color=T.btnHovTxt;}
                   }}
                   onMouseLeave={e=>{
                     if(isPop){e.currentTarget.style.background=_ACC;e.currentTarget.style.boxShadow=`0 4px 20px rgba(192,57,43,0.4)`;}
-                    else{e.currentTarget.style.borderColor='rgba(255,255,255,0.09)';e.currentTarget.style.color='#555';}
+                    else{e.currentTarget.style.borderColor=T.btnBdr;e.currentTarget.style.color=T.btnTxt;}
                   }}
                 >
                   {contacting===plan.key
@@ -8668,12 +8735,12 @@ const PricingScreen = ({ user, subscription, onLogout }) => {
         </div>
 
         {/* Telegram */}
-        <div style={{textAlign:'center',color:'#2d3044',fontSize:13,marginTop:36}}>
+        <div style={{textAlign:'center',color:T.tgCol,fontSize:13,marginTop:36}}>
           Или напишите нам в{' '}
           <a href={CONTACT_TELEGRAM} target="_blank" rel="noopener noreferrer"
-             style={{color:'#555',textDecoration:'none',borderBottom:'1px solid #333'}}
-             onMouseEnter={e=>e.currentTarget.style.color='#aaa'}
-             onMouseLeave={e=>e.currentTarget.style.color='#555'}
+             style={{color:T.tgLnk,textDecoration:'none',borderBottom:`1px solid ${T.cardBdr}`}}
+             onMouseEnter={e=>e.currentTarget.style.color=T.subCol}
+             onMouseLeave={e=>e.currentTarget.style.color=T.tgLnk}
           >Telegram</a>
           {' '}— ответим и активируем в течение часа.
         </div>
@@ -8681,10 +8748,10 @@ const PricingScreen = ({ user, subscription, onLogout }) => {
         {/* Выход */}
         <button onClick={onLogout}
           style={{marginTop:18,background:'transparent',border:'none',
-            color:'#252830',padding:'6px 16px',borderRadius:8,
+            color:d?'#252830':'#c0c4cc',padding:'6px 16px',borderRadius:8,
             cursor:'pointer',fontSize:12,transition:'color 0.15s'}}
-          onMouseEnter={e=>e.currentTarget.style.color='#666'}
-          onMouseLeave={e=>e.currentTarget.style.color='#252830'}
+          onMouseEnter={e=>e.currentTarget.style.color=d?'#666':'#6b7280'}
+          onMouseLeave={e=>e.currentTarget.style.color=d?'#252830':'#c0c4cc'}
         >
           Выйти из аккаунта
         </button>
@@ -9250,7 +9317,7 @@ const App=()=>{
   // Шаг 2: не залогинен → LoginScreen
   if(!authUser) return <LoginScreen/>;
   // Шаг 3: залогинен, нет подписки → PricingScreen (Paywall)
-  if(showPaywall) return <PricingScreen user={authUser} subscription={subscription} onLogout={handleLogout}/>;
+  if(showPaywall) return <PricingScreen user={authUser} subscription={subscription} onLogout={handleLogout} dark={dark} onToggleDark={()=>setDark(p=>!p)}/>;
 
   return(
     <div className={`myz-app-root${dark?' dk':''}${tt?' tt':''} grain`}>
