@@ -8406,8 +8406,8 @@ function OOEditorSlot({ activeTab, tabFileIds, tabs, onError }) {
 /* ═══ Auth Screens ═══ */
 const PRICING_PLANS = [
   { key: 'basic',    name: 'Базовый',  price: 2500, ai: 50,  docs: 20  },
-  { key: 'standard', name: 'Стандарт', price: 4500, ai: 150, docs: 60  },
-  { key: 'pro',      name: 'Про',      price: 7000, ai: 400, docs: 150, popular: true },
+  { key: 'standard', name: 'Стандарт', price: 4500, ai: 150, docs: 60,  popular: true },
+  { key: 'pro',      name: 'Про',      price: 7000, ai: 400, docs: 150 },
 ];
 
 // Номер для связи при оплате — обновить на реальный перед запуском
@@ -8450,25 +8450,25 @@ const LoginScreen = () => (
 
 const PLAN_FEATURES = {
   basic: [
-    { title: '50 AI-анализов',        desc: 'Загружайте договоры и жалобы — система найдёт противоречия с НПА' },
-    { title: '20 документов',          desc: 'Исковые заявления, претензии, доверенности и 9 других типов' },
-    { title: '30 дней доступа',        desc: 'Ежемесячное продление без ограничений по сроку' },
-    { title: 'Все 4 фазы анализа',     desc: 'Сегментация → RAG → Верификаторы → Final Judge' },
-    { title: 'Генерация документов',   desc: 'Мультиагентная генерация с правовым обоснованием' },
+    { title: '50 AI-анализов',       desc: 'Загружайте договоры и жалобы — найдём противоречия с НПА' },
+    { title: '20 документов',         desc: 'Иски, претензии, доверенности и 9 других типов' },
+    { title: '30 дней доступа',       desc: 'Ежемесячное продление без ограничений по сроку' },
+    { title: 'Все 4 фазы анализа',    desc: 'Сегментация → RAG → Верификаторы → Final Judge' },
+    { title: 'Генерация документов',  desc: 'Мультиагентная генерация с правовым обоснованием' },
   ],
   standard: [
-    { title: '150 AI-анализов',        desc: 'Загружайте договоры и жалобы — система найдёт противоречия с НПА' },
-    { title: '60 документов',          desc: 'Исковые заявления, претензии, доверенности и 9 других типов' },
-    { title: '30 дней доступа',        desc: 'Ежемесячное продление без ограничений по сроку' },
-    { title: 'Все 4 фазы анализа',     desc: 'Сегментация → RAG → Верификаторы → Final Judge' },
-    { title: 'Генерация документов',   desc: 'Мультиагентная генерация с правовым обоснованием' },
+    { title: '150 AI-анализов',      desc: 'Загружайте договоры и жалобы — найдём противоречия с НПА' },
+    { title: '60 документов',         desc: 'Иски, претензии, доверенности и 9 других типов' },
+    { title: '30 дней доступа',       desc: 'Ежемесячное продление без ограничений по сроку' },
+    { title: 'Все 4 фазы анализа',    desc: 'Сегментация → RAG → Верификаторы → Final Judge' },
+    { title: 'Генерация документов',  desc: 'Мультиагентная генерация с правовым обоснованием' },
   ],
   pro: [
-    { title: '400 AI-анализов',        desc: 'Загружайте договоры и жалобы — система найдёт противоречия с НПА' },
-    { title: '150 документов',         desc: 'Исковые заявления, претензии, доверенности и 9 других типов' },
-    { title: '30 дней доступа',        desc: 'Ежемесячное продление без ограничений по сроку' },
-    { title: 'Все 4 фазы анализа',     desc: 'Сегментация → RAG → Верификаторы → Final Judge' },
-    { title: 'Генерация документов',   desc: 'Мультиагентная генерация с правовым обоснованием' },
+    { title: '400 AI-анализов',      desc: 'Загружайте договоры и жалобы — найдём противоречия с НПА' },
+    { title: '150 документов',        desc: 'Иски, претензии, доверенности и 9 других типов' },
+    { title: '30 дней доступа',       desc: 'Ежемесячное продление без ограничений по сроку' },
+    { title: 'Все 4 фазы анализа',    desc: 'Сегментация → RAG → Верификаторы → Final Judge' },
+    { title: 'Генерация документов',  desc: 'Мультиагентная генерация с правовым обоснованием' },
   ],
 };
 const PLAN_DESC = {
@@ -8477,179 +8477,219 @@ const PLAN_DESC = {
   pro:      'Для юридических бюро и команд',
 };
 
+// Акцентный цвет — тёплый красный (исторический цвет приложения)
+const _ACC = '#c0392b';
+const _ACC_BG = 'rgba(192,57,43,0.12)';
+const _ACC_BORDER = 'rgba(192,57,43,0.35)';
+
 const PricingScreen = ({ user, subscription, onLogout }) => {
   const [contacting, setContacting] = React.useState(null);
   const [hovered, setHovered] = React.useState(null);
 
   return (
-    <div style={{minHeight:'100vh',background:'#0a0c13',display:'flex',flexDirection:'column',
-      alignItems:'center',justifyContent:'flex-start',padding:'40px 24px 60px',gap:0,overflowY:'auto'}}>
+    // position:fixed + overflow:auto = гарантированный скролл на любой высоте экрана
+    <div style={{
+      position:'fixed',inset:0,
+      background:'#0b0d14',
+      overflowY:'auto',
+      WebkitOverflowScrolling:'touch',
+    }}>
+      <div style={{
+        display:'flex',flexDirection:'column',alignItems:'center',
+        padding:'52px 24px 72px',minHeight:'100%',boxSizing:'border-box'
+      }}>
 
-      {/* Шапка */}
-      <div style={{textAlign:'center',marginBottom:48}}>
-        <img src="/logo/Logo_transparent.png" alt="Мыйзамчы"
-          style={{width:72,height:72,objectFit:'contain',marginBottom:16,
-            filter:'drop-shadow(0 0 20px rgba(92,102,222,0.5))'}}/>
-        <h1 style={{fontSize:28,fontWeight:700,color:'#f0f0f0',margin:'0 0 6px',letterSpacing:-0.5}}>
-          Мыйзамчы AI
-        </h1>
-        <p style={{color:'#666',fontSize:14,margin:0}}>Выберите тариф для доступа к воркспейсу</p>
-        {user?.email && <p style={{color:'#444',fontSize:12,marginTop:5}}>{user.email}</p>}
-        {subscription?.subscription_status === 'expired' && (
-          <div style={{marginTop:14,padding:'9px 18px',borderRadius:8,background:'#1e0f0f',
-            color:'#f87171',fontSize:13,border:'1px solid #3a1a1a',display:'inline-block'}}>
-            Ваша подписка истекла — пожалуйста, продлите тариф.
-          </div>
-        )}
-      </div>
-
-      {/* Карточки */}
-      <div style={{display:'flex',gap:16,flexWrap:'wrap',justifyContent:'center',
-        maxWidth:980,width:'100%',alignItems:'stretch'}}>
-        {PRICING_PLANS.map(plan => {
-          const features = PLAN_FEATURES[plan.key] || [];
-          const isHov = hovered === plan.key;
-          return (
-            <div key={plan.key}
-              onMouseEnter={()=>setHovered(plan.key)}
-              onMouseLeave={()=>setHovered(null)}
-              style={{
-                background: plan.popular ? '#0f1525' : '#0d1020',
-                border: plan.popular
-                  ? '1px solid rgba(79,110,247,0.6)'
-                  : '1px solid rgba(255,255,255,0.07)',
-                borderRadius:16,
-                padding:'32px 28px 28px',
-                width:290,
-                minWidth:260,
-                position:'relative',
-                display:'flex',flexDirection:'column',gap:0,
-                boxShadow: plan.popular
-                  ? '0 0 0 1px rgba(79,110,247,0.15), 0 20px 60px rgba(79,110,247,0.1)'
-                  : isHov ? '0 8px 40px rgba(0,0,0,0.4)' : 'none',
-                transition:'box-shadow 0.2s, transform 0.2s',
-                transform: isHov ? 'translateY(-3px)' : 'none',
-              }}>
-
-              {/* Популярный бейдж */}
-              {plan.popular && (
-                <div style={{position:'absolute',top:-1,left:28,right:28,height:3,
-                  background:'linear-gradient(90deg,#4f6ef7,#7c3aed)',borderRadius:'0 0 3px 3px'}}/>
-              )}
-              {plan.popular && (
-                <span style={{
-                  position:'absolute',top:16,right:20,
-                  background:'rgba(79,110,247,0.15)',
-                  border:'1px solid rgba(79,110,247,0.3)',
-                  color:'#818cf8',fontSize:10,fontWeight:700,
-                  padding:'3px 10px',borderRadius:20,letterSpacing:0.8,textTransform:'uppercase'
-                }}>Популярный</span>
-              )}
-
-              {/* Название + описание */}
-              <div style={{marginBottom:20}}>
-                <div style={{fontSize:20,fontWeight:700,color:'#f0f0f0',marginBottom:6}}>
-                  {plan.name}
-                </div>
-                <div style={{fontSize:13,color:'#555',lineHeight:1.5}}>
-                  {PLAN_DESC[plan.key]}
-                </div>
-              </div>
-
-              {/* Цена */}
-              <div style={{marginBottom:28,paddingBottom:24,
-                borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-                <div style={{display:'flex',alignItems:'baseline',gap:4}}>
-                  <span style={{fontSize:42,fontWeight:800,color:'#f0f0f0',letterSpacing:-1}}>
-                    {plan.price.toLocaleString('ru')}
-                  </span>
-                  <span style={{fontSize:15,color:'#444',fontWeight:500}}>сом</span>
-                </div>
-                <div style={{color:'#444',fontSize:12,marginTop:2}}>в месяц · 30 дней доступа</div>
-              </div>
-
-              {/* Фичи */}
-              <ul style={{listStyle:'none',padding:0,margin:'0 0 28px',
-                display:'flex',flexDirection:'column',gap:16,flex:1}}>
-                {features.map(f=>(
-                  <li key={f.title} style={{display:'flex',gap:12,alignItems:'flex-start'}}>
-                    <span style={{
-                      marginTop:2,flexShrink:0,width:16,height:16,borderRadius:'50%',
-                      background:'rgba(79,110,247,0.15)',border:'1px solid rgba(79,110,247,0.3)',
-                      display:'flex',alignItems:'center',justifyContent:'center',
-                      color:'#818cf8',fontSize:9,fontWeight:800
-                    }}>✓</span>
-                    <div>
-                      <div style={{color:'#d0d0d0',fontSize:13,fontWeight:600,marginBottom:2}}>
-                        {f.title}
-                      </div>
-                      <div style={{color:'#444',fontSize:11.5,lineHeight:1.5}}>
-                        {f.desc}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-
-              {/* CTA кнопка */}
-              <a
-                href={`${CONTACT_WHATSAPP}+(${plan.name},+${plan.price}+сом)`}
-                target="_blank" rel="noopener noreferrer"
-                onClick={()=>setContacting(plan.key)}
-                style={{
-                  display:'flex',alignItems:'center',justifyContent:'center',gap:8,
-                  padding:'13px 0',borderRadius:10,textDecoration:'none',
-                  fontWeight:600,fontSize:14,transition:'all 0.15s',
-                  ...(plan.popular
-                    ? {background:'#4f6ef7',color:'#fff',border:'none',
-                       boxShadow:'0 4px 20px rgba(79,110,247,0.4)'}
-                    : {background:'transparent',color:'#888',
-                       border:'1px solid rgba(255,255,255,0.1)'}
-                  )
-                }}
-                onMouseEnter={e=>{
-                  if(plan.popular){e.currentTarget.style.background='#3d5ce6';}
-                  else{e.currentTarget.style.borderColor='rgba(255,255,255,0.25)';e.currentTarget.style.color='#bbb';}
-                }}
-                onMouseLeave={e=>{
-                  if(plan.popular){e.currentTarget.style.background='#4f6ef7';}
-                  else{e.currentTarget.style.borderColor='rgba(255,255,255,0.1)';e.currentTarget.style.color='#888';}
-                }}
-              >
-                {contacting===plan.key
-                  ? <><span>✓</span> Открываю WhatsApp...</>
-                  : <>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
-                        <path d="M11.995 1C5.918 1 1 5.919 1 12c0 1.91.495 3.704 1.36 5.262L1 23l5.897-1.325A10.942 10.942 0 0011.995 23C18.074 23 23 18.081 23 12c0-6.08-4.926-11-11.005-11zm0 20.133a9.098 9.098 0 01-4.636-1.265l-.332-.197-3.5.787.836-3.38-.216-.346A9.086 9.086 0 012.876 12c0-5.027 4.093-9.12 9.12-9.12 5.027 0 9.12 4.093 9.12 9.12 0 5.027-4.093 9.133-9.121 9.133z"/>
-                      </svg>
-                      Связаться для оплаты
-                    </>
-                }
-              </a>
+        {/* Шапка */}
+        <div style={{textAlign:'center',marginBottom:52}}>
+          <img src="/logo/Logo_transparent.png" alt="Мыйзамчы"
+            style={{width:70,height:70,objectFit:'contain',marginBottom:18,
+              filter:'sepia(1) saturate(3) hue-rotate(-20deg) brightness(0.9) drop-shadow(0 0 18px rgba(192,57,43,0.55))'
+            }}/>
+          <h1 style={{fontSize:30,fontWeight:700,color:'#f2f2f2',margin:'0 0 7px',letterSpacing:-0.5}}>
+            Мыйзамчы AI
+          </h1>
+          <p style={{color:'#5a5e72',fontSize:14,margin:0,lineHeight:1.6}}>
+            Выберите тариф для доступа к воркспейсу
+          </p>
+          {user?.email && (
+            <p style={{color:'#3d404f',fontSize:12,marginTop:6}}>{user.email}</p>
+          )}
+          {subscription?.subscription_status === 'expired' && (
+            <div style={{marginTop:16,padding:'10px 20px',borderRadius:8,
+              background:'rgba(192,57,43,0.1)',color:'#e07070',fontSize:13,
+              border:'1px solid rgba(192,57,43,0.3)',display:'inline-block'}}>
+              Ваша подписка истекла — пожалуйста, продлите тариф.
             </div>
-          );
-        })}
-      </div>
+          )}
+        </div>
 
-      {/* Telegram */}
-      <div style={{textAlign:'center',color:'#3a3f55',fontSize:13,marginTop:32}}>
-        Или напишите нам в{' '}
-        <a href={CONTACT_TELEGRAM} target="_blank" rel="noopener noreferrer"
-           style={{color:'#4f6ef7',textDecoration:'none'}}>Telegram</a>
-        {' '}— ответим и активируем в течение часа.
-      </div>
+        {/* Карточки */}
+        <div style={{
+          display:'flex',gap:20,flexWrap:'wrap',justifyContent:'center',
+          maxWidth:1020,width:'100%',alignItems:'stretch'
+        }}>
+          {PRICING_PLANS.map(plan => {
+            const features = PLAN_FEATURES[plan.key] || [];
+            const isHov = hovered === plan.key;
+            const isPop = plan.popular;
+            return (
+              <div key={plan.key}
+                onMouseEnter={()=>setHovered(plan.key)}
+                onMouseLeave={()=>setHovered(null)}
+                style={{
+                  background: isPop ? '#111520' : '#0e1018',
+                  border: isPop
+                    ? `1px solid ${_ACC_BORDER}`
+                    : '1px solid rgba(255,255,255,0.07)',
+                  borderRadius:18,
+                  padding:'32px 28px 28px',
+                  width:298,minWidth:260,flex:'0 1 298px',
+                  position:'relative',
+                  display:'flex',flexDirection:'column',
+                  boxShadow: isPop
+                    ? `0 0 0 1px ${_ACC_BG}, 0 24px 64px rgba(192,57,43,0.08)`
+                    : isHov ? '0 12px 40px rgba(0,0,0,0.5)' : '0 2px 12px rgba(0,0,0,0.3)',
+                  transition:'box-shadow 0.25s, transform 0.25s',
+                  transform: isHov && !isPop ? 'translateY(-4px)' : isPop ? 'translateY(-2px)' : 'none',
+                }}>
 
-      {/* Выход */}
-      <button onClick={onLogout}
-        style={{marginTop:20,background:'transparent',border:'none',color:'#2a2f45',
-          padding:'6px 16px',borderRadius:8,cursor:'pointer',fontSize:12,
-          transition:'color 0.15s'}}
-        onMouseEnter={e=>e.currentTarget.style.color='#555'}
-        onMouseLeave={e=>e.currentTarget.style.color='#2a2f45'}
-      >
-        Выйти из аккаунта
-      </button>
+                {/* Верхняя полоска популярного */}
+                {isPop && (
+                  <div style={{
+                    position:'absolute',top:0,left:32,right:32,height:3,
+                    background:`linear-gradient(90deg,${_ACC},#e74c3c)`,
+                    borderRadius:'0 0 3px 3px'
+                  }}/>
+                )}
+
+                {/* Бейдж популярного */}
+                {isPop && (
+                  <span style={{
+                    position:'absolute',top:18,right:18,
+                    background:_ACC_BG,border:`1px solid ${_ACC_BORDER}`,
+                    color:'#e07070',fontSize:9,fontWeight:800,
+                    padding:'3px 10px',borderRadius:20,letterSpacing:1.2,
+                    textTransform:'uppercase'
+                  }}>Популярный</span>
+                )}
+
+                {/* Название + описание */}
+                <div style={{marginBottom:22}}>
+                  <div style={{fontSize:22,fontWeight:700,color:'#ececec',marginBottom:7,
+                    letterSpacing:-0.3}}>
+                    {plan.name}
+                  </div>
+                  <div style={{fontSize:13,color:'#454860',lineHeight:1.55}}>
+                    {PLAN_DESC[plan.key]}
+                  </div>
+                </div>
+
+                {/* Цена */}
+                <div style={{marginBottom:24,paddingBottom:22,
+                  borderBottom:'1px solid rgba(255,255,255,0.05)'}}>
+                  <div style={{display:'flex',alignItems:'baseline',gap:6}}>
+                    <span style={{fontSize:44,fontWeight:800,color:'#f0f0f0',letterSpacing:-2,
+                      fontVariantNumeric:'tabular-nums'}}>
+                      {plan.price.toLocaleString('ru')}
+                    </span>
+                    <span style={{fontSize:16,color:'#40445a',fontWeight:500,marginBottom:4}}>
+                      сом
+                    </span>
+                  </div>
+                  <div style={{color:'#30334a',fontSize:12,marginTop:3}}>
+                    в месяц · 30 дней доступа
+                  </div>
+                </div>
+
+                {/* Фичи */}
+                <ul style={{listStyle:'none',padding:0,margin:'0 0 26px',
+                  display:'flex',flexDirection:'column',gap:14,flex:1}}>
+                  {features.map(f=>(
+                    <li key={f.title} style={{display:'flex',gap:11,alignItems:'flex-start'}}>
+                      {/* Чекмарк — простая галочка как в референсе */}
+                      <svg style={{flexShrink:0,marginTop:3}} width="14" height="14"
+                        viewBox="0 0 14 14" fill="none">
+                        <polyline points="2,7 5.5,10.5 12,3.5"
+                          stroke={isPop ? _ACC : '#5a5e72'}
+                          strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      <div>
+                        <div style={{color:'#d8d8d8',fontSize:13,fontWeight:600,marginBottom:3}}>
+                          {f.title}
+                        </div>
+                        <div style={{color:'#3a3d52',fontSize:12,lineHeight:1.55}}>
+                          {f.desc}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+
+                {/* CTA */}
+                <a
+                  href={`${CONTACT_WHATSAPP}+(${plan.name},+${plan.price}+сом)`}
+                  target="_blank" rel="noopener noreferrer"
+                  onClick={()=>setContacting(plan.key)}
+                  style={{
+                    display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+                    padding:'13px 0',borderRadius:10,textDecoration:'none',
+                    fontWeight:600,fontSize:14,cursor:'pointer',
+                    transition:'all 0.2s',
+                    ...(isPop
+                      ? {background:_ACC,color:'#fff',border:'none',
+                         boxShadow:`0 4px 20px rgba(192,57,43,0.4)`}
+                      : {background:'transparent',color:'#555',
+                         border:'1px solid rgba(255,255,255,0.09)'}
+                    )
+                  }}
+                  onMouseEnter={e=>{
+                    if(isPop){e.currentTarget.style.background='#a93226';e.currentTarget.style.boxShadow='0 6px 28px rgba(192,57,43,0.5)';}
+                    else{e.currentTarget.style.borderColor='rgba(255,255,255,0.2)';e.currentTarget.style.color='#bbb';}
+                  }}
+                  onMouseLeave={e=>{
+                    if(isPop){e.currentTarget.style.background=_ACC;e.currentTarget.style.boxShadow=`0 4px 20px rgba(192,57,43,0.4)`;}
+                    else{e.currentTarget.style.borderColor='rgba(255,255,255,0.09)';e.currentTarget.style.color='#555';}
+                  }}
+                >
+                  {contacting===plan.key
+                    ? '✓ Открываю WhatsApp…'
+                    : <>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                          <path d="M11.995 1C5.918 1 1 5.919 1 12c0 1.91.495 3.704 1.36 5.262L1 23l5.897-1.325A10.942 10.942 0 0011.995 23C18.074 23 23 18.081 23 12c0-6.08-4.926-11-11.005-11zm0 20.133a9.098 9.098 0 01-4.636-1.265l-.332-.197-3.5.787.836-3.38-.216-.346A9.086 9.086 0 012.876 12c0-5.027 4.093-9.12 9.12-9.12 5.027 0 9.12 4.093 9.12 9.12 0 5.027-4.093 9.133-9.121 9.133z"/>
+                        </svg>
+                        Связаться для оплаты
+                      </>
+                  }
+                </a>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Telegram */}
+        <div style={{textAlign:'center',color:'#2d3044',fontSize:13,marginTop:36}}>
+          Или напишите нам в{' '}
+          <a href={CONTACT_TELEGRAM} target="_blank" rel="noopener noreferrer"
+             style={{color:'#555',textDecoration:'none',borderBottom:'1px solid #333'}}
+             onMouseEnter={e=>e.currentTarget.style.color='#aaa'}
+             onMouseLeave={e=>e.currentTarget.style.color='#555'}
+          >Telegram</a>
+          {' '}— ответим и активируем в течение часа.
+        </div>
+
+        {/* Выход */}
+        <button onClick={onLogout}
+          style={{marginTop:18,background:'transparent',border:'none',
+            color:'#252830',padding:'6px 16px',borderRadius:8,
+            cursor:'pointer',fontSize:12,transition:'color 0.15s'}}
+          onMouseEnter={e=>e.currentTarget.style.color='#666'}
+          onMouseLeave={e=>e.currentTarget.style.color='#252830'}
+        >
+          Выйти из аккаунта
+        </button>
+
+      </div>
     </div>
   );
 };
