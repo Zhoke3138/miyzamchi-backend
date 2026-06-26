@@ -3640,7 +3640,7 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
 };
 
 /* ═══ Activity Bar ═══ */
-const ActBar=({active,onSet})=>{
+const ActBar=({active,onSet,onSettings})=>{
   const items=[
     {id:'explorer',k:'home',label:'Мои файлы'},
     {id:'law',k:'book',label:'Навигатор'},
@@ -3665,7 +3665,7 @@ const ActBar=({active,onSet})=>{
       <button type="button" title="Пользователи" aria-label="Пользователи" className="btn myz-actbar-item myz-actbar-item--off">
         <Ico k="users" sz={21}/>
       </button>
-      <button type="button" title="Настройки" aria-label="Настройки" className="btn myz-actbar-item myz-actbar-item--off">
+      <button type="button" title="Настройки аккаунта" aria-label="Настройки аккаунта" onClick={onSettings} className="btn myz-actbar-item myz-actbar-item--off">
         <Ico k="settings" sz={21}/>
       </button>
     </nav>
@@ -8541,6 +8541,133 @@ const PricingScreen = ({ user, subscription, onLogout }) => {
   );
 };
 
+/* ═══ SettingsPanel ═══ */
+const SettingsPanel = ({ user, subscription, onLogout, onClose }) => {
+  const plan = subscription?.subscription_plan;
+  const status = subscription?.subscription_status;
+  const expires = subscription?.subscription_expires_at;
+  const aiUsed = subscription?.ai_requests_used ?? 0;
+  const aiLimit = subscription?.ai_requests_limit ?? 0;
+  const docsUsed = subscription?.documents_used ?? 0;
+  const docsLimit = subscription?.documents_limit ?? 0;
+
+  const expiresStr = expires
+    ? new Date(expires).toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' })
+    : '—';
+
+  const avatarLetter = (user?.user_metadata?.full_name || user?.email || 'U')[0].toUpperCase();
+
+  const PLAN_NAMES = { basic: 'Базовый', standard: 'Стандарт', pro: 'Про' };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{
+        position:'fixed',inset:0,zIndex:3000,background:'transparent'
+      }}/>
+      {/* Panel */}
+      <div style={{
+        position:'fixed',bottom:60,left:60,zIndex:3001,
+        background:'#1a1f2e',border:'1px solid #2a3050',borderRadius:14,
+        padding:'20px 20px 16px',width:280,
+        boxShadow:'0 12px 48px rgba(0,0,0,0.5)',
+        fontFamily:'inherit'
+      }}>
+        {/* User */}
+        <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+          <div style={{
+            width:42,height:42,borderRadius:'50%',
+            background:'linear-gradient(135deg,#4f6ef7,#7c3aed)',
+            display:'flex',alignItems:'center',justifyContent:'center',
+            color:'#fff',fontWeight:700,fontSize:18,flexShrink:0
+          }}>{avatarLetter}</div>
+          <div style={{overflow:'hidden'}}>
+            <div style={{color:'#f0f0f0',fontSize:13,fontWeight:600,
+              whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+              {user?.user_metadata?.full_name || 'Пользователь'}
+            </div>
+            <div style={{color:'#555',fontSize:11,
+              whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+              {user?.email}
+            </div>
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{height:1,background:'#242840',marginBottom:14}}/>
+
+        {/* Subscription */}
+        <div style={{marginBottom:14}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+            <span style={{color:'#888',fontSize:11,textTransform:'uppercase',letterSpacing:0.8}}>Тариф</span>
+            <span style={{
+              background: plan==='pro' ? 'linear-gradient(90deg,#4f6ef7,#7c3aed)' : '#1e2540',
+              color:'#fff',fontSize:11,fontWeight:700,padding:'2px 10px',borderRadius:20,
+              letterSpacing:0.5
+            }}>{PLAN_NAMES[plan] || plan || '—'}</span>
+          </div>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+            <span style={{color:'#666',fontSize:12}}>Действует до</span>
+            <span style={{color:'#aaa',fontSize:12}}>{expiresStr}</span>
+          </div>
+          {/* AI requests bar */}
+          <div style={{marginTop:8}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+              <span style={{color:'#666',fontSize:11}}>AI-анализов</span>
+              <span style={{color:'#aaa',fontSize:11}}>{aiUsed} / {aiLimit}</span>
+            </div>
+            <div style={{height:4,background:'#242840',borderRadius:4,overflow:'hidden'}}>
+              <div style={{
+                height:'100%',borderRadius:4,
+                background: aiUsed/aiLimit > 0.8 ? '#f87171' : '#4f6ef7',
+                width:`${Math.min(100, aiLimit ? (aiUsed/aiLimit)*100 : 0)}%`,
+                transition:'width 0.3s'
+              }}/>
+            </div>
+          </div>
+          {/* Docs bar */}
+          <div style={{marginTop:6}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
+              <span style={{color:'#666',fontSize:11}}>Документов</span>
+              <span style={{color:'#aaa',fontSize:11}}>{docsUsed} / {docsLimit}</span>
+            </div>
+            <div style={{height:4,background:'#242840',borderRadius:4,overflow:'hidden'}}>
+              <div style={{
+                height:'100%',borderRadius:4,
+                background: docsUsed/docsLimit > 0.8 ? '#f87171' : '#4f6ef7',
+                width:`${Math.min(100, docsLimit ? (docsUsed/docsLimit)*100 : 0)}%`,
+                transition:'width 0.3s'
+              }}/>
+            </div>
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{height:1,background:'#242840',marginBottom:12}}/>
+
+        {/* Logout */}
+        <button
+          onClick={onLogout}
+          style={{
+            width:'100%',padding:'9px 0',borderRadius:8,
+            background:'transparent',border:'1px solid #3a2020',
+            color:'#f87171',fontSize:13,fontWeight:500,cursor:'pointer',
+            display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+            transition:'background 0.15s'
+          }}
+          onMouseEnter={e=>e.currentTarget.style.background='#2a1a1a'}
+          onMouseLeave={e=>e.currentTarget.style.background='transparent'}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+          Выйти из аккаунта
+        </button>
+      </div>
+    </>
+  );
+};
+
 /* ═══ App ═══ */
 let _tabIdCounter=10;
 const App=()=>{
@@ -8551,6 +8678,7 @@ const App=()=>{
   const[subscription,setSubscription]=useState(null);
   const[authLoading,setAuthLoading]=useState(!!supabase);
   const[showPaywall,setShowPaywall]=useState(false);
+  const[showSettings,setShowSettings]=useState(false);
 
   const[dark,setDark]=useState(()=>localStorage.getItem('myz-dk')==='1');
   const[tt,setTt]=useState(false);
@@ -8974,6 +9102,7 @@ const App=()=>{
   return(
     <div className={`myz-app-root${dark?' dk':''}${tt?' tt':''} grain`}>
       <MenuBar dark={dark} onToggle={toggleTheme} onPalette={()=>setShowPalette(p=>!p)} showNotif={showNotif} onToggleNotif={()=>setShowNotif(p=>!p)} onAction={handleAction} rightOpen={rightOpen} onToggleRight={()=>setRightOpen(p=>!p)} isMobile={isMobile} unsavedCount={unsavedCount} hasActiveDoc={tabs.length > 0}/>
+      {showSettings && <SettingsPanel user={authUser} subscription={subscription} onLogout={handleLogout} onClose={()=>setShowSettings(false)}/>}
       {({}).visible && (
         <div id="inline-prompt-menu" style={{
           position: 'fixed', zIndex: 9999,
@@ -9133,7 +9262,7 @@ const App=()=>{
         </div>
       )}
       <div className="myz-workspace-row">
-        <ActBar active={actPanel} onSet={handleActPanel}/>
+        <ActBar active={actPanel} onSet={handleActPanel} onSettings={()=>setShowSettings(p=>!p)}/>
         {/* LEFT PANEL — desktop: inline-flex; mobile: fixed overlay */}
         <div className={`myz-panel-left${isMobile?' myz-panel-left--mobile':''}${leftOpen?' myz-panel-left--open':''}`}
           style={!isMobile ? {width:leftOpen?leftW:0} : undefined}>
