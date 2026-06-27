@@ -49,11 +49,18 @@ async function searchSupabase(vector, queryText = '', topK = 10) {
 
         if (!response.ok) {
             const errText = await response.text();
-            console.error(`[Supabase] RPC error ${response.status}:`, errText.slice(0, 300));
+            console.error(`[Supabase] RPC error ${response.status}: ${errText.slice(0, 400)}`);
             return [];
         }
 
         const rows = await response.json();
+
+        // Диагностика: видно в Render logs — сколько строк вернул Supabase и что за контент
+        if (!Array.isArray(rows) || rows.length === 0) {
+            console.warn(`[Supabase] searchSupabase → 0 результатов | query="${String(queryText||'').slice(0,80)}" topK=${topK}`);
+        } else {
+            console.log(`[Supabase] searchSupabase → ${rows.length} результатов | query="${String(queryText||'').slice(0,60)}" | top1: category="${rows[0]?.category}" original_id="${rows[0]?.original_id}" sim=${rows[0]?.similarity}`);
+        }
 
         return (rows || []).map(row => ({
             id:    String(row.id || ''),
