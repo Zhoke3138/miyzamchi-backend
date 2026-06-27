@@ -3690,7 +3690,7 @@ async function strategyCounterargs(threats, perspective, docContextStr) {
         // к статьям подкрепляющим нашу же позицию вместо защиты от пункта).
         const query = (ctxPrefix + `Норма КР ${sideDef.qDir} условие договора: ${clauseHeading}`).slice(0, 350);
         try {
-            const vec = await getEmbedding(query);
+            const vec = await getEmbeddingForSupabase(query);
             const candidates = await searchPinecone(vec, 5);
             const top = (candidates || []).filter(c => c.metadata?.full_text).slice(0, 3);
             if (top.length === 0) return null;
@@ -4405,7 +4405,7 @@ app.post('/api/chat', requireClientToken, async (req, res) => {
 // инициализации rate-limiters / middleware). См. routes/compare.js для деталей.
 require('./routes/compare')({
     app,
-    getEmbedding,
+    getEmbedding: getEmbeddingForSupabase,
     generateContentResilient,
     streamDeepSeekResponse,
     segmentDocument,
@@ -4640,9 +4640,9 @@ wss.on('connection', (ws, req) => {
                                 }
 
                                 try {
-                                    // 1. Получаем эмбеддинг
-                                    const queryVector = await getEmbedding(query);
-                                    // 2. Ищем в Pinecone (строго topK: 3 для голосовой скорости)
+                                    // 1. Получаем эмбеддинг (1536d для Supabase)
+                                    const queryVector = await getEmbeddingForSupabase(query);
+                                    // 2. Ищем в Supabase (строго topK: 3 для голосовой скорости)
                                     const matches = await searchPinecone(queryVector, 3);
                                     
                                     console.log(`[VoiceWS] Найдено статей в Pinecone: ${matches.length}`);
