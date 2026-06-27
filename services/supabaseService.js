@@ -55,11 +55,14 @@ async function searchSupabase(vector, queryText = '', topK = 10) {
 
         const rows = await response.json();
 
-        // Диагностика: видно в Render logs — сколько строк вернул Supabase и что за контент
+        // Диагностика: видно в Render logs — сколько строк вернул Supabase и структура
         if (!Array.isArray(rows) || rows.length === 0) {
-            console.warn(`[Supabase] searchSupabase → 0 результатов | query="${String(queryText||'').slice(0,80)}" topK=${topK}`);
+            console.warn(`[Supabase] 0 результатов | query="${String(queryText||'').slice(0,80)}" topK=${topK}`);
         } else {
-            console.log(`[Supabase] searchSupabase → ${rows.length} результатов | query="${String(queryText||'').slice(0,60)}" | top1: category="${rows[0]?.category}" original_id="${rows[0]?.original_id}" sim=${rows[0]?.similarity}`);
+            // Логируем ключи первой строки (чтобы увидеть реальные имена колонок)
+            const firstRow = rows[0];
+            const keys = Object.keys(firstRow);
+            console.log(`[Supabase] ${rows.length} строк | query="${String(queryText||'').slice(0,50)}" | колонки: [${keys.join(', ')}] | значения: ${JSON.stringify(firstRow).slice(0, 200)}`);
         }
 
         return (rows || []).map(row => ({
