@@ -22,8 +22,9 @@ const mammoth = require('mammoth');    // извлечение текста DOCX
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { GoogleAIFileManager } = require('@google/generative-ai/server'); // File API (Gemini Vision)
 
-// Модель для Vision-парсинга PDF (мультимодальная). Override через env.
-const VISION_MODEL = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-flash';
+// Модель для Vision-парсинга (OCR сканов). gemini-2.5-pro — лучший OCR в Gemini API
+// (ELO #7, 66.4% побед над Flash в OCR-бенчмарках). Override через env.
+const VISION_MODEL = process.env.GEMINI_VISION_MODEL || 'gemini-2.5-pro';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Ленивая ротация Gemini-ключей из llmClients (тот же GEMINI_API_KEY).
 function geminiKey() { return require('./llmClients').getNextKey(); }
