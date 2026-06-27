@@ -1903,7 +1903,7 @@ confirmed: true  = замечание обоснованно, опроверже
       score = Math.max(10, Math.min(100, score));
 
       // ── JUDGE: DeepSeek v4-flash, потоковый ────────────────────────
-      stage('🧠 Формирую Executive Summary…');
+      stage('🔎 Ищу применимые нормы НПА КР…');
       const nH = confirmedFindings.filter(f => f.severity === 'high').length;
       const nM = confirmedFindings.filter(f => f.severity === 'medium').length;
       const nL = confirmedFindings.filter(f => f.severity === 'low').length;
@@ -1911,15 +1911,40 @@ confirmed: true  = замечание обоснованно, опроверже
         `${i + 1}. [${f.severity.toUpperCase()}] ${f.category} · ${f.location}\n   Замечание: ${f.claim}\n   Цитата: «${f.quote}»`
       ).join('\n\n');
 
+      // ── QUICK RAG: берём применимые НПА нормы из Supabase для судьи ─
+      // Без этого судья "придумывал" статьи — теперь ссылается только на реальные нормы.
+      let deepNpaBlock = '';
+      try {
+        const deepRagQueries = [
+          docText.slice(0, 200) + ' правовые требования ответственность обязательство',
+          'требования к форме содержанию документа Кыргызская Республика закон',
+        ];
+        const deepNorms = (await resolvedDeps.pineconeSearch?.(deepRagQueries, null, 5)) || [];
+        if (deepNorms.length) {
+          deepNpaBlock = '\n\nПРИМЕНИМЫЕ НОРМЫ НПА КР (из базы законов, используй их для рекомендаций):\n' +
+            deepNorms.slice(0, 5).map((n, i) => {
+              const md = (n && n.metadata) || {};
+              return `[${i + 1}] ${[md.npa_title, md.article_title].filter(Boolean).join(' — ')}\n${String(md.full_text || '').slice(0, 400)}`;
+            }).join('\n\n');
+          sse({ stage: `   ✓ Найдено ${deepNorms.length} применимых норм НПА` });
+        } else {
+          sse({ stage: '   ℹ️ База НПА не вернула применимых норм для этого документа' });
+        }
+      } catch (e) {
+        console.warn('[analyze-deep] RAG failed:', e.message);
+      }
+
+      stage('🧠 Формирую Executive Summary…');
+
       const JUDGE_SYS_DEEP = `Ты — практикующий юрист (право Кыргызской Республики), лично изучивший документ.
-Тебе переданы верифицированные замечания к этому документу.
+Тебе переданы верифицированные замечания к этому документу${deepNpaBlock ? ' и применимые нормы НПА КР из базы законов' : ''}.
 Составь профессиональное юридическое заключение для клиента.
 
 ПРАВИЛА (КРИТИЧЕСКИ ВАЖНЫ):
 - Пиши от первого лица как юрист («При изучении документа выявлено...»)
 - НЕ упоминай «аудиторов», «протоколы», «источники», «агентов» — ты лично изучил документ
 - Ссылайся ТОЛЬКО на факты из переданных замечаний — не добавляй новых
-- Если есть нарушения НПА — укажи конкретные нормы (статьи ГК КР, ГПК КР и т.д.)
+- Ссылайся на НПА ТОЛЬКО из раздела «ПРИМЕНИМЫЕ НОРМЫ НПА КР» (если он передан). Не называй статей которых нет в переданных данных.
 - По каждому замечанию — конкретная рекомендация: что именно и как исправить
 - Если замечаний мало или документ в целом хорош — скажи это прямо
 
@@ -1929,7 +1954,7 @@ confirmed: true  = замечание обоснованно, опроверже
 ## 🟢 Рекомендации
 ## ⚖️ Заключение`;
 
-      const judgeUser = `Оценка документа: ${score}/100 | Замечаний: ${confirmedFindings.length} (🔴 ${nH} · 🟡 ${nM} · 🟢 ${nL})\n\nВЫЯВЛЕННЫЕ ЗАМЕЧАНИЯ:\n\n${findingsBlock}`;
+      const judgeUser = `Оценка документа: ${score}/100 | Замечаний: ${confirmedFindings.length} (🔴 ${nH} · 🟡 ${nM} · 🟢 ${nL})\n\nВЫЯВЛЕННЫЕ ЗАМЕЧАНИЯ:\n\n${findingsBlock}${deepNpaBlock}`;
 
       let judgeText = '';
       try {
@@ -2013,9 +2038,8 @@ confirmed: true  = замечание обоснованно, опроверже
       });
 
       // ── 6 ПАРАЛЛЕЛЬНЫХ АГЕНТОВ ─────────────────────────────────────
-      // Все 6 агентов: gemini-3.1-flash-lite (быстрее, качество на уровне)
-      // Агент 6: RAG-верификатор использует Supabase через resolvedDeps
-      // Агент 6: RAG-верификатор использует Supabase через resolvedDeps
+      // Агенты 1-5: анализ текста документа (gemini-3.1-flash-lite)
+      // Агент 6: RAG-верификатор — ищет нормы НПА КР в Supabase через resolvedDeps.pineconeSearch
       stage('🔬 Запускаю 6 параллельных агентов PRO (структура · логика · стратегия · риски · процессуал · НПА)…');
 
       const PRO_AGENTS = [

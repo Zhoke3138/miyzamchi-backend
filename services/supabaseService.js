@@ -12,9 +12,15 @@
 const SUPABASE_URL     = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
+// Startup check — visible in Render logs immediately on deploy
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.error('[Supabase] ⚠️ STARTUP: SUPABASE_URL или SUPABASE_ANON_KEY не заданы — RAG отключён для ВСЕХ режимов анализа! Задайте в Render → Environment.');
+} else {
+    console.log(`[Supabase] ✅ STARTUP: подключено → ${SUPABASE_URL.slice(0, 50)}...`);
+}
+
 async function searchSupabase(vector, queryText = '', topK = 10) {
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-        console.warn('[Supabase] SUPABASE_URL или SUPABASE_ANON_KEY не заданы — поиск пропущен');
         return [];
     }
 
