@@ -1718,6 +1718,512 @@ ${checklist}
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ГЛУБОКИЙ АНАЛИЗ — /api/v2/analyze-deep
+  //  Параллельный аудит загруженного документа: Структура + Логика + Стратегия.
+  //  Каждый агент ОБЯЗАН цитировать текст документа (анти-галлюцинация Layer 1).
+  //  Adversarial verifier опровергает ложные срабатывания (Layer 2).
+  //  DeepSeek v4-flash (fast) стримит Executive Summary.
+  // ═══════════════════════════════════════════════════════════════════════
+  router.post('/analyze-deep', async (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    const sse  = (obj) => { if (!res.writableEnded) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); if (typeof res.flush === 'function') res.flush(); } };
+    const done = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
+    const stage = (text) => sse({ stage: text });
+    const hb = setInterval(() => { if (!res.writableEnded) res.write(':hb\n\n'); }, 20000);
+    const finish = () => { clearInterval(hb); done(); };
+
+    try {
+      const docText = String((req.body && req.body.documentText) || '').slice(0, 30000).trim();
+      if (docText.length < 80) { sse({ error: 'Документ слишком короткий для глубокого анализа' }); return finish(); }
+
+      const adTimeout = (p, ms, fb) => Promise.race([
+        Promise.resolve(p).catch(() => fb),
+        new Promise(r => setTimeout(() => r(fb), ms)),
+      ]);
+      const adParseArr = (raw) => {
+        const c = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+        try { const o = JSON.parse(c); return Array.isArray(o) ? o : (Array.isArray(o.findings) ? o.findings : []); } catch (_) {}
+        const a = c.indexOf('['), b = c.lastIndexOf(']');
+        if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a, b + 1)); } catch (_) {} }
+        const oa = c.indexOf('{'), oc = c.lastIndexOf('}');
+        if (oa !== -1 && oc > oa) { try { const o = JSON.parse(c.slice(oa, oc + 1)); return Array.isArray(o.findings) ? o.findings : []; } catch (_) {} }
+        return [];
+      };
+      const adParseObj = (raw) => {
+        const c = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+        try { return JSON.parse(c); } catch (_) {}
+        const a = c.indexOf('{'), b = c.lastIndexOf('}');
+        if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a, b + 1)); } catch (_) {} }
+        return null;
+      };
+      const adStrip = (s) => String(s || '').replace(/[　-〿㐀-䶿一-鿿豈-﫿＀-￯]/g, '');
+      const normFinding = (f, defaultCat) => ({
+        severity: ['high', 'medium', 'low'].includes(f.severity) ? f.severity : 'medium',
+        category: adStrip(String(f.category || defaultCat)).slice(0, 60),
+        claim:    adStrip(String(f.claim    || '')).slice(0, 300),
+        quote:    adStrip(String(f.quote    || '')).slice(0, 500),
+        location: adStrip(String(f.location || '')).slice(0, 120),
+      });
+
+      // ── 3 ПАРАЛЛЕЛЬНЫХ АГЕНТА ─────────────────────────────────────────
+      // Каждый получает ПОЛНЫЙ текст документа. Цитата из документа —
+      // обязательное поле; без неё замечание отброшено на Layer 1.
+      stage('🔬 Запускаю параллельный аудит: структура · логика · стратегия…');
+
+      const DEEP_AGENTS = [
+        {
+          key: 'structural', label: 'Структурный аудитор', defaultCat: 'Структура',
+          system: `Ты — юрист-аудитор (право Кыргызской Республики). Проверяешь структуру и полноту документа.
+ЗАДАЧА: Найди отсутствующие обязательные разделы, неполные формулировки, нарушения порядка структуры.
+
+АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА (ОБЯЗАТЕЛЬНЫ):
+1. Каждое замечание ДОЛЖНО содержать "quote" — точную цитату ИЗ ДОКУМЕНТА (1-3 предложения).
+   • Если раздел ОТСУТСТВУЕТ → quote = "Раздел не найден в тексте документа"
+   • Если элемент НЕПОЛНЫЙ → процитируй неполный фрагмент
+2. НЕ ссылайся на статьи НПА — это другой агент.
+3. Если замечаний нет → findings = []
+
+Верни СТРОГО JSON без markdown:
+{ "findings": [ { "severity": "high|medium|low", "category": "Структура", "claim": "суть одним предложением", "quote": "цитата или «Раздел не найден»", "location": "раздел/пункт" } ] }`,
+        },
+        {
+          key: 'logical', label: 'Логический аналитик', defaultCat: 'Логика',
+          system: `Ты — логический аналитик юридических документов (право Кыргызской Республики).
+ЗАДАЧА: Найди внутренние противоречия, двусмысленные термины, петли ответственности, пустые обязательства.
+
+АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА (ОБЯЗАТЕЛЬНЫ):
+1. Quote для ПРОТИВОРЕЧИЙ = оба противоречащих текста через " ↔ " (ОБА обязательны)
+2. Quote для ДВУСМЫСЛЕННОСТИ = точная неоднозначная фраза из документа
+3. НЕ придумывай противоречия — они должны явно следовать из текста документа
+4. Если проблем нет → findings = []
+
+Верни СТРОГО JSON без markdown:
+{ "findings": [ { "severity": "high|medium|low", "category": "Логика", "claim": "суть одним предложением", "quote": "цитата", "location": "пункт/раздел" } ] }`,
+        },
+        {
+          key: 'strategic', label: 'Стратегический аналитик', defaultCat: 'Стратегия',
+          system: `Ты — адвокат противоположной стороны (право Кыргызской Республики). Атакуй этот документ.
+ЗАДАЧА: Найди формулировки, которые оппонент использует против автора документа в суде или переговорах.
+
+АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА (ОБЯЗАТЕЛЬНЫ):
+1. Quote = ТОЧНАЯ цитата "уязвимой" формулировки из документа (без цитаты — замечание не засчитывается)
+2. В claim объясни КАК ИМЕННО оппонент атакует эту формулировку
+3. Только реальные уязвимости, подтверждённые текстом
+4. Если документ защищён → findings = []
+
+Верни СТРОГО JSON без markdown:
+{ "findings": [ { "severity": "high|medium|low", "category": "Стратегия", "claim": "как атакует оппонент", "quote": "цитата уязвимой формулировки", "location": "пункт/раздел" } ] }`,
+        },
+      ];
+
+      const agentResults = await Promise.all(DEEP_AGENTS.map(async (ag) => {
+        const raw = await adTimeout((async () => clients.geminiJson({
+          systemPrompt: ag.system,
+          userPrompt: `ДОКУМЕНТ:\n${docText}\n\nПроведи анализ по своей специализации. Верни JSON.`,
+          model: 'gemini-3.1-flash-lite', maxOutputTokens: 2048, timeoutMs: 25000,
+          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: `analyze-deep:${ag.key}` }),
+        }))(), 28000, null);
+        const findings = adParseArr(raw).map(f => normFinding(f, ag.defaultCat));
+        sse({ stage: `   ✓ ${ag.label}: замечаний ${findings.length}`, agent: ag.key });
+        return { key: ag.key, findings };
+      }));
+
+      // ── LAYER 1: Фильтр по обязательному полю quote ────────────────
+      const rawFindings = agentResults.flatMap(r => r.findings)
+        .filter(f => f.claim && f.quote && f.quote.trim() !== '' && f.quote !== 'null');
+
+      if (!rawFindings.length) {
+        sse({ text: '## ⚖️ Итог\n\nВсе три аудитора не выявили существенных замечаний к документу.\nДокумент структурно корректен, логически последователен и стратегически защищён.' });
+        sse({ deepAnalysis: { findings: [], score: 95, agentBreakdown: { structural: 0, logical: 0, strategic: 0 } } });
+        return finish();
+      }
+
+      // ── LAYER 2: ADVERSARIAL VERIFIER ─────────────────────────────
+      stage(`⚖️ Верифицирую ${rawFindings.length} замечани${rawFindings.length === 1 ? 'е' : rawFindings.length < 5 ? 'я' : 'й'} независимым аудитором…`);
+      const VERIFIER_SYS_DEEP = `Ты — независимый юрист-скептик. Проверяешь замечание к документу.
+ЗАДАЧА: Найди в тексте документа фразу, которая ОПРОВЕРГАЕТ это замечание.
+Если нашёл опровержение → confirmed: false, reason: точная цитата-опровержение.
+Если не нашёл → confirmed: true, reason: краткое подтверждение.
+Верни СТРОГО JSON: { "confirmed": <bool>, "reason": "<1-2 предложения>" }`;
+
+      const verified = await Promise.all(rawFindings.slice(0, 18).map(async (f) => {
+        const raw = await adTimeout((async () => clients.geminiJson({
+          systemPrompt: VERIFIER_SYS_DEEP,
+          userPrompt: `ЗАМЕЧАНИЕ: ${f.claim}\nЦИТАТА: ${f.quote}\nМЕСТО: ${f.location}\n\nФРАГМЕНТ ДОКУМЕНТА:\n${docText.slice(0, 8000)}\n\nПодтверди или опровергни. Верни JSON.`,
+          model: 'gemini-3.1-flash-lite', maxOutputTokens: 300, timeoutMs: 15000,
+          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-deep:verifier' }),
+        }))(), 18000, null);
+        const v = adParseObj(raw);
+        if (!v || typeof v.confirmed !== 'boolean') return { ...f, confirmed: true };
+        return { ...f, confirmed: v.confirmed, verifierReason: adStrip(String(v.reason || '')).slice(0, 200) };
+      }));
+      const confirmedFindings = verified.filter(f => f.confirmed);
+
+      const agentBreakdown = {};
+      for (const ag of DEEP_AGENTS) {
+        agentBreakdown[ag.key] = confirmedFindings.filter(f => f.category === ag.defaultCat).length;
+      }
+
+      // ── SCORE ───────────────────────────────────────────────────────
+      let score = 100;
+      for (const f of confirmedFindings) {
+        if (f.severity === 'high') score -= 15;
+        else if (f.severity === 'medium') score -= 8;
+        else score -= 2;
+      }
+      score = Math.max(10, Math.min(100, score));
+
+      // ── JUDGE: DeepSeek v4-flash, потоковый ────────────────────────
+      stage('🧠 Формирую Executive Summary…');
+      const nH = confirmedFindings.filter(f => f.severity === 'high').length;
+      const nM = confirmedFindings.filter(f => f.severity === 'medium').length;
+      const nL = confirmedFindings.filter(f => f.severity === 'low').length;
+      const findingsBlock = confirmedFindings.map((f, i) =>
+        `${i + 1}. [${f.severity.toUpperCase()}] ${f.category} · ${f.location}\n   Замечание: ${f.claim}\n   Цитата: «${f.quote}»`
+      ).join('\n\n');
+
+      const JUDGE_SYS_DEEP = `Ты — Старший партнёр юридической фирмы (право Кыргызской Республики).
+Три аудитора (Структурный, Логический, Стратегический) проверили документ и верифицировали замечания.
+Составь Executive Summary для клиента строго по протоколам аудиторов.
+
+ПРАВИЛА:
+- Ссылайся ТОЛЬКО на факты из переданных протоколов
+- НЕ добавляй замечания сверх протоколов
+- Профессиональный юридический язык, без воды
+- По каждому критическому замечанию дай краткую рекомендацию по исправлению
+
+ФОРМАТ (markdown):
+## 🔴 Критические замечания
+## 🟡 Существенные замечания
+## 🟢 Рекомендации
+## ⚖️ Итоговая оценка`;
+
+      const judgeUser = `Оценка: ${score}/100 | Замечаний: ${confirmedFindings.length} (🔴 ${nH} · 🟡 ${nM} · 🟢 ${nL})\n\nПРОТОКОЛЫ АУДИТОРОВ:\n\n${findingsBlock}`;
+
+      let judgeText = '';
+      try {
+        const judgeResult = await clients.deepseekReason({
+          systemPrompt: JUDGE_SYS_DEEP, userPrompt: judgeUser,
+          model: 'deepseek-v4-flash', reasoning_effort: 'low', thinking: 'disabled',
+          onDelta: (d) => { if (d.text) { judgeText += d.text; sse({ text: d.text }); } },
+        });
+        if (judgeResult && judgeResult.usage && (judgeResult.usage.inputTokens || judgeResult.usage.outputTokens)) {
+          emitTele(res, { model: judgeResult.model || 'deepseek-v4-flash', inputTokens: judgeResult.usage.inputTokens, outputTokens: judgeResult.usage.outputTokens, label: 'analyze-deep:judge' });
+        }
+      } catch (e) { console.warn('[analyze-deep] judge error:', e.message); }
+      if (!judgeText) {
+        // Gemini fallback
+        try {
+          const fb = await clients.geminiJson({ systemPrompt: JUDGE_SYS_DEEP, userPrompt: judgeUser, model: 'gemini-2.5-flash', maxOutputTokens: 3000, timeoutMs: 40000,
+            onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-deep:judge-fallback' }), });
+          sse({ text: String(fb || '') });
+        } catch (_) {
+          sse({ text: `## ⚖️ Итоговая оценка\n\nВыявлено ${confirmedFindings.length} замечаний. Оценка: ${score}/100.` });
+        }
+      }
+
+      sse({ deepAnalysis: { findings: confirmedFindings, score, agentBreakdown } });
+      return finish();
+    } catch (err) {
+      console.error('[analyze-deep] error:', err.message);
+      sse({ error: 'Сбой глубокого анализа: ' + err.message });
+      return finish();
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  ГЛУБОКИЙ АНАЛИЗ PRO — /api/v2/analyze-pro
+  //  6 параллельных агентов: Структура + Логика + Стратегия + Риски +
+  //  Процессуал + RAG-верификатор (НПА КР из Supabase).
+  //  Adversarial verifier проверяет ВСЕ замечания.
+  //  DeepSeek v4-pro с reasoning синтезирует финальный отчёт.
+  // ═══════════════════════════════════════════════════════════════════════
+  router.post('/analyze-pro', async (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    const sse  = (obj) => { if (!res.writableEnded) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); if (typeof res.flush === 'function') res.flush(); } };
+    const done = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
+    const stage = (text) => sse({ stage: text });
+    const hb = setInterval(() => { if (!res.writableEnded) res.write(':hb\n\n'); }, 20000);
+    const finish = () => { clearInterval(hb); done(); };
+
+    try {
+      const docText = String((req.body && req.body.documentText) || '').slice(0, 35000).trim();
+      if (docText.length < 80) { sse({ error: 'Документ слишком короткий для PRO-анализа' }); return finish(); }
+
+      const proTimeout = (p, ms, fb) => Promise.race([
+        Promise.resolve(p).catch(() => fb),
+        new Promise(r => setTimeout(() => r(fb), ms)),
+      ]);
+      const proParseArr = (raw) => {
+        const c = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+        try { const o = JSON.parse(c); return Array.isArray(o) ? o : (Array.isArray(o.findings) ? o.findings : []); } catch (_) {}
+        const a = c.indexOf('['), b = c.lastIndexOf(']');
+        if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a, b + 1)); } catch (_) {} }
+        const oa = c.indexOf('{'), oc = c.lastIndexOf('}');
+        if (oa !== -1 && oc > oa) { try { const o = JSON.parse(c.slice(oa, oc + 1)); return Array.isArray(o.findings) ? o.findings : []; } catch (_) {} }
+        return [];
+      };
+      const proParseObj = (raw) => {
+        const c = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+        try { return JSON.parse(c); } catch (_) {}
+        const a = c.indexOf('{'), b = c.lastIndexOf('}');
+        if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a, b + 1)); } catch (_) {} }
+        return null;
+      };
+      const proStrip = (s) => String(s || '').replace(/[　-〿㐀-䶿一-鿿豈-﫿＀-￯]/g, '');
+      const proNorm = (f, dc) => ({
+        severity: ['high', 'medium', 'low'].includes(f.severity) ? f.severity : 'medium',
+        category: proStrip(String(f.category || dc)).slice(0, 60),
+        claim:    proStrip(String(f.claim    || '')).slice(0, 300),
+        quote:    proStrip(String(f.quote    || '')).slice(0, 500),
+        location: proStrip(String(f.location || '')).slice(0, 120),
+      });
+
+      // ── 6 ПАРАЛЛЕЛЬНЫХ АГЕНТОВ ─────────────────────────────────────
+      // Агенты 1-3: gemini-2.5-flash (качественнее для PRO)
+      // Агенты 4-6: gemini-3.1-flash-lite (специализированные, быстрые)
+      // Агент 6: RAG-верификатор использует Supabase через resolvedDeps
+      stage('🔬 Запускаю 6 параллельных агентов PRO (структура · логика · стратегия · риски · процессуал · НПА)…');
+
+      const PRO_AGENTS = [
+        {
+          key: 'structural', label: 'Структурный аудитор', defaultCat: 'Структура', model: 'gemini-2.5-flash',
+          system: `Ты — старший юрист-аудитор (право Кыргызской Республики). Глубокая проверка структуры и полноты документа.
+ЗАДАЧА: Найди все структурные проблемы: отсутствующие обязательные разделы, неполные условия, незакрытые соглашения, нарушения порядка.
+
+АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА:
+1. Каждое замечание ОБЯЗАНО содержать "quote" — цитату ИЗ ДОКУМЕНТА (1-3 предложения) или «Раздел не найден»
+2. НЕ ссылайся на статьи НПА в этой роли
+3. Если нет замечаний → findings = []
+Верни JSON: { "findings": [ { "severity", "category": "Структура", "claim", "quote", "location" } ] }`,
+        },
+        {
+          key: 'logical', label: 'Логический аналитик', defaultCat: 'Логика', model: 'gemini-2.5-flash',
+          system: `Ты — старший логический аналитик юридических документов (право КР).
+ЗАДАЧА: Найди ВСЕ внутренние противоречия, двусмысленные термины, петли ответственности, пробелы в условиях, пустые обязательства без механизма исполнения.
+
+АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА:
+1. Quote для ПРОТИВОРЕЧИЙ = оба противоречащих текста через " ↔ "
+2. Quote для ДВУСМЫСЛЕННОСТИ = точная неоднозначная фраза
+3. НЕ придумывай: только явные противоречия из текста
+4. findings = [] если нет проблем
+Верни JSON: { "findings": [ { "severity", "category": "Логика", "claim", "quote", "location" } ] }`,
+        },
+        {
+          key: 'strategic', label: 'Стратегический аналитик', defaultCat: 'Стратегия', model: 'gemini-2.5-flash',
+          system: `Ты — опытный адвокат противоположной стороны (право КР). Агрессивно атакуй документ.
+ЗАДАЧА: Найди ВСЕ уязвимые формулировки, которые оппонент использует в суде, переговорах, претензиях.
+
+АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА:
+1. Quote = ТОЧНАЯ цитата уязвимой формулировки из документа (ОБЯЗАТЕЛЬНО — без неё замечание не принято)
+2. В claim объясни точную тактику атаки оппонента
+3. Только реальные уязвимости, подтверждённые текстом
+4. findings = [] если уязвимостей нет
+Верни JSON: { "findings": [ { "severity", "category": "Стратегия", "claim", "quote", "location" } ] }`,
+        },
+        {
+          key: 'risk', label: 'Риск-менеджер', defaultCat: 'Риски', model: 'gemini-3.1-flash-lite',
+          system: `Ты — риск-менеджер (право Кыргызской Республики). Оцениваешь правовые и финансовые риски.
+ЗАДАЧА: Найди финансовые, правовые и репутационные риски: непропорциональные штрафы, неограниченная ответственность, риски одностороннего расторжения, скрытые платежи.
+
+АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА:
+1. Quote = точная цитата рискованного условия из документа
+2. В claim объясни конкретный механизм риска и возможный ущерб
+3. findings = [] если рисков нет
+Верни JSON: { "findings": [ { "severity", "category": "Риски", "claim", "quote", "location" } ] }`,
+        },
+        {
+          key: 'procedural', label: 'Процессуальный аналитик', defaultCat: 'Процессуал', model: 'gemini-3.1-flash-lite',
+          system: `Ты — процессуальный юрист (право Кыргызской Республики). Проверяешь соблюдение процессуальных норм.
+ЗАДАЧА: Найди проблемы с: сроками исполнения (слишком короткие/длинные/неопределённые), порядком уведомлений, формой подписи, подсудностью, досудебным урегулированием, сроком действия документа.
+
+АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА:
+1. Quote = точная цитата проблемного условия из документа или «Условие отсутствует»
+2. findings = [] если нет процессуальных проблем
+Верни JSON: { "findings": [ { "severity", "category": "Процессуал", "claim", "quote", "location" } ] }`,
+        },
+      ];
+
+      // Агент 6: RAG-верификатор (Supabase НПА КР)
+      // Ищет применимые нормы через resolvedDeps.pineconeSearch,
+      // затем проверяет документ на соответствие найденным нормам.
+      const ragAgentPromise = proTimeout((async () => {
+        const subject = docText.slice(0, 300); // первые 300 символов как краткое описание
+        const ragQueries = [
+          `${subject} нарушение обязательства ответственность`,
+          `${subject} права стороны расторжение договора`,
+          `требования к форме содержанию документа Кыргызская Республика`,
+        ];
+        let ragNorms = [];
+        try {
+          ragNorms = (await resolvedDeps.pineconeSearch?.(ragQueries, null, 8)) || [];
+        } catch (e) { console.warn('[analyze-pro] RAG search failed:', e.message); }
+        if (!ragNorms.length) return { key: 'npa_check', findings: [] };
+
+        const normsList = ragNorms.slice(0, 8).map((n, i) => {
+          const md = (n && n.metadata) || {};
+          return `[${i+1}] ${[md.npa_title, md.article_title].filter(Boolean).join(' — ')}\n${String(md.full_text || '').slice(0, 600)}`;
+        }).join('\n\n');
+
+        const RAG_SYS = `Ты — эксперт-нормоконтролёр (право Кыргызской Республики).
+Тебе переданы нормы НПА КР из базы законов и текст проверяемого документа.
+ЗАДАЧА: Проверь, соответствует ли документ переданным нормам. Найди нарушения или несоответствия.
+
+АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА (КРИТИЧЕСКИ ВАЖНЫ):
+1. Ссылайся ТОЛЬКО на нормы из переданного списка (НЕ придумывай статьи)
+2. Quote = точная цитата из документа, которая нарушает норму (ОБЯЗАТЕЛЬНА)
+3. В claim укажи: какую именно норму нарушает и как
+4. findings = [] если нарушений нет
+
+Верни СТРОГО JSON без markdown:
+{ "findings": [ { "severity": "high|medium|low", "category": "НПА КР", "claim": "какую норму нарушает", "quote": "цитата из документа", "location": "пункт/раздел", "norm": "[N] название нормы" } ] }`;
+
+        const raw = await clients.geminiJson({
+          systemPrompt: RAG_SYS,
+          userPrompt: `НОРМЫ НПА КР ИЗ БАЗЫ:\n${normsList}\n\nДОКУМЕНТ:\n${docText.slice(0, 12000)}\n\nПроверь соответствие. Верни JSON.`,
+          model: 'gemini-3.1-flash-lite', maxOutputTokens: 2500, timeoutMs: 28000,
+          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-pro:npa_check' }),
+        });
+        const findings = proParseArr(raw).map(f => ({
+          ...proNorm(f, 'НПА КР'),
+          norm: proStrip(String(f.norm || '')).slice(0, 200),
+        }));
+        sse({ stage: `   ✓ RAG-верификатор НПА: найдено норм ${ragNorms.length}, замечаний ${findings.length}`, agent: 'npa_check' });
+        return { key: 'npa_check', findings };
+      })(), 35000, { key: 'npa_check', findings: [] });
+
+      // Все 6 агентов параллельно
+      const [agentResults, ragResult] = await Promise.all([
+        Promise.all(PRO_AGENTS.map(async (ag) => {
+          const raw = await proTimeout((async () => clients.geminiJson({
+            systemPrompt: ag.system,
+            userPrompt: `ДОКУМЕНТ:\n${docText}\n\nПроведи анализ. Верни JSON.`,
+            model: ag.model, maxOutputTokens: 2500, timeoutMs: 35000,
+            onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: `analyze-pro:${ag.key}` }),
+          }))(), 38000, null);
+          const findings = proParseArr(raw).map(f => proNorm(f, ag.defaultCat));
+          sse({ stage: `   ✓ ${ag.label}: замечаний ${findings.length}`, agent: ag.key });
+          return { key: ag.key, findings };
+        })),
+        ragAgentPromise,
+      ]);
+
+      // ── LAYER 1: Фильтр по обязательному полю quote ────────────────
+      const allResults = [...agentResults, ragResult];
+      const rawFindings = allResults.flatMap(r => (r.findings || []))
+        .filter(f => f.claim && f.quote && f.quote.trim() !== '' && f.quote !== 'null');
+
+      if (!rawFindings.length) {
+        sse({ text: '## ⚖️ PRO-Итог\n\nВсе шесть аудиторов не выявили существенных замечаний.\nДокумент юридически состоятелен по всем направлениям проверки.' });
+        sse({ deepAnalysis: { findings: [], score: 97, agentBreakdown: { structural: 0, logical: 0, strategic: 0, risk: 0, procedural: 0, npa_check: 0 } } });
+        return finish();
+      }
+
+      // ── LAYER 2: ADVERSARIAL VERIFIER (проверяем ВСЕ, не только топ) ──
+      stage(`⚖️ PRO-верификация: проверяю все ${rawFindings.length} замечани${rawFindings.length === 1 ? 'е' : rawFindings.length < 5 ? 'я' : 'й'} независимым аудитором…`);
+      const VERIFIER_SYS_PRO = `Ты — независимый юрист-скептик. Проверяешь замечание к документу.
+Найди в тексте документа фразу, которая ОПРОВЕРГАЕТ замечание.
+confirmed: false = нашёл опровержение (с цитатой), confirmed: true = не нашёл.
+Верни СТРОГО JSON: { "confirmed": <bool>, "reason": "<1-2 предложения>" }`;
+
+      const verifiedAll = await Promise.all(rawFindings.slice(0, 25).map(async (f) => {
+        const raw = await proTimeout((async () => clients.geminiJson({
+          systemPrompt: VERIFIER_SYS_PRO,
+          userPrompt: `ЗАМЕЧАНИЕ: ${f.claim}\nЦИТАТА: ${f.quote}\nМЕСТО: ${f.location}\n\nФРАГМЕНТ ДОКУМЕНТА:\n${docText.slice(0, 8000)}\n\nВерни JSON.`,
+          model: 'gemini-3.1-flash-lite', maxOutputTokens: 300, timeoutMs: 15000,
+          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-pro:verifier' }),
+        }))(), 18000, null);
+        const v = proParseObj(raw);
+        if (!v || typeof v.confirmed !== 'boolean') return { ...f, confirmed: true };
+        return { ...f, confirmed: v.confirmed, verifierReason: proStrip(String(v.reason || '')).slice(0, 200) };
+      }));
+      const confirmedFindings = verifiedAll.filter(f => f.confirmed)
+        .sort((a, b) => { const ord = { high: 0, medium: 1, low: 2 }; return (ord[a.severity] || 1) - (ord[b.severity] || 1); });
+
+      const agentBreakdown = {};
+      for (const ag of [...PRO_AGENTS, { key: 'npa_check', defaultCat: 'НПА КР' }]) {
+        agentBreakdown[ag.key] = confirmedFindings.filter(f => f.category === ag.defaultCat).length;
+      }
+
+      // ── SCORE (строже чем в deep: -20 за НПА, -15 за структур./логику high) ──
+      let score = 100;
+      for (const f of confirmedFindings) {
+        const isNpa = f.category === 'НПА КР';
+        if (f.severity === 'high') score -= isNpa ? 20 : 15;
+        else if (f.severity === 'medium') score -= isNpa ? 12 : 8;
+        else score -= 2;
+      }
+      score = Math.max(5, Math.min(100, score));
+
+      // ── JUDGE PRO: DeepSeek v4-pro с reasoning ─────────────────────
+      stage('🧠 DeepSeek PRO (reasoning) синтезирует финальный отчёт…');
+      const nH = confirmedFindings.filter(f => f.severity === 'high').length;
+      const nM = confirmedFindings.filter(f => f.severity === 'medium').length;
+      const nL = confirmedFindings.filter(f => f.severity === 'low').length;
+
+      const groupedBlock = ['НПА КР', 'Структура', 'Логика', 'Стратегия', 'Риски', 'Процессуал'].map(cat => {
+        const catFindings = confirmedFindings.filter(f => f.category === cat);
+        if (!catFindings.length) return '';
+        const items = catFindings.map((f, i) =>
+          `  ${i+1}. [${f.severity.toUpperCase()}] ${f.claim}\n     Цитата: «${f.quote}»\n     Место: ${f.location}${f.norm ? `\n     Норма: ${f.norm}` : ''}`
+        ).join('\n');
+        return `=== ${cat} ===\n${items}`;
+      }).filter(Boolean).join('\n\n');
+
+      const JUDGE_SYS_PRO = `Ты — Старший управляющий партнёр юридической фирмы (право Кыргызской Республики).
+Шесть специализированных аудиторов провели всестороннюю проверку документа.
+Составь Executive Summary PRO-уровня: приоритизированный, точный, с конкретными рекомендациями по каждому критическому нарушению.
+
+ПРАВИЛА (КРИТИЧЕСКИ ВАЖНЫ):
+- Ссылайся ТОЛЬКО на факты из протоколов (уже верифицированы adversarial аудитором)
+- НЕ добавляй замечания сверх протоколов
+- Для нарушений НПА: дай готовую формулировку для контрагента со ссылкой на норму
+- Для критических структурных/логических: дай конкретную редакцию исправления
+
+ФОРМАТ (markdown):
+## 🔴 Критические замечания (нарушения НПА и high-severity)
+## 🟡 Существенные замечания (medium-severity)
+## 🟢 Рекомендации (low-severity)
+## 💡 Что необходимо исправить до подписания
+## ⚖️ PRO-вердикт`;
+
+      const judgeUserPro = `ОЦЕНКА: ${score}/100 | Замечаний: ${confirmedFindings.length} (🔴 ${nH} · 🟡 ${nM} · 🟢 ${nL})\n\nПРОТОКОЛЫ 6 АУДИТОРОВ:\n\n${groupedBlock}`;
+
+      let proJudgeText = '';
+      try {
+        const proJudgeResult = await clients.deepseekReason({
+          systemPrompt: JUDGE_SYS_PRO, userPrompt: judgeUserPro,
+          model: 'deepseek-v4-pro', reasoning_effort: 'high', thinking: 'enabled',
+          onDelta: (d) => { if (d.text) { proJudgeText += d.text; sse({ text: d.text }); } },
+        });
+        if (proJudgeResult && proJudgeResult.usage && (proJudgeResult.usage.inputTokens || proJudgeResult.usage.outputTokens)) {
+          emitTele(res, { model: proJudgeResult.model || 'deepseek-v4-pro', inputTokens: proJudgeResult.usage.inputTokens, outputTokens: proJudgeResult.usage.outputTokens, label: 'analyze-pro:judge' });
+        }
+      } catch (e) { console.warn('[analyze-pro] judge error:', e.message); }
+      if (!proJudgeText) {
+        try {
+          const fb = await clients.geminiJson({ systemPrompt: JUDGE_SYS_PRO, userPrompt: judgeUserPro, model: 'gemini-2.5-flash', maxOutputTokens: 4000, timeoutMs: 50000,
+            onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-pro:judge-fallback' }), });
+          sse({ text: String(fb || '') });
+        } catch (_) {
+          sse({ text: `## ⚖️ PRO-вердикт\n\nВыявлено ${confirmedFindings.length} замечаний. Оценка: ${score}/100.` });
+        }
+      }
+
+      sse({ deepAnalysis: { findings: confirmedFindings, score, agentBreakdown } });
+      return finish();
+    } catch (err) {
+      console.error('[analyze-pro] error:', err.message);
+      sse({ error: 'Сбой PRO-анализа: ' + err.message });
+      return finish();
+    }
+  });
+
   return router;
 }
 

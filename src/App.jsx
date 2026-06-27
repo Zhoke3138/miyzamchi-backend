@@ -365,15 +365,15 @@ async function streamDeepAnalyze({documentText, userQuery, perspective='audit', 
    Payload: { oldDocumentText, newDocumentText }
    SSE events: { step }, { protocolStatus }, { compareReport }, { text }, { telemetry }
    ═════════════════════════════════════════════════════════════ */
-async function streamCompareDocuments({oldDocumentText, newDocumentText, onStatus, onStep, onReport, onText, onTelemetry, signal}){
+async function streamCompareDocuments({oldDocumentText, newDocumentText, side = 'ours', onStatus, onStep, onReport, onText, onTelemetry, signal}){
   const url = BACKEND_URL + '/api/compare-documents';
-  console.log('[IDE Compare] →', url, '| old:', oldDocumentText?.length, 'ch | new:', newDocumentText?.length, 'ch');
+  console.log('[IDE Compare] →', url, '| old:', oldDocumentText?.length, 'ch | new:', newDocumentText?.length, 'ch | side:', side);
   let res;
   try{
     res = await fetch(url, {
       method: 'POST',
       headers: jsonHeaders(),
-      body: JSON.stringify({oldDocumentText, newDocumentText}),
+      body: JSON.stringify({oldDocumentText, newDocumentText, side}),
       signal
     });
   }catch(fetchErr){
@@ -405,6 +405,57 @@ async function streamCompareDocuments({oldDocumentText, newDocumentText, onStatu
       if(parsed && parsed.compareReport){onReport && onReport(parsed.compareReport);}
       if(parsed && parsed.text){onText && onText(String(parsed.text));}
       if(parsed && parsed.telemetry){onTelemetry && onTelemetry(parsed.telemetry);}
+    }
+  }
+}
+
+/* ═════════════════════════════════════════════════════════════
+   streamDeepAnalysis — Глубокий анализ / Глубокий анализ PRO.
+   Payload: { documentText }
+   Endpoint: /api/v2/analyze-deep (deep) | /api/v2/analyze-pro (pro)
+   SSE events: { stage }, { text }, { deepAnalysis }, { telemetry }, [DONE]
+   ═════════════════════════════════════════════════════════════ */
+async function streamDeepAnalysis({ documentText, mode, onStage, onText, onDeepAnalysis, onTelemetry, signal }) {
+  const endpoint = mode === 'pro' ? '/api/v2/analyze-pro' : '/api/v2/analyze-deep';
+  const url = BACKEND_URL + endpoint;
+  console.log('[IDE Deep] →', url, '| doc:', documentText?.length, 'ch');
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ documentText }),
+      signal,
+    });
+  } catch (fetchErr) {
+    throw new Error(`Fetch failed → ${url}\n${fetchErr.name}: ${fetchErr.message}`);
+  }
+  if (!res.ok) {
+    let t = `HTTP ${res.status} ${res.statusText}`;
+    try { const body = await res.text(); if (body) t += `\n${body.substring(0, 300)}`; } catch (e) {}
+    throw new Error(`Сервер вернул ошибку:\n${t}`);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder('utf-8');
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      const tr = line.trim();
+      if (!tr || !tr.startsWith('data:')) continue;
+      const raw = tr.slice(5).trim();
+      if (raw === '[DONE]') return;
+      let parsed = null;
+      try { parsed = JSON.parse(raw); } catch (e) { continue; }
+      if (parsed && parsed.stage)        { onStage && onStage(String(parsed.stage)); }
+      if (parsed && parsed.text)         { onText && onText(String(parsed.text)); }
+      if (parsed && parsed.deepAnalysis) { onDeepAnalysis && onDeepAnalysis(parsed.deepAnalysis); }
+      if (parsed && parsed.telemetry)    { onTelemetry && onTelemetry(parsed.telemetry); }
+      if (parsed && parsed.error)        { throw new Error(String(parsed.error)); }
     }
   }
 }
@@ -662,6 +713,12 @@ const AnalyzeDocsMode = () => {
   // Открывается постоянной кнопкой "🗃️ Debug-архив" в toolbar (в любом
   // состоянии: IDLE / running / done).
   const [archiveOpen, setArchiveOpen] = useState(false);
+  // Глубокий анализ: режим (standard/deep/pro) и сторона сравнения (ours/theirs/neutral)
+  const [analyzeDepth, setAnalyzeDepth] = useState('standard');
+  const [compareSide, setCompareSide] = useState('ours');
+  // Результаты Глубокого анализа
+  const [deepResult, setDeepResult] = useState(null);  // { findings, score, agentBreakdown }
+  const [stageMsg, setStageMsg] = useState('');         // текущая фаза анализа
   const abortRef = useRef(null);
   const fileInputRefs = [useRef(null), useRef(null)];
 
@@ -781,6 +838,7 @@ const AnalyzeDocsMode = () => {
   const onRun = async () => {
     setRunning(true); setError('');
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null);
+    setDeepResult(null); setStageMsg('');
     // Reset телеметрию с новым startedAt
     const freshTele = { ...EMPTY_TELE, startedAt: Date.now() };
     setTele(freshTele);
@@ -788,7 +846,18 @@ const AnalyzeDocsMode = () => {
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      if (mode === 'audit') {
+      if (mode === 'audit' && analyzeDepth !== 'standard') {
+        // Глубокий анализ / PRO
+        await streamDeepAnalysis({
+          documentText: slots[0].text,
+          mode: analyzeDepth,
+          signal: ac.signal,
+          onStage:       (t) => setStageMsg(t),
+          onText:        (chunk) => setSummary(p => p + chunk),
+          onDeepAnalysis:(r) => setDeepResult(r),
+          onTelemetry:   onTelemetryEvent,
+        });
+      } else if (mode === 'audit') {
         await streamAnalyzeDocument({
           documentText: slots[0].text,
           file: slots[0].file || null,   // V2: физический файл слота → Cloud Run/Docling (fallback на текст)
@@ -810,6 +879,7 @@ const AnalyzeDocsMode = () => {
         await streamCompareDocuments({
           oldDocumentText: slots[0].text,
           newDocumentText: slots[1].text,
+          side: compareSide,
           signal: ac.signal,
           onStep:       (s) => upsertStep(s),
           onStatus:     () => {},
@@ -838,6 +908,7 @@ const AnalyzeDocsMode = () => {
     setRunning(false);
     setSlots([{...EMPTY_SLOT}, {...EMPTY_SLOT}]);
     setSteps([]); setTableRows([]); setPurityIndex(null); setSummary(''); setSources([]); setReport(null); setActivePair(null); setError('');
+    setDeepResult(null); setStageMsg('');
     setTele({...EMPTY_TELE});
     setQaMessages([]); setQaInput(''); setQaRunning(false);
     try { window.dispatchEvent(new CustomEvent('miyzamchi:tele-reset')); } catch(_) {}
@@ -993,16 +1064,60 @@ const AnalyzeDocsMode = () => {
           })}
         </div>
 
+        {/* ── Выбор глубины анализа (показывается когда загружен 1 документ) ── */}
+        {mode === 'audit' && (
+          <div className="ad-mode-selector">
+            <span className="ad-mode-selector-label">Режим анализа:</span>
+            {[
+              { key: 'standard', label: '⚖️ Аудит НПА', hint: 'Triage → Ищейки → Final Judge' },
+              { key: 'deep',     label: '🔬 Глубокий',  hint: '3 агента: структура · логика · стратегия' },
+              { key: 'pro',      label: '🧠 PRO',        hint: '6 агентов + RAG НПА + DeepSeek reasoning' },
+            ].map(opt => (
+              <button
+                key={opt.key}
+                className={`ad-mode-btn${analyzeDepth === opt.key ? ' ad-mode-btn--active' : ''}`}
+                onClick={() => setAnalyzeDepth(opt.key)}
+                title={opt.hint}
+              >{opt.label}</button>
+            ))}
+          </div>
+        )}
+
+        {/* ── Выбор стороны (показывается когда загружены 2 документа) ── */}
+        {mode === 'compare' && (
+          <div className="ad-side-selector">
+            <span className="ad-mode-selector-label">Позиция анализа:</span>
+            {[
+              { key: 'ours',    label: '🛡️ Наша сторона',      hint: 'Защита интересов нашей стороны (по умолчанию)' },
+              { key: 'theirs',  label: '⚔️ Сторона оппонента', hint: 'Взгляд со стороны контрагента' },
+              { key: 'neutral', label: '⚖️ Нейтрально',        hint: 'Сбалансированный взгляд обеих сторон' },
+            ].map(opt => (
+              <button
+                key={opt.key}
+                className={`ad-side-btn${compareSide === opt.key ? ' ad-side-btn--active' : ''}`}
+                onClick={() => setCompareSide(opt.key)}
+                title={opt.hint}
+              >{opt.label}</button>
+            ))}
+          </div>
+        )}
+
         <div className="ad-idle-cta">
           <button className="ad-run-cta" disabled={!canRun} onClick={onRun}>
             {mode === 'compare'
               ? <><Ico k="scale" sz={17}/> Сравнить редакции</>
+              : analyzeDepth === 'pro'
+              ? <><Ico k="microscope" sz={17}/> Глубокий анализ PRO</>
+              : analyzeDepth === 'deep'
+              ? <><Ico k="microscope" sz={17}/> Глубокий анализ</>
               : <><Ico k="microscope" sz={17}/> Запустить аудит</>
             }
           </button>
           {loadingCount > 0 && <p className="ad-idle-cta-hint">Дождитесь извлечения текста…</p>}
           {!mode && !loadingCount && <p className="ad-idle-cta-hint">PDF · DOCX · TXT · MD · до 25 МБ</p>}
-          {mode === 'audit'   && <p className="ad-idle-cta-hint">Triage → Ищейки → Final Judge · 4 фазы анализа</p>}
+          {mode === 'audit' && analyzeDepth === 'standard' && <p className="ad-idle-cta-hint">Triage → Ищейки → Final Judge · 4 фазы анализа</p>}
+          {mode === 'audit' && analyzeDepth === 'deep'     && <p className="ad-idle-cta-hint">Структура · Логика · Стратегия → Верификатор → DeepSeek Summary</p>}
+          {mode === 'audit' && analyzeDepth === 'pro'      && <p className="ad-idle-cta-hint">6 агентов (Gemini 2.5 Flash) + НПА RAG → DeepSeek reasoning · ~60-90с</p>}
           {mode === 'compare' && <p className="ad-idle-cta-hint">Semantic Redlining · семантический diff двух редакций</p>}
         </div>
 
@@ -1094,18 +1209,64 @@ const AnalyzeDocsMode = () => {
 
       {error && <div className="cmp-error">⚠️ {error}</div>}
 
-      {/* 2026-05-31 UX-rework: иерархия выдачи —
-          1) Executive Summary КРУПНО и сразу — самое важное.
-          2) Детальный разбор по пунктам — СВЁРНУТ в <details>.
-          3) Использованные нормы — отдельным мелким блоком.
-          Это убирает scroll fatigue: юрист видит вывод Финального Судьи
-          без скролла, при желании раскрывает детали. */}
+      {/* Прогресс глубокого анализа (stageMsg вместо headSteps) */}
+      {running && stageMsg && !headSteps.length && (
+        <div className="ad-deep-stage">
+          <span className="ad-deep-stage-dot"/>
+          <span className="ad-deep-stage-text">{stageMsg}</span>
+        </div>
+      )}
 
       {(summary || running) && (
         <div className="cmp-summary ad-summary-prominent">
-          <div className="cmp-summary-head">📋 Executive Summary</div>
+          <div className="cmp-summary-head">
+            {analyzeDepth === 'pro' ? '🧠 PRO-анализ · Executive Summary' : analyzeDepth === 'deep' ? '🔬 Глубокий анализ · Executive Summary' : '📋 Executive Summary'}
+          </div>
           <div className="cmp-summary-body ai-md"
-               dangerouslySetInnerHTML={{__html: renderMarkdown(summary || (running ? (isCompareView ? '_Старший партнёр анализирует изменения..._' : '_Финальный судья формирует заключение..._') : ''))}}/>
+               dangerouslySetInnerHTML={{__html: renderMarkdown(summary || (running ? (isCompareView ? '_Старший партнёр анализирует изменения..._' : stageMsg ? `_${stageMsg}_` : '_Финальный судья формирует заключение..._') : ''))}}/>
+        </div>
+      )}
+
+      {/* Панель замечаний Глубокого анализа / PRO */}
+      {deepResult && (
+        <div className="ad-deep-findings">
+          <div className="ad-deep-findings-header">
+            <span className="ad-deep-findings-title">
+              {analyzeDepth === 'pro' ? '🧠 PRO-аудит' : '🔬 Глубокий аудит'} · Верифицированные замечания
+            </span>
+            <span className={`ad-deep-score ${deepResult.score >= 75 ? 'ad-deep-score--ok' : deepResult.score >= 50 ? 'ad-deep-score--warn' : 'ad-deep-score--bad'}`}>
+              {deepResult.score}/100
+            </span>
+          </div>
+          {deepResult.findings && deepResult.findings.length > 0 ? (
+            <div className="ad-deep-findings-list">
+              {deepResult.findings.map((f, idx) => (
+                <div key={idx} className={`ad-finding-row ad-finding-severity--${f.severity || 'medium'}`}>
+                  <div className="ad-finding-top">
+                    <span className={`ad-finding-badge ad-finding-badge--${f.severity || 'medium'}`}>
+                      {f.severity === 'high' ? '🔴' : f.severity === 'low' ? '🟢' : '🟡'} {f.severity === 'high' ? 'Критично' : f.severity === 'low' ? 'Рекомендация' : 'Существенно'}
+                    </span>
+                    <span className="ad-finding-cat">{f.category}</span>
+                    {f.location && <span className="ad-finding-loc">📍 {f.location}</span>}
+                  </div>
+                  <div className="ad-finding-claim">{f.claim}</div>
+                  {f.quote && f.quote !== 'Раздел не найден в тексте документа' && (
+                    <blockquote className="ad-finding-quote">«{f.quote}»</blockquote>
+                  )}
+                  {f.norm && <div className="ad-finding-norm">⚖️ {f.norm}</div>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="ad-deep-findings-empty">Замечаний не выявлено — документ прошёл все проверки.</div>
+          )}
+          {deepResult.agentBreakdown && (
+            <div className="ad-deep-breakdown">
+              {Object.entries(deepResult.agentBreakdown).filter(([,v]) => v > 0).map(([k, v]) => (
+                <span key={k} className="ad-deep-breakdown-chip">{k}: {v}</span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
