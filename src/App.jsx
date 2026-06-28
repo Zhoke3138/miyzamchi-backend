@@ -3354,7 +3354,9 @@ const ICONS={
   'dollar':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>),
   'scale':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v17M4 8h16M6 8l-2 5h4zm12 0l-2 5h4z"/></svg>),
   'microscope':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M6 18h8M3 22h18M14 22a7 7 0 1 0-14 0M14 14a4.5 4.5 0 0 0-8 0M12 2h4M14 2v6M8 8h8"/></svg>),
-  'brain':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3.001 3.001 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 0-3.12 3.001 3.001 0 0 0 0-4.88 2.5 2.5 0 0 0 0-3.12A2.5 2.5 0 0 0 14.5 2z"/></svg>)
+  'brain':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1 0-3.12 3.001 3.001 0 0 1 0-4.88 2.5 2.5 0 0 1 0-3.12A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 0-3.12 3.001 3.001 0 0 0 0-4.88 2.5 2.5 0 0 0 0-3.12A2.5 2.5 0 0 0 14.5 2z"/></svg>),
+  'download':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>),
+  'table':(s)=>(<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>)
 };
 
 /* ═══ Brand Logo — Kyrgyz tunduk + М (Мыйзамчы) ═══ */
@@ -3809,11 +3811,292 @@ const MenuBar=({dark,onToggle,onPalette,showNotif,onToggleNotif,onAction,rightOp
   );
 };
 
+/* ═══ DocGen: массовая генерация .docx из шаблона + Excel ═══════════════════ */
+const _escReDG=(s)=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+const cleanWordXmlDG=(xml)=>{
+  if(!xml)return xml;
+  let c=xml
+    .replace(/<w:rsidR[^>]*>/g,'').replace(/<w:rsidRDefault[^>]*>/g,'')
+    .replace(/ w:rsidR="[^"]*"/g,'').replace(/ w:rsidRPr="[^"]*"/g,'')
+    .replace(/<w:proofErr[^/]*\/>/g,'').replace(/<w:noProof[^/]*\/>/g,'')
+    .replace(/<w:lang[^/]*\/>/g,'').replace(/<w:lastRenderedPageBreak[^/]*\/>/g,'')
+    .replace(/<w:softHyphen[^/]*\/>/g,'').replace(/<w:bookmarkStart[^/]*\/>/g,'')
+    .replace(/<w:bookmarkEnd[^/]*\/>/g,'').replace(/<w:dirty[^/]*\/>/g,'');
+  c=c.replace(/<\/w:t><w:t[^>]*>/g,'');
+  c=c.replace(/&#160;/g,' ');
+  return c;
+};
+const createWordReplaceRegexDG=(word)=>{
+  const chars=word.split('');
+  const pattern=chars.map((ch,i)=>{
+    let esc=_escReDG(ch);
+    if(ch===' ')esc='(?:[   ]| )+';
+    return(i>0?'(?:<[^>]+>)*':'')+esc;
+  }).join('');
+  return new RegExp(pattern,'g');
+};
+const PAGE_BREAK_DG='<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+const downloadBlobDG=(blob,filename)=>{
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=filename;
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+const processZipDocDG=async(zip,row,vars)=>{
+  const f=zip.file('word/document.xml');
+  if(f){
+    let xml=cleanWordXmlDG(await f.async('string'));
+    vars.forEach(word=>{
+      const rk=Object.keys(row).find(k=>k.trim()===word.trim())||word;
+      xml=xml.replace(createWordReplaceRegexDG(word),String(row[rk]??''));
+    });
+    zip.file('word/document.xml',xml);
+  }
+  await replaceHFDG(zip,row,vars);
+};
+const replaceHFDG=async(zip,row,vars)=>{
+  const files=zip.filter(path=>/word\/(header|footer)\d+\.xml/.test(path));
+  for(const file of files){
+    let xml=cleanWordXmlDG(await file.async('string'));
+    vars.forEach(word=>{
+      const rk=Object.keys(row).find(k=>k.trim()===word.trim())||word;
+      xml=xml.replace(createWordReplaceRegexDG(word),String(row[rk]??''));
+    });
+    zip.file(file.name,xml);
+  }
+};
+
+const DocGenPanel=({onClose,onToast,onAction})=>{
+  const[vars,setVars]=React.useState([]);
+  const[templateBin,setTemplateBin]=React.useState(null);
+  const[excelData,setExcelData]=React.useState([]);
+  const[exportMode,setExportMode]=React.useState('ZIP');
+  const[generating,setGenerating]=React.useState(false);
+  const[logs,setLogs]=React.useState([]);
+  const[past,setPast]=React.useState([]);
+  const[future,setFuture]=React.useState([]);
+  const logRef=React.useRef(null);
+
+  React.useEffect(()=>{logRef.current?.scrollIntoView({behavior:'smooth'})},[logs]);
+
+  // Регистрируем глобальный хук — главный App вызывает при выделении текста в SuperDoc
+  React.useEffect(()=>{
+    window.__docgenAddVar=(text)=>{
+      if(!text)return;
+      if(vars.includes(text)){onToast&&onToast('warning','Уже есть: "'+text+'"');return;}
+      setPast(p=>[...p,vars]);
+      setFuture([]);
+      setVars(p=>[...p,text]);
+      setLogs(p=>[...p.slice(-49),{id:uid(),msg:'Переменная: "'+text+'"',type:'success',t:new Date()}]);
+    };
+    return()=>{delete window.__docgenAddVar;};
+  },[vars,onToast]);
+
+  const removeVar=(w)=>{setPast(p=>[...p,vars]);setFuture([]);setVars(p=>p.filter(v=>v!==w));};
+  const undo=()=>{if(!past.length)return;setFuture(f=>[vars,...f]);setVars(past[past.length-1]);setPast(p=>p.slice(0,-1));};
+  const redo=()=>{if(!future.length)return;setPast(p=>[...p,vars]);setVars(future[0]);setFuture(f=>f.slice(1));};
+  const addLog=(msg,type='info')=>setLogs(p=>[...p.slice(-49),{id:uid(),msg,type,t:new Date()}]);
+
+  const handleUpload=async(e)=>{
+    const file=e.target.files?.[0];if(!file)return;
+    if(!file.name.endsWith('.docx')){addLog('Нужен .docx файл','error');return;}
+    const ab=await file.arrayBuffer();
+    setTemplateBin(ab);setVars([]);setPast([]);setFuture([]);setExcelData([]);
+    addLog('Шаблон: '+file.name,'success');
+    const ph={name:file.name,kind:'file',getFile:async()=>new File([ab],file.name,{type:file.type})};
+    onAction('openFile',ph);
+    e.target.value='';
+  };
+
+  const downloadTemplate=async()=>{
+    if(!vars.length){addLog('Добавьте переменные','error');return;}
+    const XLSX=await import('xlsx');
+    const ws=XLSX.utils.json_to_sheet([vars.reduce((a,v)=>({...a,[v]:''}),{})]);
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,'Данные');
+    const out=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+    downloadBlobDG(new Blob([out],{type:'application/octet-stream'}),'template_data.xlsx');
+    addLog('Excel шаблон скачан','success');
+  };
+
+  const handleExcelUpload=async(e)=>{
+    const file=e.target.files?.[0];if(!file)return;
+    try{
+      const XLSX=await import('xlsx');
+      const ab=await file.arrayBuffer();
+      const wb=XLSX.read(ab);
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const data=XLSX.utils.sheet_to_json(ws,{defval:''});
+      if(!data.length){addLog('Excel пустой','error');return;}
+      setExcelData(data);
+      addLog('Данные загружены: '+data.length+' строк','success');
+    }catch(err){addLog('Ошибка Excel: '+err,'error');}
+    e.target.value='';
+  };
+
+  const generate=async()=>{
+    if(!templateBin||!vars.length||!excelData.length)return;
+    setGenerating(true);
+    addLog('Генерация '+excelData.length+' документов…');
+    try{
+      const{default:JSZip}=await import('jszip');
+      if(exportMode==='ZIP'){
+        const zipPacker=new JSZip();
+        for(let i=0;i<excelData.length;i++){
+          const row=excelData[i];
+          const firstKey=Object.keys(row)[0]||'Doc';
+          const filename=String(row[firstKey]||i+1);
+          const zip=await JSZip.loadAsync(templateBin.slice(0));
+          await processZipDocDG(zip,row,vars);
+          const blob=await zip.generateAsync({type:'blob'});
+          zipPacker.file(filename+'.docx',blob);
+          if((i+1)%10===0)addLog('Прогресс: '+(i+1)+'/'+excelData.length+'…');
+        }
+        const finalZip=await zipPacker.generateAsync({type:'blob'});
+        downloadBlobDG(finalZip,'documents_archive.zip');
+        addLog('Архив скачан!','success');
+      }else{
+        const zip=await JSZip.loadAsync(templateBin.slice(0));
+        const docFileZip=zip.file('word/document.xml');
+        if(!docFileZip)throw new Error('XML структура не найдена');
+        const rawXml=await docFileZip.async('string');
+        const cleanedXml=cleanWordXmlDG(rawXml);
+        const bodyMatch=cleanedXml.match(/<w:body>([\s\S]*?)<\/w:body>/);
+        if(!bodyMatch)throw new Error('Неверная структура DOCX');
+        const bodyInner=bodyMatch[1];
+        const sectPrMatch=bodyInner.match(/([\s\S]*)(<w:sectPr[\s\S]*?<\/w:sectPr>)\s*$/);
+        const sectPr=sectPrMatch?sectPrMatch[2]:'';
+        const bodyContent=sectPrMatch?sectPrMatch[1]:bodyInner;
+        let mergedBody='';let totalMatches=0;
+        for(let i=0;i<excelData.length;i++){
+          const row=excelData[i];let rowContent=bodyContent;
+          vars.forEach(word=>{
+            const rk=Object.keys(row).find(k=>k.trim()===word.trim())||word;
+            const repl=String(row[rk]??'');
+            const regex=createWordReplaceRegexDG(word);
+            totalMatches+=(rowContent.match(regex)||[]).length;
+            rowContent=rowContent.replace(regex,repl);
+          });
+          mergedBody+=rowContent;
+          if(i<excelData.length-1)mergedBody+=PAGE_BREAK_DG;
+          if((i+1)%10===0)addLog('Обработано: '+(i+1)+'/'+excelData.length+'…');
+        }
+        if(!totalMatches)addLog('Переменные не найдены в XML — проверьте шаблон','warning');
+        const finalXml=cleanedXml.replace(/<w:body>[\s\S]*?<\/w:body>/,`<w:body>${mergedBody}${sectPr}</w:body>`);
+        zip.file('word/document.xml',finalXml);
+        await replaceHFDG(zip,excelData[0],vars);
+        const finalBlob=await zip.generateAsync({type:'blob'});
+        downloadBlobDG(finalBlob,'merged_documents.docx');
+        addLog('Единый файл скачан!','success');
+      }
+    }catch(err){addLog('Ошибка: '+err,'error');}
+    finally{setGenerating(false);}
+  };
+
+  const LC={info:'var(--text)',success:'var(--green)',error:'var(--red)','warning':'#fbbf24'};
+
+  return(
+    <div className="myz-docgen-panel">
+      <div className="myz-left-panel-header">
+        <div className="myz-left-panel-title">ГЕНЕРАТОР ДОКУМЕНТОВ</div>
+        <button onClick={onClose} className="myz-left-panel-close"><Ico k="x" sz={14}/></button>
+      </div>
+      <div className="myz-docgen-body">
+
+        {/* Шаг 1 — загрузка шаблона */}
+        <div className="myz-docgen-step">
+          <div className="myz-docgen-step-hd"><span className="myz-docgen-num">1</span>Шаблон .docx</div>
+          <label className="myz-docgen-dropzone">
+            <input type="file" accept=".docx" onChange={handleUpload} style={{display:'none'}}/>
+            <Ico k="file" sz={18}/>
+            <span>{templateBin?'✓ Загружен — откроется в редакторе':'Нажмите для выбора файла…'}</span>
+          </label>
+          {templateBin&&<p className="myz-docgen-hint">Выделите текст в редакторе мышью → нажмите всплывающую кнопку «+ Переменная»</p>}
+        </div>
+
+        {/* Шаг 2 — переменные */}
+        {templateBin&&(
+          <div className="myz-docgen-step">
+            <div className="myz-docgen-step-hd" style={{justifyContent:'space-between'}}>
+              <div style={{display:'flex',alignItems:'center',gap:6}}><span className="myz-docgen-num">2</span>Переменные</div>
+              <div style={{display:'flex',gap:3}}>
+                <button onClick={undo} disabled={!past.length} className="myz-docgen-icobtn" title="Отмена"><Ico k="undo" sz={11}/></button>
+                <button onClick={redo} disabled={!future.length} className="myz-docgen-icobtn" title="Повтор"><Ico k="redo" sz={11}/></button>
+              </div>
+            </div>
+            <div className="myz-docgen-tags">
+              {vars.map(w=>(
+                <div key={w} className="myz-docgen-tag">
+                  <span className="myz-docgen-tag-text">{w}</span>
+                  <button onClick={()=>removeVar(w)} className="myz-docgen-tag-rm"><Ico k="x" sz={9}/></button>
+                </div>
+              ))}
+              {!vars.length&&<span className="myz-docgen-empty">Выделите текст в редакторе</span>}
+            </div>
+          </div>
+        )}
+
+        {/* Шаг 3 — данные Excel */}
+        {vars.length>0&&(
+          <div className="myz-docgen-step">
+            <div className="myz-docgen-step-hd"><span className="myz-docgen-num">3</span>Данные Excel</div>
+            <button onClick={downloadTemplate} className="myz-docgen-btn-sec">
+              <Ico k="download" sz={12}/> Скачать шаблон .xlsx
+            </button>
+            <label className="myz-docgen-dropzone myz-docgen-dropzone--sm" style={{marginTop:6}}>
+              <input type="file" accept=".xlsx,.xls" onChange={handleExcelUpload} style={{display:'none'}}/>
+              <Ico k="table" sz={15}/>
+              <span>{excelData.length?`✓ ${excelData.length} строк загружено`:'Загрузить заполненный .xlsx…'}</span>
+            </label>
+          </div>
+        )}
+
+        {/* Шаг 4 — генерация */}
+        {excelData.length>0&&(
+          <div className="myz-docgen-step myz-docgen-step--dark">
+            <div className="myz-docgen-step-hd myz-docgen-step-hd--light">
+              <span className="myz-docgen-num myz-docgen-num--light">4</span>Экспорт
+            </div>
+            <div className="myz-docgen-modes">
+              <button onClick={()=>setExportMode('ZIP')} className={`myz-docgen-modebtn${exportMode==='ZIP'?' myz-docgen-modebtn--on':''}`}>
+                <Ico k="copy" sz={12}/><span>ZIP архив</span>
+              </button>
+              <button onClick={()=>setExportMode('SINGLE')} className={`myz-docgen-modebtn${exportMode==='SINGLE'?' myz-docgen-modebtn--on':''}`}>
+                <Ico k="file" sz={12}/><span>Один файл</span>
+              </button>
+            </div>
+            <button onClick={generate} disabled={generating} className="myz-docgen-genbtn">
+              {generating
+                ?<><span className="myz-docgen-spin"/>Генерация…</>
+                :<><Ico k="download" sz={14}/> Сгенерировать ({excelData.length} шт.)</>}
+            </button>
+          </div>
+        )}
+
+        {/* Лог операций */}
+        {logs.length>0&&(
+          <div className="myz-docgen-log">
+            {logs.map(l=>(
+              <div key={l.id} style={{color:LC[l.type]||'var(--text)'}}>
+                <span style={{opacity:.4}}>[{l.t.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}]</span>{' '}{l.msg}
+              </div>
+            ))}
+            <div ref={logRef}/>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+};
+
 /* ═══ Activity Bar ═══ */
 const ActBar=({active,onSet,onSettings})=>{
   const items=[
     {id:'explorer',k:'home',label:'Мои файлы'},
     {id:'law',k:'book',label:'Навигатор'},
+    {id:'docgen',k:'copy',label:'Генератор'},
     {id:'search',k:'search',label:'Поиск'},
     {id:'outline',k:'list',label:'Оглавление'},
     {id:'analytics',k:'activity',label:'Аналитика'},
@@ -4620,6 +4903,7 @@ const LeftPanel=({mode,actPanel,onClose,onCtx,onToast,onOpenFile,fsHandle,fsFile
 
   if(actPanel==='outline' || mode==='outline') return <DocOutline onClose={onClose}/>;
   if(actPanel==='law' || mode==='law') return <NPALibraryTree onClose={onClose} onSelectArticle={(art)=>onAction('openNPA', art)} />;
+  if(actPanel==='docgen') return <DocGenPanel onClose={onClose} onToast={onToast} onAction={onAction}/>;
 
   return(
     <div className="file-explorer">
@@ -9185,6 +9469,8 @@ const App=()=>{
   const setNpa = openNpa; // alias для обратной совместимости с существующими вызовами
   const[showPalette,setShowPalette]=useState(false);const[showTweaks,setShowTweaks]=useState(false);const[showShortcuts,setShowShortcuts]=useState(false);const[showOriginal,setShowOriginal]=useState(false);
   const[showFind,setShowFind]=useState(false);const[showNotif,setShowNotif]=useState(false);const[sideMode,setSideMode]=useState('tree');
+  const[docGenSelText,setDocGenSelText]=useState('');
+  const[docGenSelCoords,setDocGenSelCoords]=useState({x:0,y:0});
   const[tweaks,setTweaks]=useState({accent:'#5C66DE'});
   const[tabs,setTabs]=useState([]);
   const[activeTab,setActiveTab]=useState(null);const[ctxMenu,setCtxMenu]=useState(null);const[toasts,setToasts]=useState([]);
@@ -9417,6 +9703,30 @@ const App=()=>{
   const nextTour=()=>{if(tourStep!==null){if(tourStep<TOUR_STEPS.length-1)setTourStep(tourStep+1);else{setTourStep(null);localStorage.setItem('myz-tour','1')}}};
   const closeTour=()=>{setTourStep(null);localStorage.setItem('myz-tour','1')};
   const unsavedCount=tabs.filter(t=>t.mod).length;
+
+  // Отслеживаем выделение текста в SuperDoc когда открыт DocGen
+  useEffect(()=>{
+    if(actPanel!=='docgen'){setDocGenSelText('');return;}
+    const onSel=()=>{
+      const sel=window.getSelection();
+      if(!sel||sel.isCollapsed){setDocGenSelText('');return;}
+      const text=sel.toString().trim();
+      if(!text||text.length>200){setDocGenSelText('');return;}
+      const wrapper=document.getElementById('superdoc-wrapper');
+      if(!wrapper){setDocGenSelText('');return;}
+      try{
+        const range=sel.getRangeAt(0);
+        if(!wrapper.contains(range.commonAncestorContainer)){setDocGenSelText('');return;}
+        const rect=range.getBoundingClientRect();
+        if(rect.width>0||rect.height>0){
+          setDocGenSelCoords({x:rect.left+rect.width/2,y:rect.top});
+          setDocGenSelText(text);
+        }else{setDocGenSelText('');}
+      }catch{setDocGenSelText('');}
+    };
+    document.addEventListener('selectionchange',onSel);
+    return()=>{document.removeEventListener('selectionchange',onSel);setDocGenSelText('');};
+  },[actPanel]);
 
   useEffect(() => {
     const el = document.getElementById('superdoc-wrapper');
@@ -9735,6 +10045,21 @@ const App=()=>{
           <div onClick={()=>{setLeftOpen(false);setRightOpen(false);setActPanel(null)}} className="myz-mobile-backdrop"/>
         )}
       </div>
+      {/* DocGen: плавающая кнопка добавления переменной при выделении текста в SuperDoc */}
+      {actPanel==='docgen'&&docGenSelText&&(
+        <button
+          className="myz-docgen-float"
+          style={{left:docGenSelCoords.x,top:docGenSelCoords.y}}
+          onMouseDown={(e)=>{
+            e.preventDefault();
+            if(window.__docgenAddVar)window.__docgenAddVar(docGenSelText);
+            setDocGenSelText('');
+            window.getSelection()?.removeAllRanges();
+          }}
+        >
+          <Ico k="plus" sz={11}/> Переменная
+        </button>
+      )}
       {showPalette && <Palette onClose={()=>setShowPalette(false)} dark={dark} onAction={handleAction}/>}
       {showShortcuts && <ShortcutOverlay onClose={()=>setShowShortcuts(false)}/>}
       {showOriginal && (()=>{const tt=tabs.find(t=>t.id===activeTab);return tt&&tt.buffer?<DocxPreview buffer={tt.buffer} name={tt.name} onClose={()=>setShowOriginal(false)}/>:null})()}
