@@ -24,8 +24,9 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 }
 
 // Парсим номер статьи из original_id формата "kg_art-17_1782313373555_963"
+// Берём только цифровую часть после "art-", до первого "_"
 function parseArticleFromId(originalId) {
-    const m = String(originalId || '').match(/art-(\d+[\w.-]*)/i);
+    const m = String(originalId || '').match(/art-(\d+)/i);
     return m ? `Статья ${m[1]}` : '';
 }
 

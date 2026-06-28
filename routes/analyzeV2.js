@@ -295,9 +295,11 @@ async function validateChunk(chunkText, index, state, deps, meta = null) {
   };
 }
 
-/** Двухступенчатый фильтр Pinecone. Пороги смягчены (защита от False Positives:
- *  ниже порог + шире хвост → в эталон попадают соседние абзацы/продолжение нормы). */
-function twoStagePineconeFilter(hits, absThreshold = 0.65, tail = 0.25) {
+// Двухступенчатый фильтр. Пороги были для Pinecone (cosine 0.7-0.95).
+// Supabase hybrid search возвращает scores в диапазоне 0.0-0.5 → absThreshold
+// снижен до 0.01 (практически отключён). Относительный хвост 0.25 оставлен:
+// берём всё в пределах 0.25 от лучшего результата.
+function twoStagePineconeFilter(hits, absThreshold = 0.01, tail = 0.25) {
   if (!hits.length) return [];
   const stage1 = hits.filter((h) => h.score >= absThreshold);
   if (!stage1.length) return [];
