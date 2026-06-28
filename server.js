@@ -4448,6 +4448,7 @@ require('./routes/analyze')({
     searchPinecone,
     getNextKey,
     streamDeepSeekResponse,
+    streamGeminiResponse,
     // Шаг 2 ТЗ: новые хелперы для Map-Reduce архитектуры с DeepSeek V4 Flash агентами
     deepseekJsonCall,           // primary для агентов-верификаторов (с user_id KVCache)
     generateContentResilient,   // fallback для агентов (Gemini после исчерпания DeepSeek)

@@ -429,6 +429,7 @@ module.exports = function registerAnalyzeRoute(deps) {
         searchPinecone,
         getNextKey,
         streamDeepSeekResponse,
+        streamGeminiResponse,
         deepseekJsonCall,
         DEEPSEEK_ENABLED,
         // segmentDocument: устаревший LLM-сегментатор. Заменён на segmentDocumentRegex
@@ -1422,7 +1423,9 @@ ${schemaBlock}`;
             pathLabel   = `standard/risks-${totalRisks}/${judgeReasoning}`;
         }
         // Человекочитаемое имя сработавшего судьи — для отображения на фронте
-        const judgeDisplayName = useSupreme ? 'DeepSeek v4 Pro' : 'DeepSeek v4 Flash';
+        // ТЕСТ: временно все судьи → Gemini 3.1 Flash Lite (сравнение качества)
+        judgeModel = 'gemini-3.1-flash-lite';
+        const judgeDisplayName = 'Gemini 3.1 Flash Lite';
 
         const riskReports = sortedRisks.map(r =>
             `[${(r.status || '').toUpperCase()} ${r.confidence || '?'}%] ${r.item_number}: ${r.short_verdict}\nДетали: ${r.legal_rationale}`
@@ -1609,14 +1612,14 @@ ${riskReports}
                 res.write(`data: ${JSON.stringify({ judge: { name: judgeDisplayName, model: judgeModel, path: pathLabel } })}\n\n`);
                 res.write(`data: ${JSON.stringify({ protocolStatus: `⚖️ Финальный судья: ${judgeDisplayName}` })}\n\n`);
             }
-            await streamDeepSeekResponse(systemPrompt, userPrompt, res, {
-                temperature: 0.2,
-                reasoning_effort: judgeReasoning,       // минимум — мгновенный старт генерации
-                thinking: { type: 'disabled' },          // ЖЁСТКО без цепочки мыслей (latency fix)
-                model: judgeModel,
-                user_id: judgeUserId,
-                label: `judge-${pathLabel}`
-            });
+            await streamGeminiResponse(
+                getNextKey(),
+                systemPrompt,
+                userPrompt,
+                [],
+                res,
+                { temperature: 0.2, topP: 0.85, maxOutputTokens: 4096 }
+            );
             res.write = originalWrite; // всегда восстанавливаем (wrapper был создан безусловно)
             if (captureForTele) {
                 telemetry.addTokens(0, telemetry.estimateTokens(outputText));
