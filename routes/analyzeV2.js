@@ -251,9 +251,19 @@ async function validateChunk(chunkText, index, state, deps, meta = null) {
   const leadIn = (meta && meta.leadIn) ? String(meta.leadIn) : '';
   const agentText = leadIn ? `[Контекст предыдущего блока: ${leadIn}]\n${chunkText}` : chunkText;
 
-  // Agent 1: НПА + статья + синонимы (по обогащённому тексту — lead-in помогает
-  // распознать кодекс в блоке-продолжении).
-  const ex = (await deps.expandQuery?.(agentText)) || { npa: null, article: null, queries: [chunkText] };
+  // Agent 1: triage + НПА + статья + синонимы
+  const ex = (await deps.expandQuery?.(agentText)) || { skip: false, npa: null, article: null, queries: [chunkText] };
+
+  // Пропуск нейтральных фрагментов: реквизиты, имена, должности, даты, подписи.
+  // Юридическая оценка не нужна — сразу возвращаем correct без вызова Supabase/валидатора.
+  if (ex.skip) {
+    return {
+      index, npa: null, article: null,
+      status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [],
+      blind_spot: false, triageType: 'SKIP', thesis: '',
+    };
+  }
+
   const queries = (Array.isArray(ex.queries) && ex.queries.length) ? ex.queries : [chunkText];
 
   // Привязка к НПА для поиска: если Агент-1 не распознал НПА в «голом» блоке
@@ -262,21 +272,24 @@ async function validateChunk(chunkText, index, state, deps, meta = null) {
   // вердикт sticky-НПА НЕ тащим (показываем лишь то, что блок реально цитирует).
   const searchNpa = ex.npa || (meta && meta.npa) || null;
 
-  // Поиск с привязкой к НПА (фильтр внутри pineconeSearch) + двухступенчатый score-фильтр.
-  const hits = (await deps.pineconeSearch?.(queries, searchNpa)) || [];
-  const articles = twoStagePineconeFilter(hits);
-
   let v;
-  if (articles.length === 0 && (ex.npa || ex.article)) {
-    // Ссылка заявлена, но эталона в базе нет → Слепая зона (ручная проверка).
-    v = { status: 'unverified', marker: '⚠️ Слепая зона', detail: 'Ссылка не подтверждена базой НПА — нужна ручная проверка', cited_articles: [] };
-  } else if (articles.length === 0) {
-    // Ни ссылки, ни эталона — проверять нечего.
+  if (!ex.npa && !ex.article) {
+    // Нет явной ссылки на НПА/статью в тексте фрагмента — проверять нечего.
+    // Запрос в Supabase не делаем: нет цитаты → нет нормоконтроля.
     v = { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
   } else {
-    // Agent 2: нормоконтроль по эталону (получает agentText с lead-in).
-    v = (await deps.validate?.({ chunkText: agentText, ctx, articles, npa: ex.npa, article: ex.article })) ||
-        { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
+    // Есть явная ссылка → ищем в базе и проверяем.
+    const hits = (await deps.pineconeSearch?.(queries, searchNpa)) || [];
+    const articles = twoStagePineconeFilter(hits);
+
+    if (articles.length === 0) {
+      // Ссылка заявлена, но эталона в базе нет → Слепая зона (ручная проверка).
+      v = { status: 'unverified', marker: '⚠️ Слепая зона', detail: 'Ссылка не подтверждена базой НПА — нужна ручная проверка', cited_articles: [] };
+    } else {
+      // Agent 2: нормоконтроль по эталону (получает agentText с lead-in).
+      v = (await deps.validate?.({ chunkText: agentText, ctx, articles, npa: ex.npa, article: ex.article })) ||
+          { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
+    }
   }
 
   return {
