@@ -9705,8 +9705,8 @@ const App=()=>{
   const unsavedCount=tabs.filter(t=>t.mod).length;
 
   // Отслеживаем выделение текста в SuperDoc когда открыт DocGen
-  // mouseup + задержка 30ms надёжнее чем selectionchange: даём ProseMirror
-  // время синхронизировать внутреннее выделение с window.getSelection()
+  // Гибрид: mouseup+30ms для ПОКАЗА (даём ProseMirror синхронизировать state),
+  // selectionchange только для СКРЫТИЯ (мгновенно убираем кнопку если снялось выделение)
   useEffect(()=>{
     if(actPanel!=='docgen'){setDocGenSelText('');return;}
     const onUp=()=>{
@@ -9719,7 +9719,6 @@ const App=()=>{
           const range=sel.getRangeAt(0);
           const rect=range.getBoundingClientRect();
           if(rect.width===0&&rect.height===0){setDocGenSelText('');return;}
-          // Проверяем что выделение внутри superdoc-wrapper (если есть)
           const wrapper=document.getElementById('superdoc-wrapper');
           if(wrapper&&!wrapper.contains(range.commonAncestorContainer)){setDocGenSelText('');return;}
           setDocGenSelCoords({x:rect.left+rect.width/2,y:rect.top});
@@ -9727,8 +9726,17 @@ const App=()=>{
         }catch{setDocGenSelText('');}
       },30);
     };
+    const onSel=()=>{
+      const sel=window.getSelection();
+      if(!sel||sel.isCollapsed)setDocGenSelText('');
+    };
     document.addEventListener('mouseup',onUp);
-    return()=>{document.removeEventListener('mouseup',onUp);setDocGenSelText('');};
+    document.addEventListener('selectionchange',onSel);
+    return()=>{
+      document.removeEventListener('mouseup',onUp);
+      document.removeEventListener('selectionchange',onSel);
+      setDocGenSelText('');
+    };
   },[actPanel]);
 
   useEffect(() => {
