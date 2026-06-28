@@ -272,24 +272,23 @@ async function validateChunk(chunkText, index, state, deps, meta = null) {
   // вердикт sticky-НПА НЕ тащим (показываем лишь то, что блок реально цитирует).
   const searchNpa = ex.npa || (meta && meta.npa) || null;
 
+  // Поиск с привязкой к НПА + двухступенчатый score-фильтр.
+  const hits = (await deps.pineconeSearch?.(queries, searchNpa)) || [];
+  const articles = twoStagePineconeFilter(hits);
+
   let v;
-  if (!ex.npa && !ex.article) {
-    // Нет явной ссылки на НПА/статью в тексте фрагмента — проверять нечего.
-    // Запрос в Supabase не делаем: нет цитаты → нет нормоконтроля.
+  if (articles.length === 0 && (ex.npa || ex.article)) {
+    // Ссылка заявлена, но эталона в базе нет → Слепая зона (ручная проверка).
+    v = { status: 'unverified', marker: '⚠️ Слепая зона', detail: 'Ссылка не подтверждена базой НПА — нужна ручная проверка', cited_articles: [] };
+  } else if (articles.length === 0) {
+    // Ни ссылки, ни эталона — проверять нечего.
     v = { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
   } else {
-    // Есть явная ссылка → ищем в базе и проверяем.
-    const hits = (await deps.pineconeSearch?.(queries, searchNpa)) || [];
-    const articles = twoStagePineconeFilter(hits);
-
-    if (articles.length === 0) {
-      // Ссылка заявлена, но эталона в базе нет → Слепая зона (ручная проверка).
-      v = { status: 'unverified', marker: '⚠️ Слепая зона', detail: 'Ссылка не подтверждена базой НПА — нужна ручная проверка', cited_articles: [] };
-    } else {
-      // Agent 2: нормоконтроль по эталону (получает agentText с lead-in).
-      v = (await deps.validate?.({ chunkText: agentText, ctx, articles, npa: ex.npa, article: ex.article })) ||
-          { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
-    }
+    // Agent 2: нормоконтроль по эталону (получает agentText с lead-in).
+    // Запускается при любом содержательном фрагменте — ловит как ошибки цитирования,
+    // так и утверждения противоречащие закону (даже без явной ссылки на НПА).
+    v = (await deps.validate?.({ chunkText: agentText, ctx, articles, npa: ex.npa, article: ex.article })) ||
+        { status: 'correct', marker: '✅ Верно', detail: '', cited_articles: [] };
   }
 
   return {
