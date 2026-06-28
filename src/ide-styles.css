@@ -4496,6 +4496,29 @@ body.dk .analyze-accordion-content {
     background-color: var(--bg-app, #1e1e1e) !important;
 }
 
+/* React wrapper div от SuperDoc — растягиваем во flex-контейнере.
+   С contained=true он получает display:flex/column от SuperDoc, но не flex:1,
+   поэтому без этого правила он схлопывается и документ рендерится криво. */
+.myz-editor-wrapper .superdoc-wrapper {
+    flex: 1;
+    min-height: 0;
+}
+.myz-editor-wrapper .superdoc-toolbar-container {
+    flex-shrink: 0; /* тулбар не сжимается */
+}
+.myz-editor-wrapper .superdoc-editor-container {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+/* .superdoc и .superdoc--contained рендерятся Vue-компонентом внутри editor-container */
+.myz-editor-wrapper .superdoc-editor-container > .superdoc {
+    flex: 1;
+    min-height: 0;
+    height: 100% !important;
+}
+
 /* Принудительно центрируем сам белый лист внутри рабочей зоны */
 .superdoc-workspace-wrapper .ProseMirror,
 .superdoc-workspace-wrapper [contenteditable="true"],
