@@ -1733,266 +1733,266 @@ ${checklist}
   });
 
   // ═══════════════════════════════════════════════════════════════════════
+  //  SHARED: runNpaPipeline — полный НПА-пайплайн (сегментация → validateChunk волны).
+  //  Стримит { tableRow } и { step } события через переданные sse/step колбэки.
+  //  Возвращает { graph[], purityIndex }.
+  // ═══════════════════════════════════════════════════════════════════════
+  async function runNpaPipeline(docText, rdeps, sse, step) {
+    const sc = /^\s{0,3}#{2,}\s/m.test(docText) ? 'high' : 'low';
+    step({ id: 'npa_seg', status: 'loading', text: 'НПА: сегментация документа…' });
+    const seg = await getHybridSegmenter().segment(docText, { stageLabel: 'combined_deep', docType: sc });
+    let chunks = seg.chunks;
+    const chunkCtxs = seg.chunkContexts || buildChunkContexts(chunks);
+    const sdBlocks = await buildSuperDocBlocks(chunks, chunkCtxs, { cascade: getCascade(), logger: console });
+    chunks = sdBlocks.map(b => b.text);
+    const bMeta = sdBlocks.map(b => ({
+      section: b.context ? b.context.section : null,
+      npa:     b.context ? b.context.npa : null,
+      type:    b.type,
+      continues_prev: b.continues_prev,
+      leadIn:  b.leadIn || null,
+    }));
+    const { terms = {}, crossRefs = {}, header = '' } =
+      (await rdeps.extractGlossary?.(docText, chunks).catch(() => ({}))) || {};
+    const state = {
+      header, terms,
+      termKeys: new Set(Object.keys(terms).map(t => t.toLowerCase())),
+      crossRefs, chunks, N: chunks.length, structureConfidence: sc,
+    };
+    step({ id: 'npa_seg', status: 'success', text: `НПА: ${state.N} блоков готово` });
+    step({ id: 'npa_val', status: 'loading', text: `⚖️ Сверка с НПА КР: ${state.N} фрагментов…` });
+    const settled = await runInWaves(
+      chunks,
+      async (chunkText, idx) => {
+        const v = await validateChunk(chunkText, idx, state, rdeps, bMeta[idx] || null);
+        step({ id: `seg_${idx}`, status: toStepStatus(v.status), text: `Фрагмент ${idx + 1}`, reason: v.detail ? v.detail.slice(0, 80) : (v.marker || '') });
+        sse({ tableRow: verdictToRow(v) });
+        return v;
+      },
+      { stepMs: 10, wavePauseMs: 200 },
+    );
+    const graph = settled.filter(s => s.status === 'fulfilled').map(s => s.value);
+    const errCnt = graph.filter(g => g.status === 'error').length;
+    const purityIndex = state.N ? Math.round(((state.N - errCnt) / state.N) * 100) : 100;
+    sse({ purityIndex });
+    step({ id: 'npa_val', status: 'success', text: `НПА: ${graph.length} фрагментов | ошибок: ${errCnt}` });
+    return { graph, purityIndex };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  //  SHARED: runAgentPipeline — M агентов параллельно + adversarial verifier.
+  //  Возвращает confirmedFindings[].
+  // ═══════════════════════════════════════════════════════════════════════
+  async function runAgentPipeline(docText, agents, rdeps, sse, res) {
+    const pT = (p, ms, fb) => Promise.race([Promise.resolve(p).catch(() => fb), new Promise(r => setTimeout(() => r(fb), ms))]);
+    const pArr = (raw) => {
+      const c = String(raw || '').replace(/```json\s*/gi,'').replace(/```/g,'').trim();
+      try { const o = JSON.parse(c); return Array.isArray(o) ? o : (Array.isArray(o.findings) ? o.findings : []); } catch(_){}
+      const a = c.indexOf('['), b = c.lastIndexOf(']');
+      if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a,b+1)); } catch(_){} }
+      return [];
+    };
+    const pObj = (raw) => {
+      const c = String(raw || '').replace(/```json\s*/gi,'').replace(/```/g,'').trim();
+      try { return JSON.parse(c); } catch(_){}
+      const a = c.indexOf('{'), b = c.lastIndexOf('}');
+      if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a,b+1)); } catch(_){} }
+      return null;
+    };
+    const stripCjk = (s) => String(s || '').replace(/[　-〿㐀-䶿一-鿿豈-﫿＀-￯]/g,'');
+    const normF = (f, dc) => ({
+      severity: ['high','medium','low'].includes(f.severity) ? f.severity : 'medium',
+      category: stripCjk(String(f.category || dc)).slice(0,60),
+      claim:    stripCjk(String(f.claim    || '')).slice(0,300),
+      quote:    stripCjk(String(f.quote    || '')).slice(0,500),
+      location: stripCjk(String(f.location || '')).slice(0,120),
+    });
+    const agentResults = await Promise.all(agents.map(async (ag) => {
+      const raw = await pT((async () => clients.geminiJson({
+        systemPrompt: ag.system,
+        userPrompt: `ДОКУМЕНТ:\n${docText}\n\nПроведи анализ по своей специализации. Верни JSON.`,
+        model: 'gemini-3.1-flash-lite', maxOutputTokens: 2048, timeoutMs: 25000,
+        onTokens: (m,i,o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: `agent:${ag.key}` }),
+      }))(), 28000, null);
+      const findings = pArr(raw).map(f => normF(f, ag.defaultCat));
+      sse({ stage: `   ✓ ${ag.label}: замечаний ${findings.length}` });
+      return { key: ag.key, findings };
+    }));
+    const raw = agentResults.flatMap(r => r.findings)
+      .filter(f => f.claim && f.quote && f.quote.trim() !== '' && f.quote !== 'null');
+    if (!raw.length) return [];
+    const docLow = docText.toLowerCase();
+    const qv = raw.filter(f => {
+      const q = f.quote.toLowerCase().trim();
+      if (q.includes('раздел не найден')) return true;
+      const probe = q.replace(/[«»"']/g,'').trim().slice(0,25);
+      return probe.length < 8 || docLow.includes(probe);
+    });
+    if (qv.length < raw.length)
+      sse({ stage: `   ⚠️ Отфильтровано ${raw.length - qv.length} замечаний с несуществующими цитатами` });
+    sse({ stage: `⚖️ Верифицирую ${qv.length} замечани${qv.length===1?'е':qv.length<5?'я':'й'} независимым аудитором…` });
+    const VERIF_SYS = `Ты — независимый юрист-скептик. Проверяешь замечание к документу.
+ЗАДАЧА: Есть ли в тексте документа что-то, что ОПРОВЕРГАЕТ это замечание?
+confirmed: false = нашёл опровержение. confirmed: true = замечание обоснованно.
+Верни СТРОГО JSON: { "confirmed": <bool>, "reason": "<1-2 предложения>" }`;
+    const verified = await Promise.all(qv.slice(0,20).map(async (f) => {
+      const rv = await pT((async () => clients.geminiJson({
+        systemPrompt: VERIF_SYS,
+        userPrompt: `ЗАМЕЧАНИЕ: ${f.claim}\nЦИТАТА: ${f.quote}\nМЕСТО: ${f.location}\n\nДОКУМЕНТ:\n${docText.slice(0,8000)}\n\nВерни JSON.`,
+        model: 'gemini-3.1-flash-lite', maxOutputTokens: 300, timeoutMs: 15000,
+        onTokens: (m,i,o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'verifier' }),
+      }))(), 18000, null);
+      const v = pObj(rv);
+      if (!v || typeof v.confirmed !== 'boolean') return { ...f, confirmed: true };
+      return { ...f, confirmed: v.confirmed };
+    }));
+    return verified.filter(f => f.confirmed);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   //  ГЛУБОКИЙ АНАЛИЗ — /api/v2/analyze-deep
-  //  Параллельный аудит загруженного документа: Структура + Логика + Стратегия.
-  //  Каждый агент ОБЯЗАН цитировать текст документа (анти-галлюцинация Layer 1).
-  //  Adversarial verifier опровергает ложные срабатывания (Layer 2).
-  //  DeepSeek v4-flash (fast) стримит Executive Summary.
+  //  НПА-сверка (стандартный пайплайн) + 3 агента параллельно.
+  //  Финальный судья: DeepSeek v4-flash с reasoning_effort.
+  //  Лимит документа: 150k символов (без ограничений на реальные документы).
   // ═══════════════════════════════════════════════════════════════════════
   router.post('/analyze-deep', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    const sse  = (obj) => { if (!res.writableEnded) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); if (typeof res.flush === 'function') res.flush(); } };
-    const done = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
-    const stage = (text) => sse({ stage: text });
-    const hb = setInterval(() => { if (!res.writableEnded) res.write(':hb\n\n'); }, 20000);
+    const sse    = (obj) => { if (!res.writableEnded) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); if (typeof res.flush==='function') res.flush(); } };
+    const done   = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
+    const stage  = (t) => sse({ stage: t });
+    const step   = (s) => sse({ step: s });
+    const hb     = setInterval(() => { if (!res.writableEnded) res.write(':hb\n\n'); }, 20000);
     const finish = () => { clearInterval(hb); done(); };
 
     try {
-      const docText = String((req.body && req.body.documentText) || '').slice(0, 30000).trim();
+      const docText = String((req.body && req.body.documentText) || '').slice(0, 150000).trim();
       if (docText.length < 80) { sse({ error: 'Документ слишком короткий для глубокого анализа' }); return finish(); }
-
-      const adTimeout = (p, ms, fb) => Promise.race([
-        Promise.resolve(p).catch(() => fb),
-        new Promise(r => setTimeout(() => r(fb), ms)),
-      ]);
-      const adParseArr = (raw) => {
-        const c = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
-        try { const o = JSON.parse(c); return Array.isArray(o) ? o : (Array.isArray(o.findings) ? o.findings : []); } catch (_) {}
-        const a = c.indexOf('['), b = c.lastIndexOf(']');
-        if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a, b + 1)); } catch (_) {} }
-        const oa = c.indexOf('{'), oc = c.lastIndexOf('}');
-        if (oa !== -1 && oc > oa) { try { const o = JSON.parse(c.slice(oa, oc + 1)); return Array.isArray(o.findings) ? o.findings : []; } catch (_) {} }
-        return [];
-      };
-      const adParseObj = (raw) => {
-        const c = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
-        try { return JSON.parse(c); } catch (_) {}
-        const a = c.indexOf('{'), b = c.lastIndexOf('}');
-        if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a, b + 1)); } catch (_) {} }
-        return null;
-      };
-      const adStrip = (s) => String(s || '').replace(/[　-〿㐀-䶿一-鿿豈-﫿＀-￯]/g, '');
-      const normFinding = (f, defaultCat) => ({
-        severity: ['high', 'medium', 'low'].includes(f.severity) ? f.severity : 'medium',
-        category: adStrip(String(f.category || defaultCat)).slice(0, 60),
-        claim:    adStrip(String(f.claim    || '')).slice(0, 300),
-        quote:    adStrip(String(f.quote    || '')).slice(0, 500),
-        location: adStrip(String(f.location || '')).slice(0, 120),
-      });
-
-      // ── 3 ПАРАЛЛЕЛЬНЫХ АГЕНТА ─────────────────────────────────────────
-      // Каждый получает ПОЛНЫЙ текст документа. Цитата из документа —
-      // обязательное поле; без неё замечание отброшено на Layer 1.
-      stage('🔬 Запускаю параллельный аудит: структура · логика · стратегия…');
 
       const DEEP_AGENTS = [
         {
           key: 'structural', label: 'Структурный аудитор', defaultCat: 'Структура',
           system: `Ты — опытный юрист (право Кыргызской Республики). Проверяешь структуру и полноту документа.
-
 ЗАДАЧА: Оцени — соответствует ли структура документа его типу и назначению.
-Проверь: все ли обязательные разделы присутствуют, нет ли явных структурных пропусков.
-
-ПРАВИЛА — ЧИТАЙ ВНИМАТЕЛЬНО:
-1. Твоя цель — ЧЕСТНАЯ оценка, а НЕ поиск проблем. Если структура корректна → findings = []
-2. Каждое замечание ОБЯЗАНО содержать "quote":
-   • Если элемент НЕПОЛНЫЙ → скопируй дословно неполный фрагмент из документа
-   • Если раздел полностью ОТСУТСТВУЕТ → quote = "Раздел не найден в тексте"
-   • ЗАПРЕЩЕНО перефразировать или сочинять цитату
-3. НЕ ссылайся на НПА (другой агент занимается этим)
-4. НЕ придумывай проблемы которых нет в тексте
-
-Верни СТРОГО JSON без markdown:
-{ "findings": [ { "severity": "high|medium|low", "category": "Структура", "claim": "суть одним предложением", "quote": "дословная цитата из документа", "location": "раздел/пункт" } ] }`,
+ПРАВИЛА:
+1. Честная оценка, а НЕ поиск проблем. Если структура корректна → findings = []
+2. quote = ДОСЛОВНАЯ цитата из документа. Если раздел отсутствует → quote = "Раздел не найден в тексте"
+3. НЕ ссылайся на НПА. НЕ придумывай проблем которых нет.
+Верни JSON: { "findings": [ { "severity": "high|medium|low", "category": "Структура", "claim", "quote", "location" } ] }`,
         },
         {
           key: 'logical', label: 'Логический аналитик', defaultCat: 'Логика',
-          system: `Ты — опытный юрист (право Кыргызской Республики). Проверяешь логическую последовательность документа.
-
-ЗАДАЧА: Оцени — есть ли в документе явные внутренние противоречия или двусмысленности.
-
-ПРАВИЛА — ЧИТАЙ ВНИМАТЕЛЬНО:
-1. Твоя цель — ЧЕСТНАЯ оценка, а НЕ поиск проблем. Если документ логически последователен → findings = []
-2. Замечание засчитывается ТОЛЬКО если проблема буквально следует из текста:
-   • Противоречие: оба противоречащих фрагмента должны присутствовать в тексте
-   • quote для противоречия = обе фразы через " ↔ " (дословно из документа)
-   • quote для двусмысленности = дословная неоднозначная фраза
-3. ЗАПРЕЩЕНО: придумывать противоречия которых нет, перефразировать цитаты
-4. Если проблем нет → findings = []
-
-Верни СТРОГО JSON без markdown:
-{ "findings": [ { "severity": "high|medium|low", "category": "Логика", "claim": "суть одним предложением", "quote": "дословная цитата из документа", "location": "пункт/раздел" } ] }`,
+          system: `Ты — опытный юрист (право Кыргызской Республики). Проверяешь логику документа.
+ЗАДАЧА: Оцени — есть ли явные внутренние противоречия или неустранимые двусмысленности.
+ПРАВИЛА:
+1. Честная оценка. Если документ логически последователен → findings = []
+2. quote для противоречия = ОБА фрагмента дословно через " ↔ "
+3. ЗАПРЕЩЕНО: домысливать, перефразировать цитаты.
+Верни JSON: { "findings": [ { "severity": "high|medium|low", "category": "Логика", "claim", "quote", "location" } ] }`,
         },
         {
           key: 'strategic', label: 'Стратегический аналитик', defaultCat: 'Стратегия',
-          system: `Ты — опытный адвокат (право Кыргызской Республики). Оцениваешь уязвимость документа.
-
-ЗАДАЧА: Оцени — есть ли в документе формулировки, которые противная сторона реально может использовать против автора.
-
-ПРАВИЛА — ЧИТАЙ ВНИМАТЕЛЬНО:
-1. Твоя цель — ЧЕСТНАЯ оценка. Если документ хорошо защищён → findings = [] и это профессиональный результат
-2. Quote = ДОСЛОВНАЯ цитата уязвимой формулировки из документа (скопируй точно)
-   • Без дословной цитаты — замечание автоматически отклоняется
-   • ЗАПРЕЩЕНО перефразировать или домысливать
-3. В claim объясни конкретную тактику атаки с учётом текста
-4. Только реально слабые места, подтверждённые текстом, не гипотетические
-
-Верни СТРОГО JSON без markdown:
-{ "findings": [ { "severity": "high|medium|low", "category": "Стратегия", "claim": "конкретная тактика атаки", "quote": "дословная цитата уязвимой формулировки", "location": "пункт/раздел" } ] }`,
+          system: `Ты — опытный адвокат (право Кыргызской Республики). Оцениваешь стратегические риски документа.
+ЗАДАЧА: Оцени — есть ли формулировки которые противная сторона реально может использовать против автора.
+ПРАВИЛА:
+1. Честная оценка. Если документ хорошо защищён → findings = []
+2. quote = ДОСЛОВНАЯ цитата уязвимой формулировки (скопируй точно из текста)
+3. ЗАПРЕЩЕНО: придумывать уязвимости, перефразировать.
+Верни JSON: { "findings": [ { "severity": "high|medium|low", "category": "Стратегия", "claim", "quote", "location" } ] }`,
         },
       ];
 
-      const agentResults = await Promise.all(DEEP_AGENTS.map(async (ag) => {
-        const raw = await adTimeout((async () => clients.geminiJson({
-          systemPrompt: ag.system,
-          userPrompt: `ДОКУМЕНТ:\n${docText}\n\nПроведи анализ по своей специализации. Верни JSON.`,
-          model: 'gemini-3.1-flash-lite', maxOutputTokens: 2048, timeoutMs: 25000,
-          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: `analyze-deep:${ag.key}` }),
-        }))(), 28000, null);
-        const findings = adParseArr(raw).map(f => normFinding(f, ag.defaultCat));
-        sse({ stage: `   ✓ ${ag.label}: замечаний ${findings.length}`, agent: ag.key });
-        return { key: ag.key, findings };
-      }));
+      stage('🔬 Запускаю параллельно: НПА-сверка по базе законов КР + структурный · логический · стратегический аудит…');
 
-      // ── LAYER 1: Фильтр по обязательному полю quote ────────────────
-      const ABSENT_MARKER = 'раздел не найден';
-      const rawFindings = agentResults.flatMap(r => r.findings)
-        .filter(f => f.claim && f.quote && f.quote.trim() !== '' && f.quote !== 'null');
+      const [npaResult, agentFindings] = await Promise.all([
+        runNpaPipeline(docText, resolvedDeps, sse, step),
+        runAgentPipeline(docText, DEEP_AGENTS, resolvedDeps, sse, res),
+      ]);
 
-      if (!rawFindings.length) {
-        sse({ text: '## ⚖️ Итог\n\nЗамечаний не выявлено. Документ структурно корректен, логически последователен и стратегически защищён.' });
-        sse({ deepAnalysis: { findings: [], score: 95, agentBreakdown: { structural: 0, logical: 0, strategic: 0 } } });
-        return finish();
-      }
+      const { graph, purityIndex } = npaResult;
+      const errCnt  = graph.filter(g => g.status === 'error').length;
+      const blindCnt = graph.filter(g => g.blind_spot && g.status !== 'error').length;
+      const nH = agentFindings.filter(f => f.severity === 'high').length;
+      const nM = agentFindings.filter(f => f.severity === 'medium').length;
+      const nL = agentFindings.filter(f => f.severity === 'low').length;
 
-      // ── LAYER 1.5: Проверка цитаты в тексте документа (без LLM) ───
-      // Если агент сочинил цитату — она не найдётся в docText → отклоняем.
-      const docLower = docText.toLowerCase();
-      const quoteVerified = rawFindings.filter(f => {
-        const q = f.quote.toLowerCase().trim();
-        if (q.includes(ABSENT_MARKER)) return true; // "Раздел не найден" — легитимно
-        // Ищем хотя бы первые 25 символов цитаты (устойчиво к обрезке)
-        const probe = q.replace(/[«»"']/g, '').trim().slice(0, 25);
-        return probe.length < 8 || docLower.includes(probe);
-      });
-      if (quoteVerified.length < rawFindings.length) {
-        sse({ stage: `   ⚠️ Отфильтровано ${rawFindings.length - quoteVerified.length} замечаний с несуществующими цитатами` });
-      }
-
-      // ── LAYER 2: ADVERSARIAL VERIFIER ─────────────────────────────
-      stage(`⚖️ Верифицирую ${quoteVerified.length} замечани${quoteVerified.length === 1 ? 'е' : quoteVerified.length < 5 ? 'я' : 'й'} независимым аудитором…`);
-      const VERIFIER_SYS_DEEP = `Ты — независимый юрист-скептик. Проверяешь замечание к документу.
-ЗАДАЧА: Есть ли в тексте документа что-то, что ОПРОВЕРГАЕТ это замечание?
-confirmed: false = нашёл опровержение (процитируй его).
-confirmed: true  = замечание обоснованно, опровержения нет.
-Верни СТРОГО JSON: { "confirmed": <bool>, "reason": "<1-2 предложения>" }`;
-
-      const verified = await Promise.all(quoteVerified.slice(0, 18).map(async (f) => {
-        const raw = await adTimeout((async () => clients.geminiJson({
-          systemPrompt: VERIFIER_SYS_DEEP,
-          userPrompt: `ЗАМЕЧАНИЕ: ${f.claim}\nЦИТАТА ИЗ ДОКУМЕНТА: ${f.quote}\nМЕСТО: ${f.location}\n\nТЕКСТ ДОКУМЕНТА:\n${docText.slice(0, 8000)}\n\nВерни JSON.`,
-          model: 'gemini-3.1-flash-lite', maxOutputTokens: 300, timeoutMs: 15000,
-          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-deep:verifier' }),
-        }))(), 18000, null);
-        const v = adParseObj(raw);
-        if (!v || typeof v.confirmed !== 'boolean') return { ...f, confirmed: true };
-        return { ...f, confirmed: v.confirmed, verifierReason: adStrip(String(v.reason || '')).slice(0, 200) };
-      }));
-      const confirmedFindings = verified.filter(f => f.confirmed);
-
-      const agentBreakdown = {};
-      for (const ag of DEEP_AGENTS) {
-        agentBreakdown[ag.key] = confirmedFindings.filter(f => f.category === ag.defaultCat).length;
-      }
-
-      // ── SCORE ───────────────────────────────────────────────────────
       let score = 100;
-      for (const f of confirmedFindings) {
+      for (const f of agentFindings) {
         if (f.severity === 'high') score -= 15;
         else if (f.severity === 'medium') score -= 8;
         else score -= 2;
       }
       score = Math.max(10, Math.min(100, score));
 
-      // ── JUDGE: DeepSeek v4-flash, потоковый ────────────────────────
-      stage('🔎 Ищу применимые нормы НПА КР…');
-      const nH = confirmedFindings.filter(f => f.severity === 'high').length;
-      const nM = confirmedFindings.filter(f => f.severity === 'medium').length;
-      const nL = confirmedFindings.filter(f => f.severity === 'low').length;
-      const findingsBlock = confirmedFindings.map((f, i) =>
-        `${i + 1}. [${f.severity.toUpperCase()}] ${f.category} · ${f.location}\n   Замечание: ${f.claim}\n   Цитата: «${f.quote}»`
+      const agentBreakdown = {};
+      for (const ag of DEEP_AGENTS)
+        agentBreakdown[ag.key] = agentFindings.filter(f => f.category === ag.defaultCat).length;
+      sse({ deepAnalysis: { findings: agentFindings, score, agentBreakdown } });
+
+      const totalIssues = errCnt + blindCnt + agentFindings.length;
+      const effort = totalIssues > 20 ? 'medium' : 'low';
+      stage(`🧠 DeepSeek v4 Flash: формирую единый отчёт (effort=${effort})…`);
+      step({ id: 'judge', status: 'loading', text: `🧠 Финальный судья: DeepSeek v4 Flash (effort=${effort})` });
+      sse({ judge: { name: 'DeepSeek v4 Flash', model: 'deepseek-v4-flash', effort } });
+
+      const npaErrors = graph.filter(g => g.status === 'error');
+      const npaBlind  = graph.filter(g => g.blind_spot && g.status !== 'error');
+      const npaErrBlock = npaErrors.slice(0,15).map((g,i) =>
+        `${i+1}. [${g.npa||'НПА'}${g.article?`, ст.${g.article}`:''}] ${g.detail||g.marker}`
+      ).join('\n');
+      const npaBlindBlock = npaBlind.slice(0,10).map((g,i) =>
+        `${i+1}. [Слепая зона] ${g.detail||g.marker}`
+      ).join('\n');
+      const agentBlock = agentFindings.map((f,i) =>
+        `${i+1}. [${f.severity.toUpperCase()}] ${f.category} · ${f.location}\n   ${f.claim}\n   «${f.quote}»`
       ).join('\n\n');
 
-      // ── QUICK RAG: берём применимые НПА нормы из Supabase для судьи ─
-      // Без этого судья "придумывал" статьи — теперь ссылается только на реальные нормы.
-      let deepNpaBlock = '';
-      try {
-        const deepRagQueries = [
-          docText.slice(0, 200) + ' правовые требования ответственность обязательство',
-          'требования к форме содержанию документа Кыргызская Республика закон',
-        ];
-        const deepNorms = (await resolvedDeps.pineconeSearch?.(deepRagQueries, null, 5)) || [];
-        if (deepNorms.length) {
-          deepNpaBlock = '\n\nПРИМЕНИМЫЕ НОРМЫ НПА КР (из базы законов, используй их для рекомендаций):\n' +
-            deepNorms.slice(0, 5).map((n, i) => {
-              const md = (n && n.metadata) || {};
-              return `[${i + 1}] ${[md.npa_title, md.article_title].filter(Boolean).join(' — ')}\n${String(md.full_text || '').slice(0, 400)}`;
-            }).join('\n\n');
-          sse({ stage: `   ✓ Найдено ${deepNorms.length} применимых норм НПА` });
-        } else {
-          sse({ stage: '   ℹ️ База НПА не вернула применимых норм для этого документа' });
-        }
-      } catch (e) {
-        console.warn('[analyze-deep] RAG failed:', e.message);
-      }
+      const JUDGE_SYS = `Ты — Финальный Судья юридической проверки (право Кыргызской Республики).
+У тебя два источника:
+1. АВТОМАТИЧЕСКАЯ СВЕРКА С НПА КР — пофрагментарная проверка каждого пункта с базой законов КР
+2. ЗАМЕЧАНИЯ СПЕЦИАЛИСТОВ — структурный, логический и стратегический анализ
 
-      stage('🧠 Формирую Executive Summary…');
+Напиши ЕДИНОЕ профессиональное заключение.
+ПРАВИЛА: пиши от первого лица юриста; НЕ упоминай «агентов», «базы», «систему»; конкретная рекомендация по каждому замечанию.
 
-      const JUDGE_SYS_DEEP = `Ты — практикующий юрист (право Кыргызской Республики), лично изучивший документ.
-Тебе переданы верифицированные замечания к этому документу${deepNpaBlock ? ' и применимые нормы НПА КР из базы законов' : ''}.
-Составь профессиональное юридическое заключение для клиента.
-
-ПРАВИЛА (КРИТИЧЕСКИ ВАЖНЫ):
-- Пиши от первого лица как юрист («При изучении документа выявлено...»)
-- НЕ упоминай «аудиторов», «протоколы», «источники», «агентов» — ты лично изучил документ
-- Ссылайся ТОЛЬКО на факты из переданных замечаний — не добавляй новых
-- Ссылайся на НПА ТОЛЬКО из раздела «ПРИМЕНИМЫЕ НОРМЫ НПА КР» (если он передан). Не называй статей которых нет в переданных данных.
-- По каждому замечанию — конкретная рекомендация: что именно и как исправить
-- Если замечаний мало или документ в целом хорош — скажи это прямо
-
-ФОРМАТ (markdown):
-## 🔴 Критические замечания
+ФОРМАТ:
+## 🔴 Критические нарушения НПА
 ## 🟡 Существенные замечания
+## 🔍 Структурные и логические дефекты
+## 🛡️ Стратегические риски
 ## 🟢 Рекомендации
-## ⚖️ Заключение`;
+## ⚖️ Итоговое заключение`;
 
-      const judgeUser = `Оценка документа: ${score}/100 | Замечаний: ${confirmedFindings.length} (🔴 ${nH} · 🟡 ${nM} · 🟢 ${nL})\n\nВЫЯВЛЕННЫЕ ЗАМЕЧАНИЯ:\n\n${findingsBlock}${deepNpaBlock}`;
+      const JUDGE_USER = `ЧИСТОТА ДОКУМЕНТА (НПА-сверка): ${purityIndex}% | Блоков: ${graph.length} | НПА-ошибок: ${errCnt} | Слепых зон: ${blindCnt}
 
-      let judgeText = '';
+НПА-НАРУШЕНИЯ (${npaErrors.length}):
+${npaErrBlock || 'Нарушений НПА не обнаружено'}
+
+СЛЕПЫЕ ЗОНЫ (${npaBlind.length}):
+${npaBlindBlock || 'Слепых зон нет'}
+
+ЗАМЕЧАНИЯ АГЕНТОВ: ${agentFindings.length} (🔴 ${nH} · 🟡 ${nM} · 🟢 ${nL})
+${agentBlock || 'Замечаний нет — документ структурно и логически корректен.'}`;
+
+      let sawContent = false;
       try {
-        const judgeResult = await clients.deepseekReason({
-          systemPrompt: JUDGE_SYS_DEEP, userPrompt: judgeUser,
-          model: 'deepseek-v4-flash', reasoning_effort: 'low', thinking: 'disabled',
-          onDelta: (d) => { if (d.text) { judgeText += d.text; sse({ text: d.text }); } },
+        const result = await clients.deepseekReason({
+          systemPrompt: JUDGE_SYS, userPrompt: JUDGE_USER,
+          model: 'deepseek-v4-flash', reasoning_effort: effort, thinking: 'disabled',
+          onDelta: (d) => { if (d.text) { sawContent = true; sse({ text: d.text }); } },
         });
-        if (judgeResult && judgeResult.usage && (judgeResult.usage.inputTokens || judgeResult.usage.outputTokens)) {
-          emitTele(res, { model: judgeResult.model || 'deepseek-v4-flash', inputTokens: judgeResult.usage.inputTokens, outputTokens: judgeResult.usage.outputTokens, label: 'analyze-deep:judge' });
-        }
-      } catch (e) { console.warn('[analyze-deep] judge error:', e.message); }
-      if (!judgeText) {
-        // Gemini fallback
+        if (result && result.usage) emitTele(res, { model: result.model||'deepseek-v4-flash', inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, label: 'deep:judge' });
+      } catch(e) { console.warn('[analyze-deep] judge error:', e.message); }
+
+      if (!sawContent) {
         try {
-          const fb = await clients.geminiJson({ systemPrompt: JUDGE_SYS_DEEP, userPrompt: judgeUser, model: 'gemini-2.5-flash', maxOutputTokens: 3000, timeoutMs: 40000,
-            onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-deep:judge-fallback' }), });
+          const fb = await clients.geminiJson({ systemPrompt: JUDGE_SYS, userPrompt: JUDGE_USER, model: 'gemini-2.5-flash', maxOutputTokens: 3000, timeoutMs: 40000, onTokens: (m,i,o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'deep:judge-fb' }) });
           sse({ text: String(fb || '') });
-        } catch (_) {
-          sse({ text: `## ⚖️ Итоговая оценка\n\nВыявлено ${confirmedFindings.length} замечаний. Оценка: ${score}/100.` });
-        }
+        } catch(_) { sse({ text: `## ⚖️ Итоговое заключение\n\nПроверено ${graph.length} фрагментов. НПА-ошибок: ${errCnt}. Агентных замечаний: ${agentFindings.length}.` }); }
       }
 
-      sse({ deepAnalysis: { findings: confirmedFindings, score, agentBreakdown } });
+      step({ id: 'judge', status: 'success', text: 'Единый отчёт готов' });
       return finish();
     } catch (err) {
       console.error('[analyze-deep] error:', err.message);
@@ -2012,309 +2012,181 @@ confirmed: true  = замечание обоснованно, опроверже
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    const sse  = (obj) => { if (!res.writableEnded) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); if (typeof res.flush === 'function') res.flush(); } };
-    const done = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
-    const stage = (text) => sse({ stage: text });
-    const hb = setInterval(() => { if (!res.writableEnded) res.write(':hb\n\n'); }, 20000);
+    const sse    = (obj) => { if (!res.writableEnded) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); if (typeof res.flush==='function') res.flush(); } };
+    const done   = () => { if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); } };
+    const stage  = (t) => sse({ stage: t });
+    const step   = (s) => sse({ step: s });
+    const hb     = setInterval(() => { if (!res.writableEnded) res.write(':hb\n\n'); }, 20000);
     const finish = () => { clearInterval(hb); done(); };
 
     try {
-      const docText = String((req.body && req.body.documentText) || '').slice(0, 35000).trim();
+      const docText = String((req.body && req.body.documentText) || '').slice(0, 150000).trim();
       if (docText.length < 80) { sse({ error: 'Документ слишком короткий для PRO-анализа' }); return finish(); }
-
-      const proTimeout = (p, ms, fb) => Promise.race([
-        Promise.resolve(p).catch(() => fb),
-        new Promise(r => setTimeout(() => r(fb), ms)),
-      ]);
-      const proParseArr = (raw) => {
-        const c = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
-        try { const o = JSON.parse(c); return Array.isArray(o) ? o : (Array.isArray(o.findings) ? o.findings : []); } catch (_) {}
-        const a = c.indexOf('['), b = c.lastIndexOf(']');
-        if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a, b + 1)); } catch (_) {} }
-        const oa = c.indexOf('{'), oc = c.lastIndexOf('}');
-        if (oa !== -1 && oc > oa) { try { const o = JSON.parse(c.slice(oa, oc + 1)); return Array.isArray(o.findings) ? o.findings : []; } catch (_) {} }
-        return [];
-      };
-      const proParseObj = (raw) => {
-        const c = String(raw || '').replace(/```json\s*/gi, '').replace(/```/g, '').trim();
-        try { return JSON.parse(c); } catch (_) {}
-        const a = c.indexOf('{'), b = c.lastIndexOf('}');
-        if (a !== -1 && b > a) { try { return JSON.parse(c.slice(a, b + 1)); } catch (_) {} }
-        return null;
-      };
-      const proStrip = (s) => String(s || '').replace(/[　-〿㐀-䶿一-鿿豈-﫿＀-￯]/g, '');
-      const proNorm = (f, dc) => ({
-        severity: ['high', 'medium', 'low'].includes(f.severity) ? f.severity : 'medium',
-        category: proStrip(String(f.category || dc)).slice(0, 60),
-        claim:    proStrip(String(f.claim    || '')).slice(0, 300),
-        quote:    proStrip(String(f.quote    || '')).slice(0, 500),
-        location: proStrip(String(f.location || '')).slice(0, 120),
-      });
-
-      // ── 6 ПАРАЛЛЕЛЬНЫХ АГЕНТОВ ─────────────────────────────────────
-      // Агенты 1-5: анализ текста документа (gemini-3.1-flash-lite)
-      // Агент 6: RAG-верификатор — ищет нормы НПА КР в Supabase через resolvedDeps.pineconeSearch
-      stage('🔬 Запускаю 6 параллельных агентов PRO (структура · логика · стратегия · риски · процессуал · НПА)…');
 
       const PRO_AGENTS = [
         {
-          key: 'structural', label: 'Структурный аудитор', defaultCat: 'Структура', model: 'gemini-3.1-flash-lite',
+          key: 'structural', label: 'Структурный аудитор', defaultCat: 'Структура',
           system: `Ты — опытный юрист (право Кыргызской Республики). Проверяешь структуру документа.
-
-ЗАДАЧА: Оцени — соответствует ли структура документа его типу. Проверь наличие всех необходимых разделов.
-
+ЗАДАЧА: Оцени — соответствует ли структура документа его типу.
 ПРАВИЛА:
-1. Твоя цель — ЧЕСТНАЯ оценка, не поиск проблем. Если структура правильная → findings = []
-2. quote = ДОСЛОВНАЯ цитата из документа (скопируй точно). Нельзя перефразировать.
-   Если раздел отсутствует → quote = "Раздел не найден в тексте"
-3. НЕ придумывай отсутствие разделов если они есть в другой форме
-4. НЕ ссылайся на НПА (другой агент)
-Верни JSON: { "findings": [ { "severity", "category": "Структура", "claim", "quote", "location" } ] }`,
+1. Честная оценка. Если структура правильная → findings = []
+2. quote = ДОСЛОВНАЯ цитата из документа. Если раздел отсутствует → "Раздел не найден в тексте"
+3. НЕ ссылайся на НПА. НЕ придумывай отсутствие разделов.
+Верни JSON: { "findings": [ { "severity": "high|medium|low", "category": "Структура", "claim", "quote", "location" } ] }`,
         },
         {
-          key: 'logical', label: 'Логический аналитик', defaultCat: 'Логика', model: 'gemini-3.1-flash-lite',
+          key: 'logical', label: 'Логический аналитик', defaultCat: 'Логика',
           system: `Ты — опытный юрист (право Кыргызской Республики). Проверяешь логику документа.
-
 ЗАДАЧА: Оцени — есть ли явные внутренние противоречия или неустранимые двусмысленности.
-
 ПРАВИЛА:
-1. Твоя цель — ЧЕСТНАЯ оценка. Если документ логически последователен → findings = []
-2. quote для противоречия = ОБА фрагмента дословно через " ↔ " (оба должны быть в тексте)
-3. quote для двусмысленности = дословная неоднозначная фраза из документа
-4. ЗАПРЕЩЕНО: домысливать противоречия, перефразировать цитаты
-Верни JSON: { "findings": [ { "severity", "category": "Логика", "claim", "quote", "location" } ] }`,
+1. Честная оценка. Если документ логически последователен → findings = []
+2. quote для противоречия = ОБА фрагмента дословно через " ↔ "
+3. ЗАПРЕЩЕНО: домысливать, перефразировать цитаты.
+Верни JSON: { "findings": [ { "severity": "high|medium|low", "category": "Логика", "claim", "quote", "location" } ] }`,
         },
         {
-          key: 'strategic', label: 'Стратегический аналитик', defaultCat: 'Стратегия', model: 'gemini-3.1-flash-lite',
-          system: `Ты — опытный адвокат (право Кыргызской Республики). Оцениваешь стратегические риски документа.
-
+          key: 'strategic', label: 'Стратегический аналитик', defaultCat: 'Стратегия',
+          system: `Ты — опытный адвокат (право Кыргызской Республики). Оцениваешь стратегические риски.
 ЗАДАЧА: Оцени — есть ли формулировки которые противная сторона реально может использовать против автора.
-
 ПРАВИЛА:
-1. Твоя цель — ЧЕСТНАЯ оценка. Если документ хорошо защищён → findings = [] (это профессиональный результат)
-2. quote = ДОСЛОВНАЯ цитата уязвимой формулировки (скопируй точно из текста)
-3. В claim — конкретная тактика атаки, основанная на тексте
-4. ЗАПРЕЩЕНО: придумывать уязвимости, перефразировать цитаты
-Верни JSON: { "findings": [ { "severity", "category": "Стратегия", "claim", "quote", "location" } ] }`,
+1. Честная оценка. Если документ хорошо защищён → findings = []
+2. quote = ДОСЛОВНАЯ цитата уязвимой формулировки (скопируй точно)
+3. ЗАПРЕЩЕНО: придумывать уязвимости, перефразировать.
+Верни JSON: { "findings": [ { "severity": "high|medium|low", "category": "Стратегия", "claim", "quote", "location" } ] }`,
         },
         {
-          key: 'risk', label: 'Риск-менеджер', defaultCat: 'Риски', model: 'gemini-3.1-flash-lite',
+          key: 'risk', label: 'Риск-менеджер', defaultCat: 'Риски',
           system: `Ты — юрист по управлению рисками (право Кыргызской Республики). Оцениваешь правовые риски.
-
-ЗАДАЧА: Оцени — есть ли в документе условия создающие реальные правовые или финансовые риски.
-
+ЗАДАЧА: Оцени — есть ли условия создающие реальные правовые или финансовые риски.
 ПРАВИЛА:
-1. Твоя цель — ЧЕСТНАЯ оценка. Если рисков нет → findings = []
+1. Честная оценка. Если рисков нет → findings = []
 2. quote = ДОСЛОВНАЯ цитата рискованного условия из документа
-3. В claim — конкретный механизм риска (не гипотетический)
-4. ЗАПРЕЩЕНО: придумывать риски которых нет в тексте
-Верни JSON: { "findings": [ { "severity", "category": "Риски", "claim", "quote", "location" } ] }`,
+3. В claim — конкретный механизм риска, ЗАПРЕЩЕНО придумывать.
+Верни JSON: { "findings": [ { "severity": "high|medium|low", "category": "Риски", "claim", "quote", "location" } ] }`,
         },
         {
-          key: 'procedural', label: 'Процессуальный аналитик', defaultCat: 'Процессуал', model: 'gemini-3.1-flash-lite',
-          system: `Ты — юрист (право Кыргызской Республики). Проверяешь процессуальные аспекты документа.
-
+          key: 'procedural', label: 'Процессуальный аналитик', defaultCat: 'Процессуал',
+          system: `Ты — юрист (право Кыргызской Республики). Проверяешь процессуальные аспекты.
 ЗАДАЧА: Оцени — есть ли реальные процессуальные проблемы: неопределённые сроки, нарушение порядка уведомлений, отсутствие обязательной формы.
-
 ПРАВИЛА:
-1. Твоя цель — ЧЕСТНАЯ оценка. Если процессуальных проблем нет → findings = []
-2. quote = ДОСЛОВНАЯ цитата проблемного условия из документа
-   Если условие отсутствует полностью → quote = "Условие не найдено в тексте"
-3. ЗАПРЕЩЕНО: придумывать проблемы которых нет
-Верни JSON: { "findings": [ { "severity", "category": "Процессуал", "claim", "quote", "location" } ] }`,
+1. Честная оценка. Если процессуальных проблем нет → findings = []
+2. quote = ДОСЛОВНАЯ цитата. Если условие отсутствует → "Условие не найдено в тексте"
+3. ЗАПРЕЩЕНО: придумывать проблемы которых нет.
+Верни JSON: { "findings": [ { "severity": "high|medium|low", "category": "Процессуал", "claim", "quote", "location" } ] }`,
         },
       ];
 
-      // Агент 6: RAG-верификатор (Supabase НПА КР)
-      // Ищет применимые нормы через resolvedDeps.pineconeSearch,
-      // затем проверяет документ на соответствие найденным нормам.
-      const ragAgentPromise = proTimeout((async () => {
-        const subject = docText.slice(0, 300); // первые 300 символов как краткое описание
-        const ragQueries = [
-          `${subject} нарушение обязательства ответственность`,
-          `${subject} права стороны расторжение договора`,
-          `требования к форме содержанию документа Кыргызская Республика`,
-        ];
-        let ragNorms = [];
-        try {
-          ragNorms = (await resolvedDeps.pineconeSearch?.(ragQueries, null, 8)) || [];
-        } catch (e) { console.warn('[analyze-pro] RAG search failed:', e.message); }
-        if (!ragNorms.length) return { key: 'npa_check', findings: [] };
+      stage('🔬 Запускаю параллельно: НПА-сверка по базе законов КР + 5 агентов PRO (структура · логика · стратегия · риски · процессуал)…');
 
-        const normsList = ragNorms.slice(0, 8).map((n, i) => {
-          const md = (n && n.metadata) || {};
-          return `[${i+1}] ${[md.npa_title, md.article_title].filter(Boolean).join(' — ')}\n${String(md.full_text || '').slice(0, 600)}`;
-        }).join('\n\n');
-
-        const RAG_SYS = `Ты — эксперт-нормоконтролёр (право Кыргызской Республики).
-Тебе переданы нормы НПА КР из базы законов и текст проверяемого документа.
-ЗАДАЧА: Проверь, соответствует ли документ переданным нормам. Найди нарушения или несоответствия.
-
-АНТИГАЛЛЮЦИНАЦИОННЫЕ ПРАВИЛА (КРИТИЧЕСКИ ВАЖНЫ):
-1. Ссылайся ТОЛЬКО на нормы из переданного списка (НЕ придумывай статьи)
-2. Quote = точная цитата из документа, которая нарушает норму (ОБЯЗАТЕЛЬНА)
-3. В claim укажи: какую именно норму нарушает и как
-4. findings = [] если нарушений нет
-
-Верни СТРОГО JSON без markdown:
-{ "findings": [ { "severity": "high|medium|low", "category": "НПА КР", "claim": "какую норму нарушает", "quote": "цитата из документа", "location": "пункт/раздел", "norm": "[N] название нормы" } ] }`;
-
-        const raw = await clients.geminiJson({
-          systemPrompt: RAG_SYS,
-          userPrompt: `НОРМЫ НПА КР ИЗ БАЗЫ:\n${normsList}\n\nДОКУМЕНТ:\n${docText.slice(0, 12000)}\n\nПроверь соответствие. Верни JSON.`,
-          model: 'gemini-3.1-flash-lite', maxOutputTokens: 2500, timeoutMs: 28000,
-          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-pro:npa_check' }),
-        });
-        const findings = proParseArr(raw).map(f => ({
-          ...proNorm(f, 'НПА КР'),
-          norm: proStrip(String(f.norm || '')).slice(0, 200),
-        }));
-        sse({ stage: `   ✓ RAG-верификатор НПА: найдено норм ${ragNorms.length}, замечаний ${findings.length}`, agent: 'npa_check' });
-        return { key: 'npa_check', findings };
-      })(), 35000, { key: 'npa_check', findings: [] });
-
-      // Все 6 агентов параллельно
-      const [agentResults, ragResult] = await Promise.all([
-        Promise.all(PRO_AGENTS.map(async (ag) => {
-          const raw = await proTimeout((async () => clients.geminiJson({
-            systemPrompt: ag.system,
-            userPrompt: `ДОКУМЕНТ:\n${docText}\n\nПроведи анализ. Верни JSON.`,
-            model: ag.model, maxOutputTokens: 2500, timeoutMs: 35000,
-            onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: `analyze-pro:${ag.key}` }),
-          }))(), 38000, null);
-          const findings = proParseArr(raw).map(f => proNorm(f, ag.defaultCat));
-          sse({ stage: `   ✓ ${ag.label}: замечаний ${findings.length}`, agent: ag.key });
-          return { key: ag.key, findings };
-        })),
-        ragAgentPromise,
+      const [npaResult, agentFindings] = await Promise.all([
+        runNpaPipeline(docText, resolvedDeps, sse, step),
+        runAgentPipeline(docText, PRO_AGENTS, resolvedDeps, sse, res),
       ]);
 
-      // ── LAYER 1: Фильтр по обязательному полю quote ────────────────
-      const allResults = [...agentResults, ragResult];
-      const proRawAll = allResults.flatMap(r => (r.findings || []))
-        .filter(f => f.claim && f.quote && f.quote.trim() !== '' && f.quote !== 'null');
+      const { graph, purityIndex } = npaResult;
+      const npaErrors = graph.filter(g => g.status === 'error');
+      const npaBlind  = graph.filter(g => g.blind_spot && g.status !== 'error');
+      const errCnt    = npaErrors.length;
+      const blindCnt  = npaBlind.length;
+      const nH = agentFindings.filter(f => f.severity === 'high').length;
+      const nM = agentFindings.filter(f => f.severity === 'medium').length;
+      const nL = agentFindings.filter(f => f.severity === 'low').length;
 
-      if (!proRawAll.length) {
-        sse({ text: '## ⚖️ PRO-Итог\n\nЗамечаний не выявлено. Документ юридически состоятелен по всем направлениям проверки.' });
-        sse({ deepAnalysis: { findings: [], score: 97, agentBreakdown: { structural: 0, logical: 0, strategic: 0, risk: 0, procedural: 0, npa_check: 0 } } });
-        return finish();
-      }
-
-      // ── LAYER 1.5: Проверка цитаты в тексте (без LLM) ─────────────
-      const proDocLower = docText.toLowerCase();
-      const PRO_ABSENT = 'не найден';
-      const rawFindings = proRawAll.filter(f => {
-        const q = f.quote.toLowerCase().trim();
-        if (q.includes(PRO_ABSENT) || q.includes('отсутствует')) return true;
-        const probe = q.replace(/[«»"']/g, '').trim().slice(0, 25);
-        return probe.length < 8 || proDocLower.includes(probe);
-      });
-      if (rawFindings.length < proRawAll.length) {
-        sse({ stage: `   ⚠️ Отфильтровано ${proRawAll.length - rawFindings.length} замечаний с несуществующими цитатами` });
-      }
-      if (!rawFindings.length) {
-        sse({ text: '## ⚖️ PRO-Итог\n\nЗамечаний не выявлено после проверки цитат. Документ составлен корректно.' });
-        sse({ deepAnalysis: { findings: [], score: 95, agentBreakdown: { structural: 0, logical: 0, strategic: 0, risk: 0, procedural: 0, npa_check: 0 } } });
-        return finish();
-      }
-
-      // ── LAYER 2: ADVERSARIAL VERIFIER (проверяем ВСЕ) ─────────────
-      stage(`⚖️ PRO-верификация: проверяю ${rawFindings.length} замечани${rawFindings.length === 1 ? 'е' : rawFindings.length < 5 ? 'я' : 'й'} независимым аудитором…`);
-      const VERIFIER_SYS_PRO = `Ты — независимый юрист-скептик. Проверяешь замечание к документу.
-ЗАДАЧА: Есть ли в тексте документа что-то, что ОПРОВЕРГАЕТ это замечание?
-confirmed: false = нашёл опровержение (процитируй его точно).
-confirmed: true  = замечание обоснованно, опровержения нет.
-Верни СТРОГО JSON: { "confirmed": <bool>, "reason": "<1-2 предложения>" }`;
-
-      const verifiedAll = await Promise.all(rawFindings.slice(0, 25).map(async (f) => {
-        const raw = await proTimeout((async () => clients.geminiJson({
-          systemPrompt: VERIFIER_SYS_PRO,
-          userPrompt: `ЗАМЕЧАНИЕ: ${f.claim}\nЦИТАТА ИЗ ДОКУМЕНТА: ${f.quote}\nМЕСТО: ${f.location}\n\nТЕКСТ ДОКУМЕНТА:\n${docText.slice(0, 8000)}\n\nВерни JSON.`,
-          model: 'gemini-3.1-flash-lite', maxOutputTokens: 300, timeoutMs: 15000,
-          onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-pro:verifier' }),
-        }))(), 18000, null);
-        const v = proParseObj(raw);
-        if (!v || typeof v.confirmed !== 'boolean') return { ...f, confirmed: true };
-        return { ...f, confirmed: v.confirmed, verifierReason: proStrip(String(v.reason || '')).slice(0, 200) };
-      }));
-      const confirmedFindings = verifiedAll.filter(f => f.confirmed)
-        .sort((a, b) => { const ord = { high: 0, medium: 1, low: 2 }; return (ord[a.severity] || 1) - (ord[b.severity] || 1); });
-
-      const agentBreakdown = {};
-      for (const ag of [...PRO_AGENTS, { key: 'npa_check', defaultCat: 'НПА КР' }]) {
-        agentBreakdown[ag.key] = confirmedFindings.filter(f => f.category === ag.defaultCat).length;
-      }
-
-      // ── SCORE (строже чем в deep: -20 за НПА, -15 за структур./логику high) ──
+      // Строже чем Глубокий: нарушения НПА (-20/-12) важнее агентных (-15/-8)
       let score = 100;
-      for (const f of confirmedFindings) {
-        const isNpa = f.category === 'НПА КР';
-        if (f.severity === 'high') score -= isNpa ? 20 : 15;
-        else if (f.severity === 'medium') score -= isNpa ? 12 : 8;
+      for (const g of npaErrors) {
+        score -= g.severity === 'high' ? 20 : g.severity === 'medium' ? 12 : 5;
+      }
+      for (const f of agentFindings) {
+        if (f.severity === 'high') score -= 15;
+        else if (f.severity === 'medium') score -= 8;
         else score -= 2;
       }
       score = Math.max(5, Math.min(100, score));
 
-      // ── JUDGE PRO: DeepSeek v4-pro с reasoning ─────────────────────
-      stage('🧠 DeepSeek PRO (reasoning) синтезирует финальный отчёт…');
-      const nH = confirmedFindings.filter(f => f.severity === 'high').length;
-      const nM = confirmedFindings.filter(f => f.severity === 'medium').length;
-      const nL = confirmedFindings.filter(f => f.severity === 'low').length;
+      const agentBreakdown = {};
+      for (const ag of PRO_AGENTS)
+        agentBreakdown[ag.key] = agentFindings.filter(f => f.category === ag.defaultCat).length;
+      sse({ deepAnalysis: { findings: agentFindings, score, agentBreakdown } });
 
-      const groupedBlock = ['НПА КР', 'Структура', 'Логика', 'Стратегия', 'Риски', 'Процессуал'].map(cat => {
-        const catFindings = confirmedFindings.filter(f => f.category === cat);
-        if (!catFindings.length) return '';
-        const items = catFindings.map((f, i) =>
-          `  ${i+1}. [${f.severity.toUpperCase()}] ${f.claim}\n     Цитата: «${f.quote}»\n     Место: ${f.location}${f.norm ? `\n     Норма: ${f.norm}` : ''}`
+      step({ id: 'judge', status: 'loading', text: '🧠 Финальный судья: DeepSeek v4 Pro (глубокое размышление)' });
+      sse({ judge: { name: 'DeepSeek v4 Pro', model: 'deepseek-v4-pro', effort: 'high' } });
+      stage('🧠 DeepSeek v4 Pro: анализирую весь документ + все замечания…');
+
+      const npaErrBlock = npaErrors.slice(0,20).map((g,i) =>
+        `${i+1}. [${g.severity||'medium'}][${g.npa||'НПА'}${g.article?`, ст.${g.article}`:''}] ${g.detail||g.marker}`
+      ).join('\n');
+      const npaBlindBlock = npaBlind.slice(0,10).map((g,i) =>
+        `${i+1}. [Слепая зона] ${g.detail||g.marker}`
+      ).join('\n');
+
+      const groupedBlock = ['Структура', 'Логика', 'Стратегия', 'Риски', 'Процессуал'].map(cat => {
+        const catF = agentFindings.filter(f => f.category === cat);
+        if (!catF.length) return '';
+        return `[${cat}]\n` + catF.map((f,i) =>
+          `  ${i+1}. [${f.severity.toUpperCase()}] ${f.claim}\n     Цитата: «${f.quote}»\n     Место: ${f.location}`
         ).join('\n');
-        return `[${cat}]\n${items}`;
       }).filter(Boolean).join('\n\n');
 
-      const JUDGE_SYS_PRO = `Ты — старший практикующий юрист (право Кыргызской Республики), лично изучивший документ.
-Тебе переданы: оригинальный текст документа и верифицированные замечания к нему.
+      const JUDGE_SYS_PRO = `Ты — старший практикующий юрист (право Кыргызской Республики), лично изучивший весь документ.
+У тебя есть:
+1. Полный текст оригинального документа
+2. Результаты пофрагментарной сверки с базой НПА КР
+3. Замечания 5 специализированных юридических аналитиков
 
-ЗАДАЧА: Составь профессиональное юридическое заключение PRO-уровня.
-Ты видишь и оригинал документа, и замечания — можешь оценить документ комплексно: смысл, цели, стиль, соответствие праву.
+ЗАДАЧА: Составь исчерпывающее профессиональное заключение PRO-уровня.
+Ты видишь весь документ целиком — можешь оценить: смысл, цели, стиль, соответствие праву, риски.
 
-ПРАВИЛА (КРИТИЧЕСКИ ВАЖНЫ):
-- Пиши от первого лица как юрист («При анализе документа установлено...»)
-- НЕ упоминай «аудиторов», «протоколы», «источники» — ты лично изучил документ
-- Ссылайся ТОЛЬКО на переданные замечания — не добавляй новых от себя
-- Для нарушений НПА — назови конкретную статью (ГК КР, ГПК КР и т.д.) и дай готовую формулировку-возражение
-- По каждому замечанию дай конкретную редакцию исправления или формулировку
-- Если документ в целом грамотный и замечания незначительны — скажи это прямо
+ПРАВИЛА:
+- Пиши от первого лица юриста («При анализе документа установлено...»)
+- НЕ упоминай «аудиторов», «источники», «систему» — ты лично изучил всё
+- По каждому нарушению НПА — назови конкретную статью (ГК КР, ГПК КР и т.д.) и предложи готовую формулировку
+- По каждому агентному замечанию — конкретная редакция исправления
+- Если документ в целом грамотный — скажи это прямо
 
-ФОРМАТ (markdown):
-## 🔴 Критические замечания
-## 🟡 Существенные замечания
-## 🟢 Рекомендации
-## 💡 Что исправить до подписания
+ФОРМАТ:
+## 🔴 Критические нарушения НПА КР
+## 🟡 Существенные правовые замечания
+## 🔍 Структурные и логические дефекты
+## 🛡️ Стратегические риски
+## ⚠️ Финансовые и процессуальные риски
+## 💡 Что исправить до подписания (конкретные редакции)
 ## ⚖️ PRO-вердикт`;
 
-      const judgeUserPro = `ОЦЕНКА: ${score}/100 | Замечаний: ${confirmedFindings.length} (🔴 ${nH} · 🟡 ${nM} · 🟢 ${nL})\n\nОРИГИНАЛ ДОКУМЕНТА:\n${docText.slice(0, 10000)}\n\nВЕРИФИЦИРОВАННЫЕ ЗАМЕЧАНИЯ:\n\n${groupedBlock}`;
+      // Судья получает ВЕСЬ документ (не обрезанный) — ключевое требование Про режима
+      const judgeUserPro = `ЧИСТОТА (НПА-сверка): ${purityIndex}% | Блоков: ${graph.length} | НПА-ошибок: ${errCnt} | Слепых зон: ${blindCnt}
+Итоговая оценка: ${score}/100 | Агентных замечаний: ${agentFindings.length} (🔴 ${nH} · 🟡 ${nM} · 🟢 ${nL})
 
-      let proJudgeText = '';
+НПА-НАРУШЕНИЯ (${errCnt}):
+${npaErrBlock || 'Нарушений НПА не обнаружено'}
+
+СЛЕПЫЕ ЗОНЫ (${blindCnt}):
+${npaBlindBlock || 'Слепых зон нет'}
+
+ЗАМЕЧАНИЯ СПЕЦИАЛИСТОВ:
+${groupedBlock || 'Замечаний нет — документ юридически состоятелен.'}
+
+ПОЛНЫЙ ТЕКСТ ДОКУМЕНТА:
+${docText}`;
+
+      let sawContent = false;
       try {
-        const proJudgeResult = await clients.deepseekReason({
+        const result = await clients.deepseekReason({
           systemPrompt: JUDGE_SYS_PRO, userPrompt: judgeUserPro,
           model: 'deepseek-v4-pro', reasoning_effort: 'high', thinking: 'enabled',
-          onDelta: (d) => { if (d.text) { proJudgeText += d.text; sse({ text: d.text }); } },
+          onDelta: (d) => { if (d.text) { sawContent = true; sse({ text: d.text }); } },
         });
-        if (proJudgeResult && proJudgeResult.usage && (proJudgeResult.usage.inputTokens || proJudgeResult.usage.outputTokens)) {
-          emitTele(res, { model: proJudgeResult.model || 'deepseek-v4-pro', inputTokens: proJudgeResult.usage.inputTokens, outputTokens: proJudgeResult.usage.outputTokens, label: 'analyze-pro:judge' });
-        }
-      } catch (e) { console.warn('[analyze-pro] judge error:', e.message); }
-      if (!proJudgeText) {
+        if (result && result.usage) emitTele(res, { model: result.model||'deepseek-v4-pro', inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, label: 'pro:judge' });
+      } catch(e) { console.warn('[analyze-pro] judge error:', e.message); }
+
+      if (!sawContent) {
         try {
-          const fb = await clients.geminiJson({ systemPrompt: JUDGE_SYS_PRO, userPrompt: judgeUserPro, model: 'gemini-2.5-flash', maxOutputTokens: 4000, timeoutMs: 50000,
-            onTokens: (m, i, o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'analyze-pro:judge-fallback' }), });
+          const fb = await clients.geminiJson({ systemPrompt: JUDGE_SYS_PRO, userPrompt: judgeUserPro.slice(0, 60000), model: 'gemini-2.5-flash', maxOutputTokens: 4000, timeoutMs: 60000, onTokens: (m,i,o) => emitTele(res, { model: m, inputTokens: i, outputTokens: o, label: 'pro:judge-fb' }) });
           sse({ text: String(fb || '') });
-        } catch (_) {
-          sse({ text: `## ⚖️ PRO-вердикт\n\nВыявлено ${confirmedFindings.length} замечаний. Оценка: ${score}/100.` });
-        }
+        } catch(_) { sse({ text: `## ⚖️ PRO-вердикт\n\nПроверено ${graph.length} фрагментов. НПА-ошибок: ${errCnt}. Агентных замечаний: ${agentFindings.length}. Оценка: ${score}/100.` }); }
       }
 
-      sse({ deepAnalysis: { findings: confirmedFindings, score, agentBreakdown } });
+      step({ id: 'judge', status: 'success', text: 'PRO-заключение готово' });
       return finish();
     } catch (err) {
       console.error('[analyze-pro] error:', err.message);

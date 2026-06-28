@@ -415,7 +415,7 @@ async function streamCompareDocuments({oldDocumentText, newDocumentText, side = 
    Endpoint: /api/v2/analyze-deep (deep) | /api/v2/analyze-pro (pro)
    SSE events: { stage }, { text }, { deepAnalysis }, { telemetry }, [DONE]
    ═════════════════════════════════════════════════════════════ */
-async function streamDeepAnalysis({ documentText, mode, onStage, onText, onDeepAnalysis, onTelemetry, signal }) {
+async function streamDeepAnalysis({ documentText, mode, onStage, onText, onDeepAnalysis, onTelemetry, onTableRow, onStep, onPurityIndex, onJudge, signal }) {
   const endpoint = mode === 'pro' ? '/api/v2/analyze-pro' : '/api/v2/analyze-deep';
   const url = BACKEND_URL + endpoint;
   console.log('[IDE Deep] →', url, '| doc:', documentText?.length, 'ch');
@@ -455,6 +455,10 @@ async function streamDeepAnalysis({ documentText, mode, onStage, onText, onDeepA
       if (parsed && parsed.text)         { onText && onText(String(parsed.text)); }
       if (parsed && parsed.deepAnalysis) { onDeepAnalysis && onDeepAnalysis(parsed.deepAnalysis); }
       if (parsed && parsed.telemetry)    { onTelemetry && onTelemetry(parsed.telemetry); }
+      if (parsed && parsed.tableRow)     { onTableRow && onTableRow(parsed.tableRow); }
+      if (parsed && parsed.step)         { onStep && onStep(parsed.step); }
+      if (parsed && parsed.purityIndex !== undefined) { onPurityIndex && onPurityIndex(parsed.purityIndex); }
+      if (parsed && parsed.judge)        { onJudge && onJudge(parsed.judge); }
       if (parsed && parsed.error)        { throw new Error(String(parsed.error)); }
     }
   }
@@ -856,6 +860,10 @@ const AnalyzeDocsMode = () => {
           onText:        (chunk) => setSummary(p => p + chunk),
           onDeepAnalysis:(r) => setDeepResult(r),
           onTelemetry:   onTelemetryEvent,
+          onTableRow:    (r) => setTableRows(p => [...p, r]),
+          onStep:        (s) => { if (s && s.id && s.status) upsertStep(s); },
+          onPurityIndex: (idx) => setPurityIndex(idx),
+          onJudge:       (j) => setStageMsg(`🧠 Судья: ${j.name || j.model}`),
         });
       } else if (mode === 'audit') {
         await streamAnalyzeDocument({
