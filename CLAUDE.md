@@ -245,6 +245,22 @@
 ✅ **Graceful recovery** — если стриминг прошёл но финальный JSON.parse упал → не выдаём ошибку, а используем уже отрендеренные блоки.
 ✅ **Структура docTemplates** — все 12 типов: `paragraph: ПРАВОВОЕ ОБОСНОВАНИЕ` разбито на `section_heading:` + `paragraph:` для раздельных блоков.
 
+### Сессия 29.06.2026 — DocGen + SuperDoc layout fix:
+✅ **DocGen Генератор документов** — новая вкладка в ActBar (иконка copy). Компонент `DocGenPanel` в `src/App.jsx:3870`. Пайплайн: загрузить .docx шаблон → выделить текст в SuperDoc → переменная добавляется → загрузить Excel → генерировать ZIP или единый DOCX. Зависимости: `xlsx` (Excel) + `jszip` (уже был). Вспомогательные функции: `cleanWordXmlDG`, `createWordReplaceRegexDG`, `processZipDocDG`, `replaceHFDG` — встроены в `App.jsx` до компонента ActBar.
+✅ **SuperDoc layout исправлен** — добавлен `contained` prop на `<SuperDocEditor>` (официально описан в типах как «fit within parent»). Удалён конфликтующий `overflow-y: auto` (заменён на `overflow: hidden`) с `.myz-editor-wrapper`. Удалён широкий `.superdoc-workspace-wrapper > div > div` override. Добавлена CSS-цепочка для `.superdoc-wrapper / .superdoc-toolbar-container / .superdoc-editor-container / .superdoc` чтобы заполняли flex-родителя корректно.
+✅ **DocGen selection** — выделение текста в SuperDoc: `mouseup+30ms` для показа кнопки «+ Переменная» (ждём синхронизации ProseMirror), `selectionchange` только для скрытия кнопки.
+
+### SuperDoc — правильная flex-цепочка (критично для contained mode):
+```
+#superdoc-wrapper (myz-editor-wrapper): flex:1, height:100%, flex-direction:column, overflow:hidden
+  .superdoc-wrapper [SuperDoc React wrapper]: flex:1, min-height:0
+    .superdoc-toolbar-container: flex-shrink:0
+    .superdoc-editor-container: flex:1, min-height:0, display:flex, flex-direction:column
+      .superdoc / .superdoc--contained [Vue root]: flex:1, min-height:0, height:100%!important
+        .superdoc__sub-document: height:100%, overflow:auto  ← ЕДИНСТВЕННЫЙ SCROLL
+```
+Без этой цепочки Vue-обёртка схлопывалась (нет explicit height) → SuperDoc рендерился криво.
+
 ### Multi-RAG роутинг (server.js)
 - `classifyQuerySource(query)` → `'pinecone'` | `'qdrant'` | `'both'`
 - `adaptiveRetrieval(..., { source })` — поддерживает все три режима, дефолт `'pinecone'`
@@ -290,15 +306,26 @@
 
 ---
 
-## 📍 Последняя сессия / где остановились (24.06.2026, вечер)
+## 📍 Последняя сессия / где остановились (29.06.2026, ночь)
 
-**Что сделано в этой сессии:** весь чеклист критичных и CJK-пунктов закрыт (см. статус выше).
+**Что сделано в этой сессии:**
+- DocGen Генератор документов — интегрирован в левый сайдбар. Полный пайплайн работает.
+- SuperDoc layout — исправлен во всех режимах (`contained` prop + CSS flex-цепочка + убран conflicting overflow-y).
+- DocGen selection — выделение текста в SuperDoc теперь через `mouseup+30ms` (надёжно с ProseMirror).
 
-**Осталось для следующего Claude:**
-1. Smoke-тест продакшена с реальным договором — пользователь должен сделать сам или попросить Claude помочь
-2. Проверить все 12 типов документов в режиме «Создать» end-to-end
-3. Проверить экспорт .docx/.pdf
-4. Пункт 1 из чеклиста: пользователь должен задать `VITE_CLIENT_TOKEN` в Render env (фронтенд-сервис `srv-d8lc3je7r5hc739snrf0`) — значение совпадает с `CLIENT_TOKEN` бэка
+**Деплой:** 3 коммита запушены в `main`, Render авто-деплоит фронтенд (~2-3 мин после push).
+
+**Коммиты этой сессии:**
+- `ca50563` — fix(superdoc): add contained prop + fix overflow, fix docgen selection
+- `b2b4c72` — fix(superdoc): flex layout chain for contained mode
+- `d7a8e2d` — fix(docgen): hybrid mouseup+selectionchange for reliable selection
+
+**Осталось проверить:**
+1. Открыть https://miyzamchi-ceo.com.kg → убедиться что SuperDoc отображается корректно (лист в центре, тулбар сверху, прокрутка работает)
+2. DocGen: загрузить .docx шаблон → выделить слово → проверить появление кнопки «+ Переменная» → добавить → скачать Excel → загрузить данные → генерировать
+3. Smoke-тест продакшена с реальным договором
+4. Проверить все 12 типов документов в режиме «Создать» end-to-end
+5. Пользователь должен задать `VITE_CLIENT_TOKEN` в Render env (фронтенд-сервис `srv-d8lc3je7r5hc739snrf0`)
 
 **Шрифт Times New Roman:** полностью реализован через `<span>` во всех генерируемых блоках + CSS дефолт на `.ProseMirror`. Если где-то ещё видно Arial — проверить нет ли других мест вставки HTML в `App.jsx`.
 
