@@ -9705,27 +9705,30 @@ const App=()=>{
   const unsavedCount=tabs.filter(t=>t.mod).length;
 
   // Отслеживаем выделение текста в SuperDoc когда открыт DocGen
+  // mouseup + задержка 30ms надёжнее чем selectionchange: даём ProseMirror
+  // время синхронизировать внутреннее выделение с window.getSelection()
   useEffect(()=>{
     if(actPanel!=='docgen'){setDocGenSelText('');return;}
-    const onSel=()=>{
-      const sel=window.getSelection();
-      if(!sel||sel.isCollapsed){setDocGenSelText('');return;}
-      const text=sel.toString().trim();
-      if(!text||text.length>200){setDocGenSelText('');return;}
-      const wrapper=document.getElementById('superdoc-wrapper');
-      if(!wrapper){setDocGenSelText('');return;}
-      try{
-        const range=sel.getRangeAt(0);
-        if(!wrapper.contains(range.commonAncestorContainer)){setDocGenSelText('');return;}
-        const rect=range.getBoundingClientRect();
-        if(rect.width>0||rect.height>0){
+    const onUp=()=>{
+      setTimeout(()=>{
+        const sel=window.getSelection();
+        if(!sel||sel.isCollapsed){setDocGenSelText('');return;}
+        const text=sel.toString().trim();
+        if(!text||text.length<1||text.length>200){setDocGenSelText('');return;}
+        try{
+          const range=sel.getRangeAt(0);
+          const rect=range.getBoundingClientRect();
+          if(rect.width===0&&rect.height===0){setDocGenSelText('');return;}
+          // Проверяем что выделение внутри superdoc-wrapper (если есть)
+          const wrapper=document.getElementById('superdoc-wrapper');
+          if(wrapper&&!wrapper.contains(range.commonAncestorContainer)){setDocGenSelText('');return;}
           setDocGenSelCoords({x:rect.left+rect.width/2,y:rect.top});
           setDocGenSelText(text);
-        }else{setDocGenSelText('');}
-      }catch{setDocGenSelText('');}
+        }catch{setDocGenSelText('');}
+      },30);
     };
-    document.addEventListener('selectionchange',onSel);
-    return()=>{document.removeEventListener('selectionchange',onSel);setDocGenSelText('');};
+    document.addEventListener('mouseup',onUp);
+    return()=>{document.removeEventListener('mouseup',onUp);setDocGenSelText('');};
   },[actPanel]);
 
   useEffect(() => {
@@ -9760,6 +9763,7 @@ const App=()=>{
         <SuperDocEditor
           key={`${activeTab}_${currentTab?.buffer?.byteLength || 0}`}
           document={docFile}
+          contained
           documentMode="editing"
           fonts={{ assetBaseUrl: '/superdoc-fonts/' }}
           toolbar={{ groups: ['history', 'text', 'paragraph', 'insert', 'list', 'indent', 'font-controls', 'table', 'tools'], fonts: [{ label: 'Times New Roman', key: 'Times New Roman, serif' }] }}

@@ -4508,12 +4508,8 @@ body.dk .analyze-accordion-content {
     box-shadow: 0 2px 10px rgba(0,0,0,0.1) !important;
 }
 
-/* Если движок оборачивает лист в дополнительный скролл-контейнер */
-.superdoc-workspace-wrapper > div > div {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-}
+/* NOTE: убран override > div > div — слишком широкий селектор, ломал внутренний
+   layout SuperDoc. Центровка листа обеспечивается contained + margin:auto на .sd-page */
 
 
 /* Типографика (TNR 12pt по умолчанию) */
@@ -5244,7 +5240,7 @@ body.dk .myz-doc-type-btn:not(:disabled):hover {
   height: 100%;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden; /* SuperDoc manages its own scroll internally */
 }
 
 /* ── Right panel inner — NPA + Chat stacked ─────────────────────── */
