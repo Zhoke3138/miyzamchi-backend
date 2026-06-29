@@ -3889,6 +3889,8 @@ const DocGenPanel=({onClose,onToast,onAction})=>{
       setFuture([]);
       setVars(p=>[...p,text]);
       setLogs(p=>[...p.slice(-49),{id:uid(),msg:'Переменная: "'+text+'"',type:'success',t:new Date()}]);
+      // Красим выделенный текст зелёным в редакторе (только visual, на DOCX не влияет)
+      try{const ed=window.docEngine;if(ed)ed.chain().setColor('#16a34a').run();}catch{}
     };
     return()=>{delete window.__docgenAddVar;};
   },[vars,onToast]);
