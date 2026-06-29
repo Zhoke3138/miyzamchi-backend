@@ -4539,10 +4539,13 @@ body.dk .analyze-accordion-content {
 .myz-editor-wrapper .superdoc__right-sidebar {
   display: none !important;
 }
-/* После скрытия сайдбара sub-document должен занять всю ширину */
-.myz-editor-wrapper .superdoc__sub-document {
+/* superdoc__layers — главный flex-ребёнок .superdoc (display:flex).
+   Без flex:1 он сужается до ширины А4-листа → документ прижат влево.
+   flex:1 растягивает его на всю доступную ширину. */
+.myz-editor-wrapper .superdoc__layers {
   flex: 1 !important;
   min-width: 0 !important;
+  overflow: hidden;
 }
 
 
