@@ -9714,21 +9714,25 @@ const App=()=>{
       setDocGenSelText('');
       return;
     }
-    window.__pmTransaction=({editor,transaction})=>{
-      // Реагируем только на транзакции изменившие выделение
-      if(!transaction.selectionSet)return;
+    window.__pmTransaction=({editor})=>{
       const{selection}=editor.state;
       if(selection.empty){setDocGenSelText('');return;}
       const text=editor.state.doc.textBetween(selection.from,selection.to,' ').trim();
       if(!text||text.length<1||text.length>200){setDocGenSelText('');return;}
-      // Координаты: пробуем editor.coordsAtPos (официальный), затем editor.view.coordsAtPos
+      // Координаты: editor.coordsAtPos() — официальный метод SuperDoc, может вернуть null
+      let x,y;
       try{
-        const fn=editor.coordsAtPos??editor.view?.coordsAtPos?.bind(editor.view);
-        if(!fn){setDocGenSelText('');return;}
-        const c=fn(selection.from);
-        setDocGenSelCoords({x:(c.left+c.right)/2,y:c.top});
-        setDocGenSelText(text);
-      }catch{setDocGenSelText('');}
+        const c=editor.coordsAtPos(selection.$head.pos);
+        if(c){x=(c.left+c.right)/2;y=c.top;}
+      }catch{}
+      // Fallback: DOM selection (если SuperDoc вернул null или упал)
+      if(x===undefined){
+        try{
+          const range=window.getSelection()?.getRangeAt(0);
+          if(range){const r=range.getBoundingClientRect();x=r.left+r.width/2;y=r.top;}
+        }catch{}
+      }
+      if(x!==undefined&&y!==undefined){setDocGenSelCoords({x,y});setDocGenSelText(text);}
     };
     return()=>{
       delete window.__pmTransaction;
