@@ -7564,6 +7564,53 @@ body.dk .myz-lang-btn--active {
 }
 
 /* ════════════════════════════════════════════════════════════════════
+   REACT-RESIZABLE-PANELS — resize handles
+   ════════════════════════════════════════════════════════════════════ */
+.myz-rp-handle {
+  background: var(--border-color);
+  transition: background .15s;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+}
+.myz-rp-handle:hover,
+.myz-rp-handle[data-resize-handle-active] {
+  background: var(--primary);
+}
+/* horizontal handle (splits editor / right-panel) */
+.myz-rp-handle--h {
+  width: 4px;
+  cursor: col-resize;
+}
+.myz-rp-handle--h::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-50%);
+  width: 2px;
+  height: 32px;
+  border-radius: 2px;
+  background: rgba(128,128,128,.35);
+}
+/* vertical handle (splits NPA / Chat inside right panel) */
+.myz-rp-handle--v {
+  height: 4px;
+  cursor: row-resize;
+}
+.myz-rp-handle--v::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-50%);
+  height: 2px;
+  width: 32px;
+  border-radius: 2px;
+  background: rgba(128,128,128,.35);
+}
+
+/* ════════════════════════════════════════════════════════════════════
    TWEAKS PANEL (accent color picker)
    ════════════════════════════════════════════════════════════════════ */
 .myz-tweaks-panel {
