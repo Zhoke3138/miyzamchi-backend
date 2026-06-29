@@ -4534,6 +4534,17 @@ body.dk .analyze-accordion-content {
 /* NOTE: убран override > div > div — слишком широкий селектор, ломал внутренний
    layout SuperDoc. Центровка листа обеспечивается contained + margin:auto на .sd-page */
 
+/* SuperDoc имеет встроенный правый сайдбар 320px (мини-страницы, комментарии).
+   В нашем UI он не нужен и смещает документ влево — скрываем. */
+.myz-editor-wrapper .superdoc__right-sidebar {
+  display: none !important;
+}
+/* После скрытия сайдбара sub-document должен занять всю ширину */
+.myz-editor-wrapper .superdoc__sub-document {
+  flex: 1 !important;
+  min-width: 0 !important;
+}
+
 
 /* Типографика (TNR 12pt по умолчанию) */
 .superdoc-workspace-wrapper .ProseMirror,
@@ -5259,11 +5270,12 @@ body.dk .myz-doc-type-btn:not(:disabled):hover {
 /* ── Editor wrapper ─────────────────────────────────────────────── */
 .myz-editor-wrapper {
   flex: 1;
-  min-width: 0;
+  min-width: 300px; /* не даёт чату/сайдбару сжать редактор до нуля */
   height: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden; /* SuperDoc manages its own scroll internally */
+  overflow: hidden;
+  position: relative; /* stacking context — abs/sticky дети не вылезают за границу */
 }
 
 /* ── Right panel inner — NPA + Chat stacked ─────────────────────── */
