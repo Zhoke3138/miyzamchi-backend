@@ -9705,11 +9705,15 @@ const App=()=>{
   const unsavedCount=tabs.filter(t=>t.mod).length;
 
   // Отслеживаем выделение текста в SuperDoc когда открыт DocGen
-  // Гибрид: mouseup+30ms для ПОКАЗА (даём ProseMirror синхронизировать state),
-  // selectionchange только для СКРЫТИЯ (мгновенно убираем кнопку если снялось выделение)
+  // mouseup(e.button===0, +50ms) для ПОКАЗА — только ЛКМ, ждём ProseMirror.
+  // selectionchange с 200ms дебаунсом для СКРЫТИЯ — не мигает при кратком сбросе.
+  // wrapper.contains убран: SuperDoc может рендерить ProseMirror вне #superdoc-wrapper.
   useEffect(()=>{
     if(actPanel!=='docgen'){setDocGenSelText('');return;}
-    const onUp=()=>{
+    let hideTimer=null;
+    const onUp=(e)=>{
+      if(e.button!==0)return; // только левая кнопка мыши
+      clearTimeout(hideTimer);hideTimer=null;
       setTimeout(()=>{
         const sel=window.getSelection();
         if(!sel||sel.isCollapsed){setDocGenSelText('');return;}
@@ -9719,20 +9723,25 @@ const App=()=>{
           const range=sel.getRangeAt(0);
           const rect=range.getBoundingClientRect();
           if(rect.width===0&&rect.height===0){setDocGenSelText('');return;}
-          const wrapper=document.getElementById('superdoc-wrapper');
-          if(wrapper&&!wrapper.contains(range.commonAncestorContainer)){setDocGenSelText('');return;}
           setDocGenSelCoords({x:rect.left+rect.width/2,y:rect.top});
           setDocGenSelText(text);
         }catch{setDocGenSelText('');}
-      },30);
+      },50);
     };
     const onSel=()=>{
       const sel=window.getSelection();
-      if(!sel||sel.isCollapsed)setDocGenSelText('');
+      if(!sel||sel.isCollapsed){
+        // 200ms дебаунс: ProseMirror иногда кратко сбрасывает selection при обработке click
+        clearTimeout(hideTimer);
+        hideTimer=setTimeout(()=>setDocGenSelText(''),200);
+      }else{
+        clearTimeout(hideTimer);hideTimer=null;
+      }
     };
     document.addEventListener('mouseup',onUp);
     document.addEventListener('selectionchange',onSel);
     return()=>{
+      clearTimeout(hideTimer);
       document.removeEventListener('mouseup',onUp);
       document.removeEventListener('selectionchange',onSel);
       setDocGenSelText('');
