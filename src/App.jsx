@@ -1,7 +1,7 @@
 import { SuperDocEditor } from '@superdoc-dev/react';
 import '@superdoc-dev/react/style.css';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { PromptBox } from './components/ui/prompt-box.jsx';
 import { OnlyOfficeEditor } from './components/onlyoffice-workspace/OnlyOfficeEditor.jsx';
 // OO_MODE: true только локально когда задан VITE_ONLYOFFICE_URL.
@@ -10025,7 +10025,7 @@ const App=()=>{
             <PanelResizeHandle className="myz-rp-handle myz-rp-handle--h"/>
 
             {/* Right section: NPA + Chat */}
-            <Panel panelRef={rightPanelRef} defaultSize={32} minSize={15} collapsible
+            <Panel ref={rightPanelRef} defaultSize={32} minSize={15} collapsible
               onCollapse={()=>setRightOpen(false)} onExpand={()=>setRightOpen(true)}>
               <div id="rp" className="myz-right-panel-inner" style={{height:'100%'}}>
                 {/* Tab to restore NPA */}
@@ -10035,14 +10035,14 @@ const App=()=>{
                   </button>
                 )}
                 <PanelGroup direction="vertical" style={{flex:1,minHeight:0}}>
-                  <Panel panelRef={npaPanelRef} defaultSize={40} minSize={15} collapsible
+                  <Panel ref={npaPanelRef} defaultSize={40} minSize={15} collapsible
                     onCollapse={()=>setNpaCollapsed(true)} onExpand={()=>setNpaCollapsed(false)}>
                     <NPAView art={npa} npaTabs={npaTabs} activeNpaTabId={activeNpaTabId}
                       onSwitchNpaTab={setActiveNpaTabId} onCloseNpaTab={closeNpaTab}
                       onClose={()=>setRightOpen(false)} onCollapse={collapseNpa} onNav={openNpa}/>
                   </Panel>
                   <PanelResizeHandle className="myz-rp-handle myz-rp-handle--v"/>
-                  <Panel panelRef={chatPanelRef} defaultSize={60} minSize={15} collapsible
+                  <Panel ref={chatPanelRef} defaultSize={60} minSize={15} collapsible
                     onCollapse={()=>setChatCollapsed(true)} onExpand={()=>setChatCollapsed(false)}>
                     <div className="myz-chat-pane" style={{height:'100%'}}>
                       <AIChat onToast={addToast} onCollapse={collapseChat}
