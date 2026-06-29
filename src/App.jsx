@@ -9704,58 +9704,34 @@ const App=()=>{
   const closeTour=()=>{setTourStep(null);localStorage.setItem('myz-tour','1')};
   const unsavedCount=tabs.filter(t=>t.mod).length;
 
-  // Отслеживаем выделение текста в SuperDoc когда открыт DocGen.
-  // Используем ProseMirror API напрямую через window.docEngine (SuperDoc editor):
-  //   editor.view.state.selection — реальное выделение ProseMirror (не browser DOM)
-  //   editor.view.coordsAtPos()  — viewport-координаты позиции (SuperDoc сам так делает)
-  // Это надёжнее window.getSelection() который рассинхронизируется с ProseMirror.
+  // DocGen: определяем выделение текста через официальный SuperDoc API.
+  // onTransaction (prop на SuperDocEditor) → window.__pmTransaction → этот useEffect.
+  // transaction.selectionSet === true означает что выделение изменилось.
+  // editor.coordsAtPos(pos) → пиксельные координаты (официальный SuperDoc API).
   useEffect(()=>{
-    if(actPanel!=='docgen'){setDocGenSelText('');return;}
-    let hideTimer=null;
-    const readPmSelection=()=>{
-      const editor=window.docEngine;
-      if(!editor?.view)return null;
-      const{view}=editor;
-      const{selection}=view.state;
-      if(selection.empty)return null;
+    if(actPanel!=='docgen'){
+      delete window.__pmTransaction;
+      setDocGenSelText('');
+      return;
+    }
+    window.__pmTransaction=({editor,transaction})=>{
+      // Реагируем только на транзакции изменившие выделение
+      if(!transaction.selectionSet)return;
+      const{selection}=editor.state;
+      if(selection.empty){setDocGenSelText('');return;}
       const text=editor.state.doc.textBetween(selection.from,selection.to,' ').trim();
-      if(!text||text.length<1||text.length>200)return null;
+      if(!text||text.length<1||text.length>200){setDocGenSelText('');return;}
+      // Координаты: пробуем editor.coordsAtPos (официальный), затем editor.view.coordsAtPos
       try{
-        const fromC=view.coordsAtPos(selection.from);
-        const toC=view.coordsAtPos(selection.to);
-        return{text,x:(fromC.left+toC.right)/2,y:fromC.top};
-      }catch{return null;}
+        const fn=editor.coordsAtPos??editor.view?.coordsAtPos?.bind(editor.view);
+        if(!fn){setDocGenSelText('');return;}
+        const c=fn(selection.from);
+        setDocGenSelCoords({x:(c.left+c.right)/2,y:c.top});
+        setDocGenSelText(text);
+      }catch{setDocGenSelText('');}
     };
-    const onUp=(e)=>{
-      if(e.button!==0)return;
-      clearTimeout(hideTimer);hideTimer=null;
-      // 50ms — ждём ProseMirror finalizeSelection после mouseup
-      setTimeout(()=>{
-        const r=readPmSelection();
-        if(r){setDocGenSelCoords({x:r.x,y:r.y});setDocGenSelText(r.text);}
-        else setDocGenSelText('');
-      },50);
-    };
-    const onSel=()=>{
-      // selectionchange = браузерное событие; используем для скрытия с дебаунсом 200ms
-      // чтобы пережить кратковременные сбросы selection ProseMirror-ом
-      const editor=window.docEngine;
-      const collapsed=editor?.view
-        ?editor.view.state.selection.empty
-        :(!window.getSelection()||window.getSelection().isCollapsed);
-      if(collapsed){
-        clearTimeout(hideTimer);
-        hideTimer=setTimeout(()=>setDocGenSelText(''),200);
-      }else{
-        clearTimeout(hideTimer);hideTimer=null;
-      }
-    };
-    document.addEventListener('mouseup',onUp);
-    document.addEventListener('selectionchange',onSel);
     return()=>{
-      clearTimeout(hideTimer);
-      document.removeEventListener('mouseup',onUp);
-      document.removeEventListener('selectionchange',onSel);
+      delete window.__pmTransaction;
       setDocGenSelText('');
     };
   },[actPanel]);
@@ -9799,6 +9775,7 @@ const App=()=>{
           onReady={(e) => { window.superdoc = e.superdoc; }}
           onEditorCreate={(e) => { window.docEngine = e.editor; }}
           onEditorUpdate={() => { if (window.__shadowTrigger) window.__shadowTrigger(); }}
+          onTransaction={(e) => { if (window.__pmTransaction) window.__pmTransaction(e); }}
         />
       </>
     );
