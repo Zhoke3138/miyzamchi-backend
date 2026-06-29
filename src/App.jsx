@@ -3895,7 +3895,26 @@ const DocGenPanel=({onClose,onToast,onAction})=>{
     return()=>{delete window.__docgenAddVar;};
   },[vars,onToast]);
 
-  const removeVar=(w)=>{setPast(p=>[...p,vars]);setFuture([]);setVars(p=>p.filter(v=>v!==w));};
+  const removeVar=(w)=>{
+    setPast(p=>[...p,vars]);setFuture([]);setVars(p=>p.filter(v=>v!==w));
+    // Снимаем зелёный цвет с текста в редакторе
+    try{
+      const ed=window.docEngine;
+      if(!ed)return;
+      const{state,view}=ed;
+      const tr=state.tr;let changed=false;
+      state.doc.descendants((node,pos)=>{
+        if(!node.isText||!node.text)return;
+        let s=0;
+        while(true){
+          const idx=node.text.indexOf(w,s);if(idx===-1)break;
+          tr.removeMark(pos+idx,pos+idx+w.length,state.schema.marks.textStyle);
+          changed=true;s=idx+1;
+        }
+      });
+      if(changed)view.dispatch(tr);
+    }catch{}
+  };
   const undo=()=>{if(!past.length)return;setFuture(f=>[vars,...f]);setVars(past[past.length-1]);setPast(p=>p.slice(0,-1));};
   const redo=()=>{if(!future.length)return;setPast(p=>[...p,vars]);setVars(future[0]);setFuture(f=>f.slice(1));};
   const addLog=(msg,type='info')=>setLogs(p=>[...p.slice(-49),{id:uid(),msg,type,t:new Date()}]);
