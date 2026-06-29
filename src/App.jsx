@@ -1,7 +1,7 @@
 import { SuperDocEditor } from '@superdoc-dev/react';
 import '@superdoc-dev/react/style.css';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+// react-resizable-panels removed (Rolldown TDZ crash in prod)
 import { PromptBox } from './components/ui/prompt-box.jsx';
 import { OnlyOfficeEditor } from './components/onlyoffice-workspace/OnlyOfficeEditor.jsx';
 // OO_MODE: true только локально когда задан VITE_ONLYOFFICE_URL.
@@ -9378,7 +9378,7 @@ const App=()=>{
 
   const[dark,setDark]=useState(()=>localStorage.getItem('myz-dk')==='1');
   const[tt,setTt]=useState(false);
-  const[leftW,setLeftW]=useState(238);
+  const[leftW,setLeftW]=useState(238);const[rightW,setRightW]=useState(340);const[rightSplit,setRightSplit]=useState(55);
   const[npaCollapsed,setNpaCollapsed]=useState(true);const[chatCollapsed,setChatCollapsed]=useState(false);
   const[leftOpen,setLeftOpen]=useState(false);const[rightOpen,setRightOpen]=useState(true);const[splitActive,setSplitActive]=useState(false);
   const[actPanel,setActPanel]=useState('law');const[hilite,setHilite]=useState(null);
@@ -9387,12 +9387,6 @@ const App=()=>{
   const collapseChat=useCallback(()=>{setChatCollapsed(true);setNpaCollapsed(false)},[]);
   // Reset collapse state when right panel itself closes/opens.
   useEffect(()=>{if(!rightOpen){setNpaCollapsed(false);setChatCollapsed(false)}},[rightOpen]);
-  // Sync rightOpen → right panel ref (desktop only)
-  useEffect(()=>{if(isMobile||!rightPanelRef.current)return;rightOpen?rightPanelRef.current.expand():rightPanelRef.current.collapse();},[rightOpen,isMobile]);
-  // Sync npaCollapsed → NPA panel ref (desktop only)
-  useEffect(()=>{if(isMobile||!npaPanelRef.current)return;npaCollapsed?npaPanelRef.current.collapse():npaPanelRef.current.expand();},[npaCollapsed,isMobile]);
-  // Sync chatCollapsed → Chat panel ref (desktop only)
-  useEffect(()=>{if(isMobile||!chatPanelRef.current)return;chatCollapsed?chatPanelRef.current.collapse():chatPanelRef.current.expand();},[chatCollapsed,isMobile]);
   // Mobile detection — viewport < 900px
   const[isMobile,setIsMobile]=useState(()=>typeof window!=='undefined'&&window.innerWidth<900);
   useEffect(()=>{
@@ -9506,8 +9500,6 @@ const App=()=>{
   const[tabFileIds,setTabFileIds]=useState({});
   const _ooUploadedRef = useRef({});
   const[tourStep,setTourStep]=useState(()=>localStorage.getItem('myz-tour')==='1'?null:0);const drag=useRef(null);
-  // react-resizable-panels refs — для программного collapse/expand
-  const rightPanelRef=useRef(null);const npaPanelRef=useRef(null);const chatPanelRef=useRef(null);
   const[fsHandle,setFsHandle]=useState(null);const[fsFiles,setFsFiles]=useState([]);
   
 
@@ -9695,22 +9687,23 @@ const App=()=>{
   useEffect(()=>{const h=()=>setCtxMenu(null);window.addEventListener('scroll',h,true);return()=>window.removeEventListener('scroll',h,true)},[]);
   useEffect(()=>{const h=(e)=>{if(({}).visible&&!e.target.closest('#inline-prompt-menu')){/* setInlinePrompt */}};document.addEventListener('mousedown',h);return()=>document.removeEventListener('mousedown',h)},[({}).visible]);
   useEffect(()=>{const handler=e=>{if(e.data&&e.data.type==='__activate_edit_mode')setShowTweaks(true);if(e.data&&e.data.type==='__deactivate_edit_mode')setShowTweaks(false)};window.addEventListener('message',handler);return()=>window.removeEventListener('message',handler)},[]);
-  const changeTweak=(k,v)=>{setTweaks(p=>({...p,[k]:v}));window.parent.postMessage({type:'__edit_mode_set_keys',edits:{[k]:v}},'*')};
-  const startDrag=type=>e=>{e.preventDefault();drag.current={type,sx:e.clientX,lw:leftW};document.body.style.userSelect='none';document.body.style.cursor='col-resize'};
+  const changeTweak=(k,v)=>{if(k==='rightW')setRightW(v);setTweaks(p=>({...p,[k]:v}));window.parent.postMessage({type:'__edit_mode_set_keys',edits:{[k]:v}},'*')};
+  const startDrag=type=>e=>{e.preventDefault();drag.current={type,sx:e.clientX,lw:leftW,rw:rightW,rs:rightSplit,sy:e.clientY};document.body.style.userSelect='none';document.body.style.cursor=type==='rv'?'row-resize':'col-resize'};
   useEffect(()=>{
-    // rAF-throttling только для левой панели (правая теперь через react-resizable-panels)
     let pending=null;let rafId=0;
     const flush=()=>{
       rafId=0;
       if(!pending||!drag.current){pending=null;return;}
-      const{type,sx,lw,x}=pending;
+      const{type,sx,lw,rw,rs,sy,x,y}=pending;
       pending=null;
       if(type==='l')setLeftW(Math.max(160,Math.min(420,lw+x-sx)));
+      if(type==='r')setRightW(Math.max(220,Math.min(640,rw-(x-sx))));
+      if(type==='rv'){const delta=((y-sy)/window.innerHeight)*100;setRightSplit(Math.max(20,Math.min(80,rs+delta)));}
     };
     const move=e=>{
       if(!drag.current)return;
-      const{type,sx,lw}=drag.current;
-      pending={type,sx,lw,x:e.clientX};
+      const{type,sx,lw,rw,rs,sy}=drag.current;
+      pending={type,sx,lw,rw,rs,sy,x:e.clientX,y:e.clientY};
       if(!rafId)rafId=requestAnimationFrame(flush);
     };
     const up=()=>{
@@ -10010,95 +10003,63 @@ const App=()=>{
           {leftOpen && <LeftPanel mode={sideMode} actPanel={actPanel} onClose={()=>{setLeftOpen(false);setActPanel(null)}} onCtx={(x,y,items)=>setCtxMenu({x,y,items})} onToast={addToast} onOpenFile={name=>handleAction('openFile',name)} fsHandle={fsHandle} fsFiles={fsFiles} onOpenFolder={openFolder} onPickFile={()=>handleAction('openFromDisk')} onAction={handleAction} tabs={tabs} activeTab={activeTab} onSwitchTab={switchTab} onCloseTab={closeTab} recentFiles={recentFiles}/>}
         </div>
         {leftOpen && !isMobile && <Handle onMD={startDrag('l')}/>}
-
-        {/* ── DESKTOP: react-resizable-panels ───────────────────────── */}
-        {!isMobile && (
-          <PanelGroup direction="horizontal" style={{flex:1,minWidth:0}}>
-            {/* Editor panel */}
-            <Panel defaultSize={68} minSize={25}>
-              <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
-                {_superDocSlot}
-                {OO_MODE && <OOEditorSlot activeTab={activeTab} tabFileIds={tabFileIds} tabs={tabs} onError={(msg)=>addToast('warning',msg)}/>}
-              </div>
-            </Panel>
-
-            <PanelResizeHandle className="myz-rp-handle myz-rp-handle--h"/>
-
-            {/* Right section: NPA + Chat */}
-            <Panel ref={rightPanelRef} defaultSize={32} minSize={15} collapsible
-              onCollapse={()=>setRightOpen(false)} onExpand={()=>setRightOpen(true)}>
-              <div id="rp" className="myz-right-panel-inner" style={{height:'100%'}}>
-                {/* Tab to restore NPA */}
-                {npaCollapsed && (
-                  <button type="button" className="myz-pane-tab" onClick={()=>setNpaCollapsed(false)} title="Развернуть НПА">
-                    <Ico k="book" sz={12} col="var(--primary)"/><span>{tr('pane_npa')}</span><span className="myz-pane-tab-chev">▾</span>
-                  </button>
-                )}
-                <PanelGroup direction="vertical" style={{flex:1,minHeight:0}}>
-                  <Panel ref={npaPanelRef} defaultSize={40} minSize={15} collapsible
-                    onCollapse={()=>setNpaCollapsed(true)} onExpand={()=>setNpaCollapsed(false)}>
-                    <NPAView art={npa} npaTabs={npaTabs} activeNpaTabId={activeNpaTabId}
-                      onSwitchNpaTab={setActiveNpaTabId} onCloseNpaTab={closeNpaTab}
-                      onClose={()=>setRightOpen(false)} onCollapse={collapseNpa} onNav={openNpa}/>
-                  </Panel>
-                  <PanelResizeHandle className="myz-rp-handle myz-rp-handle--v"/>
-                  <Panel ref={chatPanelRef} defaultSize={60} minSize={15} collapsible
-                    onCollapse={()=>setChatCollapsed(true)} onExpand={()=>setChatCollapsed(false)}>
-                    <div className="myz-chat-pane" style={{height:'100%'}}>
-                      <AIChat onToast={addToast} onCollapse={collapseChat}
-                        onOpenArticle={(art)=>{setNpa(art);setHilite(art);setRightOpen(true);setNpaCollapsed(false);setTimeout(()=>setHilite(null),2200);addToast('book','Ст. '+art);}}/>
-                    </div>
-                  </Panel>
-                </PanelGroup>
-                {/* Tab to restore Chat */}
-                {chatCollapsed && (
-                  <button type="button" className="myz-pane-tab" onClick={()=>setChatCollapsed(false)} title="Развернуть ИИ-чат">
-                    <Ico k="sparkles" sz={12} col="var(--accent)"/><span>{tr('pane_chat')}</span><span className="myz-pane-tab-chev">▴</span>
-                  </button>
-                )}
-              </div>
-            </Panel>
-          </PanelGroup>
-        )}
-
-        {/* ── MOBILE: старая верстка (фиксированные оверлеи) ────────── */}
-        {isMobile && (
-          <>
-            <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
-              {_superDocSlot}
-              {OO_MODE && <OOEditorSlot activeTab={activeTab} tabFileIds={tabFileIds} tabs={tabs} onError={(msg)=>addToast('warning',msg)}/>}
-            </div>
-            <div className={`myz-panel-right myz-panel-right--mobile${rightOpen?' myz-panel-right--open':''}`}>
-              {rightOpen && (
-                <div id="rp" className="myz-right-panel-inner">
-                  {npaCollapsed && (
-                    <button type="button" className="myz-pane-tab" onClick={()=>setNpaCollapsed(false)} title="Развернуть НПА">
-                      <Ico k="book" sz={12} col="var(--primary)"/><span>{tr('pane_npa')}</span><span className="myz-pane-tab-chev">▾</span>
-                    </button>
-                  )}
-                  {!npaCollapsed && (
-                    <div style={{flex:'1 1 50%',overflow:'hidden',minHeight:0}}>
-                      <NPAView art={npa} npaTabs={npaTabs} activeNpaTabId={activeNpaTabId}
-                        onSwitchNpaTab={setActiveNpaTabId} onCloseNpaTab={closeNpaTab}
-                        onClose={()=>setRightOpen(false)} onCollapse={collapseNpa} onNav={openNpa}/>
-                    </div>
-                  )}
-                  {!chatCollapsed && (
-                    <div className="myz-chat-pane">
-                      <AIChat onToast={addToast} onCollapse={collapseChat}
-                        onOpenArticle={(art)=>{setNpa(art);setHilite(art);setRightOpen(true);setNpaCollapsed(false);setTimeout(()=>setHilite(null),2200);addToast('book','Ст. '+art);}}/>
-                    </div>
-                  )}
-                  {chatCollapsed && (
-                    <button type="button" className="myz-pane-tab" onClick={()=>setChatCollapsed(false)} title="Развернуть ИИ-чат">
-                      <Ico k="sparkles" sz={12} col="var(--accent)"/><span>{tr('pane_chat')}</span><span className="myz-pane-tab-chev">▴</span>
-                    </button>
-                  )}
+        {/* EDITOR */}
+        <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
+          {_superDocSlot}
+          {OO_MODE && <OOEditorSlot activeTab={activeTab} tabFileIds={tabFileIds} tabs={tabs} onError={(msg)=>addToast('warning',msg)}/>}
+        </div>
+        {rightOpen && !isMobile && <Handle onMD={startDrag('r')}/>}
+        {/* RIGHT PANEL */}
+        <div className={`myz-panel-right${isMobile?' myz-panel-right--mobile':''}${rightOpen?' myz-panel-right--open':''}`}
+          style={!isMobile ? {width:rightOpen?rightW:0} : undefined}>
+          {rightOpen && (
+            <div id="rp" className="myz-right-panel-inner">
+              {npaCollapsed && (
+                <button type="button" className="myz-pane-tab" onClick={()=>setNpaCollapsed(false)}
+                  title="Развернуть НПА" aria-label="Развернуть НПА">
+                  <Ico k="book" sz={12} col="var(--primary)"/>
+                  <span>{tr('pane_npa')}</span>
+                  <span className="myz-pane-tab-chev">▾</span>
+                </button>
+              )}
+              {!npaCollapsed && (
+                <div style={{
+                  height: chatCollapsed ? '100%' : (rightSplit+'%'),
+                  flex: chatCollapsed ? '1 1 0' : '0 0 auto',
+                  overflow:'hidden',
+                  minHeight:0
+                }}>
+                  <NPAView
+                    art={npa}
+                    npaTabs={npaTabs}
+                    activeNpaTabId={activeNpaTabId}
+                    onSwitchNpaTab={setActiveNpaTabId}
+                    onCloseNpaTab={closeNpaTab}
+                    onClose={()=>setRightOpen(false)}
+                    onCollapse={collapseNpa}
+                    onNav={openNpa}
+                  />
                 </div>
               )}
+              {!isMobile && !npaCollapsed && !chatCollapsed && <Handle vert onMD={startDrag('rv')}/>}
+              {!chatCollapsed && (
+                <div className="myz-chat-pane">
+                  <AIChat onToast={addToast} onCollapse={collapseChat} onOpenArticle={(art)=>{setNpa(art);setHilite(art);setRightOpen(true);setNpaCollapsed(false);setTimeout(()=>setHilite(null),2200);addToast('book','Ст. '+art);}}/>
+                </div>
+              )}
+              {chatCollapsed && (
+                <button type="button" className="myz-pane-tab" onClick={()=>setChatCollapsed(false)}
+                  title="Развернуть ИИ-чат" aria-label="Развернуть ИИ-чат">
+                  <Ico k="sparkles" sz={12} col="var(--accent)"/>
+                  <span>{tr('pane_chat')}</span>
+                  <span className="myz-pane-tab-chev">▴</span>
+                </button>
+              )}
             </div>
-            {(leftOpen||rightOpen) && <div onClick={()=>{setLeftOpen(false);setRightOpen(false);setActPanel(null)}} className="myz-mobile-backdrop"/>}
-          </>
+          )}
+        </div>
+        {isMobile && (leftOpen||rightOpen) && (
+          <div onClick={()=>{setLeftOpen(false);setRightOpen(false);setActPanel(null)}} className="myz-mobile-backdrop"/>
         )}
       </div>
       {/* DocGen: плавающая кнопка добавления переменной при выделении текста в SuperDoc */}
