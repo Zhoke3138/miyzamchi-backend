@@ -9399,6 +9399,7 @@ const App=()=>{
   const[tt,setTt]=useState(false);
   const[leftW,setLeftW]=useState(238);const[rightW,setRightW]=useState(340);const[rightSplit,setRightSplit]=useState(55);
   const[npaCollapsed,setNpaCollapsed]=useState(true);const[chatCollapsed,setChatCollapsed]=useState(false);
+  // Начальный layout: чат на весь экран, редактор скрыт до открытия документа
   const[leftOpen,setLeftOpen]=useState(false);const[rightOpen,setRightOpen]=useState(true);const[splitActive,setSplitActive]=useState(false);
   const[actPanel,setActPanel]=useState('law');const[hilite,setHilite]=useState(null);
   // Both can't be collapsed at once. When one collapses, the other auto-expands.
@@ -10025,31 +10026,38 @@ const App=()=>{
           {leftOpen && <LeftPanel mode={sideMode} actPanel={actPanel} onClose={()=>{setLeftOpen(false);setActPanel(null)}} onCtx={(x,y,items)=>setCtxMenu({x,y,items})} onToast={addToast} onOpenFile={name=>handleAction('openFile',name)} fsHandle={fsHandle} fsFiles={fsFiles} onOpenFolder={openFolder} onPickFile={()=>handleAction('openFromDisk')} onAction={handleAction} tabs={tabs} activeTab={activeTab} onSwitchTab={switchTab} onCloseTab={closeTab} recentFiles={recentFiles}/>}
         </div>
         {leftOpen && !isMobile && <Handle onMD={startDrag('l')}/>}
-        {/* EDITOR */}
-        <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
-          {/* Тонкая плашка над редактором: имя файла + управление боковой панелью */}
-          <div className="myz-editor-titlebar">
-            <div className="myz-editor-titlebar-left">
-              {tabs.find(t=>t.id===activeTab) ? (
-                <><Ico k="file" sz={11} col="var(--muted)"/>
-                <span className="myz-editor-titlebar-name">{tabs.find(t=>t.id===activeTab)?.name}</span>
-                {tabs.find(t=>t.id===activeTab)?.mod && <span className="myz-editor-titlebar-dot">●</span>}</>
-              ) : <span className="myz-editor-titlebar-name" style={{color:'var(--muted)'}}>Редактор</span>}
+        {/* EDITOR — показывается только когда открыт хотя бы один документ */}
+        {tabs.length > 0 && (
+          <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
+            {/* Тонкая плашка над редактором: имя файла + управление боковой панелью */}
+            <div className="myz-editor-titlebar">
+              <div className="myz-editor-titlebar-left">
+                <Ico k="file" sz={11} col="var(--muted)"/>
+                <span className="myz-editor-titlebar-name">{tabs.find(t=>t.id===activeTab)?.name||'Документ'}</span>
+                {tabs.find(t=>t.id===activeTab)?.mod && <span className="myz-editor-titlebar-dot">●</span>}
+              </div>
+              <div className="myz-editor-titlebar-right">
+                <button type="button" onClick={()=>setRightOpen(p=>!p)} title={rightOpen?'Скрыть боковую панель':'Показать боковую панель'} className="myz-panel-icon-btn">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+                </button>
+                {activeTab && <button type="button" onClick={()=>closeTab(activeTab)} title="Закрыть вкладку" className="myz-panel-icon-btn"><Ico k="x" sz={11}/></button>}
+              </div>
             </div>
-            <div className="myz-editor-titlebar-right">
-              <button type="button" onClick={()=>setRightOpen(p=>!p)} title={rightOpen?'Скрыть боковую панель':'Показать боковую панель'} className="myz-panel-icon-btn">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
-              </button>
-              {activeTab && <button type="button" onClick={()=>closeTab(activeTab)} title="Закрыть вкладку" className="myz-panel-icon-btn"><Ico k="x" sz={11}/></button>}
-            </div>
+            {_superDocSlot}
+            {OO_MODE && <OOEditorSlot activeTab={activeTab} tabFileIds={tabFileIds} tabs={tabs} onError={(msg)=>addToast('warning',msg)}/>}
           </div>
-          {_superDocSlot}
-          {OO_MODE && <OOEditorSlot activeTab={activeTab} tabFileIds={tabFileIds} tabs={tabs} onError={(msg)=>addToast('warning',msg)}/>}
-        </div>
-        {rightOpen && !isMobile && <Handle onMD={startDrag('r')}/>}
-        {/* RIGHT PANEL */}
+        )}
+        {/* H-handle между редактором и правой панелью — только когда редактор виден */}
+        {tabs.length > 0 && rightOpen && !isMobile && <Handle onMD={startDrag('r')}/>}
+        {/* RIGHT PANEL
+            Нет документов → flex:1 (занимает весь экран, чат на всю ширину)
+            Есть документы → фиксированная ширина rightW справа от редактора */}
         <div className={`myz-panel-right${isMobile?' myz-panel-right--mobile':''}${rightOpen?' myz-panel-right--open':''}`}
-          style={!isMobile ? {width:rightOpen?rightW:0} : undefined}>
+          style={!isMobile ? (
+            tabs.length === 0
+              ? {flex:'1 1 0',borderLeft:'none'}       // чат на весь экран
+              : {width:rightOpen?rightW:0}              // рядом с редактором
+          ) : undefined}>
           {rightOpen && (
             <div id="rp" className="myz-right-panel-inner">
               {/* NPA pane — видна когда не свёрнута (даже без вкладок — показывает пустое состояние) */}
