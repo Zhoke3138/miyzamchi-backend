@@ -9704,34 +9704,46 @@ const App=()=>{
   const closeTour=()=>{setTourStep(null);localStorage.setItem('myz-tour','1')};
   const unsavedCount=tabs.filter(t=>t.mod).length;
 
-  // Отслеживаем выделение текста в SuperDoc когда открыт DocGen
-  // mouseup(e.button===0, +50ms) для ПОКАЗА — только ЛКМ, ждём ProseMirror.
-  // selectionchange с 200ms дебаунсом для СКРЫТИЯ — не мигает при кратком сбросе.
-  // wrapper.contains убран: SuperDoc может рендерить ProseMirror вне #superdoc-wrapper.
+  // Отслеживаем выделение текста в SuperDoc когда открыт DocGen.
+  // Используем ProseMirror API напрямую через window.docEngine (SuperDoc editor):
+  //   editor.view.state.selection — реальное выделение ProseMirror (не browser DOM)
+  //   editor.view.coordsAtPos()  — viewport-координаты позиции (SuperDoc сам так делает)
+  // Это надёжнее window.getSelection() который рассинхронизируется с ProseMirror.
   useEffect(()=>{
     if(actPanel!=='docgen'){setDocGenSelText('');return;}
     let hideTimer=null;
+    const readPmSelection=()=>{
+      const editor=window.docEngine;
+      if(!editor?.view)return null;
+      const{view}=editor;
+      const{selection}=view.state;
+      if(selection.empty)return null;
+      const text=editor.state.doc.textBetween(selection.from,selection.to,' ').trim();
+      if(!text||text.length<1||text.length>200)return null;
+      try{
+        const fromC=view.coordsAtPos(selection.from);
+        const toC=view.coordsAtPos(selection.to);
+        return{text,x:(fromC.left+toC.right)/2,y:fromC.top};
+      }catch{return null;}
+    };
     const onUp=(e)=>{
-      if(e.button!==0)return; // только левая кнопка мыши
+      if(e.button!==0)return;
       clearTimeout(hideTimer);hideTimer=null;
+      // 50ms — ждём ProseMirror finalizeSelection после mouseup
       setTimeout(()=>{
-        const sel=window.getSelection();
-        if(!sel||sel.isCollapsed){setDocGenSelText('');return;}
-        const text=sel.toString().trim();
-        if(!text||text.length<1||text.length>200){setDocGenSelText('');return;}
-        try{
-          const range=sel.getRangeAt(0);
-          const rect=range.getBoundingClientRect();
-          if(rect.width===0&&rect.height===0){setDocGenSelText('');return;}
-          setDocGenSelCoords({x:rect.left+rect.width/2,y:rect.top});
-          setDocGenSelText(text);
-        }catch{setDocGenSelText('');}
+        const r=readPmSelection();
+        if(r){setDocGenSelCoords({x:r.x,y:r.y});setDocGenSelText(r.text);}
+        else setDocGenSelText('');
       },50);
     };
     const onSel=()=>{
-      const sel=window.getSelection();
-      if(!sel||sel.isCollapsed){
-        // 200ms дебаунс: ProseMirror иногда кратко сбрасывает selection при обработке click
+      // selectionchange = браузерное событие; используем для скрытия с дебаунсом 200ms
+      // чтобы пережить кратковременные сбросы selection ProseMirror-ом
+      const editor=window.docEngine;
+      const collapsed=editor?.view
+        ?editor.view.state.selection.empty
+        :(!window.getSelection()||window.getSelection().isCollapsed);
+      if(collapsed){
         clearTimeout(hideTimer);
         hideTimer=setTimeout(()=>setDocGenSelText(''),200);
       }else{
