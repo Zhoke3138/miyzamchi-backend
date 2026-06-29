@@ -6301,6 +6301,13 @@ body.dk .myz-lang-btn--active {
 .myz-history-item:hover .myz-history-item-del { opacity: 1; }
 .myz-history-item-del:hover { background: var(--hover); color: var(--text); }
 
+/* ── Hero PromptBox — compact textarea height ─────────────────────── */
+.myz-hero-input-wrap .myz-pb-textarea {
+  padding: 10px 14px;
+  min-height: 40px;
+  font-size: var(--text-base);
+}
+
 /* ════════════════════════════════════════════════════════════════════
    COLOR SWATCH — accent picker dots in tweaks panel
    ════════════════════════════════════════════════════════════════════ */
@@ -6750,6 +6757,56 @@ body.dk .myz-lang-btn--active {
    CHAT SCROLL AREA — messages viewport
    ════════════════════════════════════════════════════════════════════ */
 .myz-chat-scroll { flex: 1; overflow-y: auto; padding: var(--s-3h); }
+
+/* ════════════════════════════════════════════════════════════════════
+   HERO MODE — first-open centered layout (like Claude.ai / ChatGPT)
+   ════════════════════════════════════════════════════════════════════ */
+.myz-chat-scroll--hero {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.myz-hero-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 600px;
+  padding: 0 24px;
+  gap: 20px;
+  animation: fadeIn .35s ease;
+}
+.myz-hero-center .myz-welcome {
+  padding: 0;
+  width: 100%;
+}
+.myz-hero-input-wrap {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Narrow pill + compact tabs in hero mode */
+.myz-chat-panel--hero .myz-chat-header-left {
+  flex: 0 0 auto;
+}
+.myz-chat-panel--hero .myz-mode-pill {
+  flex: unset;
+  width: auto;
+}
+.myz-chat-panel--hero .myz-chat-mode-tab {
+  padding: 5px 12px;
+  flex: unset;
+}
+.myz-chat-panel--hero .myz-chat-mode-tab-desc {
+  display: none;
+}
+.myz-chat-panel--hero .myz-chat-mode-tab-top {
+  gap: 4px;
+}
 
 /* ════════════════════════════════════════════════════════════════════
    WELCOME STATE — empty chat greeting + quick-action cards

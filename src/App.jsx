@@ -8641,12 +8641,13 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand})=>{
   while(ii<messages.length){
     if(messages[ii].role==='user'){exchanges.push({user:messages[ii],ai:messages[ii+1]||null});ii+=2}else ii++;
   }
+  const heroMode = chatMode !== 'documents' && exchanges.length === 0 && !thinking && agentSteps.length === 0;
   useEffect(()=>{
     if(stick) scrollToBottom(false);
   },[stick,scrollToBottom,activeChat.chat?.messages,thinking,streamStatus]);
 
   return(
-    <div className="myz-chat-panel">
+    <div className={`myz-chat-panel${heroMode?' myz-chat-panel--hero':''}`}>
       <div className="myz-chat-header">
         <div className="myz-chat-header-left">
           {/* Переключатель режима Чат / Агент — пилюля с двумя сегментами */}
@@ -8734,40 +8735,60 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand})=>{
           )}
         </div>
       </div>
-      <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions text" aria-label="История диалога с ИИ" className="myz-chat-scroll">
+      <div ref={scrollRef} role="log" aria-live="polite" aria-relevant="additions text" aria-label="История диалога с ИИ" className={`myz-chat-scroll${heroMode?' myz-chat-scroll--hero':''}`}>
         {chatMode === 'documents' && <DocumentsMode onToast={onToast}/>}
-        {chatMode !== 'documents' && exchanges.length === 0 && !thinking && agentSteps.length === 0 && (
-          <div className="myz-welcome">
-            <div className="myz-welcome-header">
-              <div className="myz-welcome-text-stack">
-                <div className="myz-welcome-title">Здравствуйте, коллега</div>
-                <div className="myz-welcome-sub">{agent ? 'Чем могу помочь с этим документом?' : 'Задайте юридический вопрос — пройдусь по всем слоям закона КР.'}</div>
+        {heroMode && (
+          <div className="myz-hero-center">
+            <div className="myz-welcome">
+              <div className="myz-welcome-header">
+                <div className="myz-welcome-text-stack">
+                  <div className="myz-welcome-title">Здравствуйте, коллега</div>
+                  <div className="myz-welcome-sub">{agent ? 'Чем могу помочь с этим документом?' : 'Задайте юридический вопрос — пройдусь по всем слоям закона КР.'}</div>
+                </div>
+                <LogoIcon sz={64} glow={false} />
               </div>
-              <LogoIcon sz={64} glow={false} />
-            </div>
 
-            <div className="myz-welcome-grid">
-              {(agent ? [
-                {k:'shield', t:'Проверка рисков',     d:'Юридические риски и комплаенс.'},
-                {k:'book',   t:'Найти норму',         d:'Поиск законов и прецедентов.'},
-                {k:'file',   t:'Сравнить с шаблоном', d:'Сравнение документа с эталоном.'},
-                {k:'edit',   t:'Составить пункт',     d:'Генерация условия по запросу.'}
-              ] : [
-                {k:'book',   t:'Найти норму КР',          d:'Поиск по базе НПА с проверкой.'},
-                {k:'shield', t:'Оценить позицию',          d:'Анализ ситуации по 4 слоям закона.'},
-                {k:'scale',  t:'Подсудность и госпошлина', d:'Сроки давности, суд, расчёт пошлины.'},
-                {k:'sparkles', t:'Объяснить норму',        d:'Разбор статьи простыми словами.'}
-              ]).map(c=>(
-                 <div key={c.t} className="myz-welcome-card" onClick={()=>setInp(c.t)}>
-                   <Ico k={c.k} sz={18} col="var(--primary)" />
-                   <div className="myz-welcome-card-body">
-                     <span className="myz-welcome-card-title">{c.t}</span>
-                     <span className="myz-welcome-card-desc">{c.d}</span>
+              <div className="myz-welcome-grid">
+                {(agent ? [
+                  {k:'shield', t:'Проверка рисков',     d:'Юридические риски и комплаенс.'},
+                  {k:'book',   t:'Найти норму',         d:'Поиск законов и прецедентов.'},
+                  {k:'file',   t:'Сравнить с шаблоном', d:'Сравнение документа с эталоном.'},
+                  {k:'edit',   t:'Составить пункт',     d:'Генерация условия по запросу.'}
+                ] : [
+                  {k:'book',   t:'Найти норму КР',          d:'Поиск по базе НПА с проверкой.'},
+                  {k:'shield', t:'Оценить позицию',          d:'Анализ ситуации по 4 слоям закона.'},
+                  {k:'scale',  t:'Подсудность и госпошлина', d:'Сроки давности, суд, расчёт пошлины.'},
+                  {k:'sparkles', t:'Объяснить норму',        d:'Разбор статьи простыми словами.'}
+                ]).map(c=>(
+                   <div key={c.t} className="myz-welcome-card" onClick={()=>setInp(c.t)}>
+                     <Ico k={c.k} sz={18} col="var(--primary)" />
+                     <div className="myz-welcome-card-body">
+                       <span className="myz-welcome-card-title">{c.t}</span>
+                       <span className="myz-welcome-card-desc">{c.d}</span>
+                     </div>
                    </div>
-                 </div>
-               ))}
+                 ))}
+              </div>
             </div>
 
+            {/* Hero-mode input: centered narrow input below welcome */}
+            <div className="myz-hero-input-wrap">
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.rtf,image/*" style={{display:'none'}} onChange={(e)=>{const files=Array.from(e.target.files||[]);e.target.value='';files.forEach(processAttFile)}}/>
+              <PromptBox
+                id="myz-ai-input-hero"
+                value={inp}
+                onChange={e=>setInp(e.target.value)}
+                onSubmit={send}
+                placeholder={agent ? ((getDocSnapshot() && getDocSnapshot().selection) ? tr('ws_ph_selection') : tr('ws_ph_doc')) : tr('ws_ph_legal')}
+                disabled={(!inp.trim()&&attachments.filter(a=>a.status==='ready').length===0)||thinking||attachments.some(a=>a.status==='loading')}
+                onAttach={()=>fileInputRef.current?.click()}
+                onVoice={toggleVoice}
+                listening={listening}
+              />
+              <div className="myz-disclaimer" style={{textAlign:'center'}}>
+                Перед использованием в производстве сверяйте нормы с <a href="https://cbd.minjust.gov.kg" target="_blank" rel="noopener noreferrer" className="myz-disclaimer-link">cbd.minjust.gov.kg</a>.
+              </div>
+            </div>
           </div>
         )}
         {chatMode !== 'documents' && exchanges.map((ex,ei)=>(
@@ -8847,7 +8868,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand})=>{
           </button>
         </div>
       )}
-      <div className="myz-input-area" style={{display: chatMode === 'documents' ? 'none' : 'block'}}>
+      <div className="myz-input-area" style={{display: chatMode === 'documents' || heroMode ? 'none' : 'block'}}>
         <input ref={fileInputRef} type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.rtf,image/*" style={{display:'none'}} onChange={(e)=>{const files=Array.from(e.target.files||[]);e.target.value='';files.forEach(processAttFile)}}/>
         <div className="myz-incognito-row">
           <label className="myz-incognito-label">
