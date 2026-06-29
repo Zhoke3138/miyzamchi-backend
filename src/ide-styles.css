@@ -4519,33 +4519,42 @@ body.dk .analyze-accordion-content {
     height: 100% !important;
 }
 
-/* Принудительно центрируем сам белый лист внутри рабочей зоны */
-.superdoc-workspace-wrapper .ProseMirror,
-.superdoc-workspace-wrapper [contenteditable="true"],
-.superdoc-workspace-wrapper .sd-page,
-.superdoc-workspace-wrapper .superdoc-document {
-    margin-left: auto !important;
-    margin-right: auto !important;
-    background-color: var(--bg-editor, #ffffff) !important;
-    /* Добавляем легкую тень, чтобы он выглядел как реальный лист А4 */
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1) !important;
+/* Тень вокруг А4-листа (класс .super-editor — белый лист документа) */
+.myz-editor-wrapper .super-editor {
+    box-shadow: 0 2px 10px rgba(0,0,0,0.12) !important;
 }
 
 /* NOTE: убран override > div > div — слишком широкий селектор, ломал внутренний
-   layout SuperDoc. Центровка листа обеспечивается contained + margin:auto на .sd-page */
+   layout SuperDoc. */
 
 /* SuperDoc имеет встроенный правый сайдбар 320px (мини-страницы, комментарии).
    В нашем UI он не нужен и смещает документ влево — скрываем. */
 .myz-editor-wrapper .superdoc__right-sidebar {
   display: none !important;
 }
-/* superdoc__layers — главный flex-ребёнок .superdoc (display:flex).
+
+/* superdoc__layers — главный flex-ребёнок .superdoc (display:flex, row).
    Без flex:1 он сужается до ширины А4-листа → документ прижат влево.
-   flex:1 растягивает его на всю доступную ширину. */
+   flex:1 растягивает его на всю доступную ширину редактора. */
 .myz-editor-wrapper .superdoc__layers {
   flex: 1 !important;
   min-width: 0 !important;
-  overflow: hidden;
+}
+
+/* superdoc__sub-document содержит .super-editor-container (width:auto = ширина А4).
+   Чтобы А4 был по центру, делаем sub-document flex с justify-content:center.
+   align-items:stretch — scroll-контейнер растягивается на всю высоту. */
+.myz-editor-wrapper .superdoc__sub-document {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: stretch !important;
+}
+
+/* .superdoc__document тоже нужен flex-center если он между sub-document и super-editor-container */
+.myz-editor-wrapper .superdoc__document {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: stretch !important;
 }
 
 
