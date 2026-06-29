@@ -5677,16 +5677,30 @@ const TipTapPageBreakOverlay = ({ pages }) => {
 /* ═══ Editor ═══ */
 
 /* ═══ NPA Viewer ═══ */
-// Header-actions компонент (используется во всех 3-х ветках NPAView render).
-// Кнопки: [—] свернуть только NPA  •  [✕] закрыть всю правую панель
-const NpaHeaderActions=({onCollapse,onClose})=>(
+// Иконка «развернуть» (четыре угловые стрелки)
+const IcoExpand=()=>(
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+    <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+  </svg>
+);
+// Иконка «свернуть» (минус)
+const IcoMinimize=()=>(<span style={{display:'block',width:9,height:1.5,background:'currentColor',borderRadius:1}}/>);
+
+// Header-actions — кнопки [—] свернуть • [⛶] расширить • [✕] закрыть
+const NpaHeaderActions=({onCollapse,onClose,onExpand})=>(
   <div style={{display:'flex',alignItems:'center',gap:1}}>
     {onCollapse && (
-      <button type="button" onClick={onCollapse} title="Свернуть НПА" aria-label="Свернуть НПА" className="myz-panel-icon-btn">
-        <span style={{display:'block',width:8,height:1.3,background:'currentColor',borderRadius:1}}/>
+      <button type="button" onClick={onCollapse} title="Свернуть" aria-label="Свернуть НПА" className="myz-panel-icon-btn">
+        <IcoMinimize/>
       </button>
     )}
-    <button type="button" onClick={onClose} title="Закрыть панель" aria-label="Закрыть панель" className="myz-panel-icon-btn">
+    {onExpand && (
+      <button type="button" onClick={onExpand} title="Расширить" aria-label="Расширить НПА" className="myz-panel-icon-btn">
+        <IcoExpand/>
+      </button>
+    )}
+    <button type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть НПА" className="myz-panel-icon-btn">
       <Ico k="x" sz={11}/>
     </button>
   </div>
@@ -7296,7 +7310,7 @@ const anonymizeText = (t) => {
     .replace(/[А-ЯЁ][а-яё]+\s+[А-ЯЁ]\.\s*[А-ЯЁ]\./g, '[ФИО СКРЫТО]')
     .replace(/[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+/g, '[ФИО СКРЫТО]');
 };
-const AIChat=({onToast,onOpenArticle,onCollapse})=>{
+const AIChat=({onToast,onOpenArticle,onCollapse,onExpand})=>{
   const {tr} = useI18n();
   const [incognito, setIncognito] = useState(false);
   const [deepModalOpen, setDeepModalOpen] = useState(false);
@@ -8633,9 +8647,14 @@ const AIChat=({onToast,onOpenArticle,onCollapse})=>{
           </div>
         </div>
         <div className="myz-chat-header-right">
+          {onExpand && (
+            <button type="button" onClick={onExpand} title="Расширить чат" aria-label="Расширить чат" className="myz-panel-icon-btn">
+              <IcoExpand/>
+            </button>
+          )}
           {onCollapse && (
-            <button type="button" onClick={onCollapse} title="Свернуть чат" aria-label="Свернуть ИИ-чат" className="myz-chat-header-close">
-              <Ico k="x" sz={14} col="currentColor"/>
+            <button type="button" onClick={onCollapse} title="Свернуть чат" aria-label="Свернуть ИИ-чат" className="myz-panel-icon-btn">
+              <IcoMinimize/>
             </button>
           )}
         </div>
@@ -9465,7 +9484,7 @@ const App=()=>{
     return 'НПА';
   };
   const openNpa = useCallback((art) => {
-    if (art == null) { setNpaTabs([]); setActiveNpaTabId(null); return; }
+    if (art == null) { setNpaTabs([]); setActiveNpaTabId(null); setNpaCollapsed(true); return; }
     const key = npaTabKeyOf(art);
     setNpaTabs(prev => {
       const found = prev.find(t => t.key === key);
@@ -9474,12 +9493,15 @@ const App=()=>{
       setActiveNpaTabId(id);
       return [...prev, { id, key, art, title: npaTabTitleOf(art) }];
     });
+    setNpaCollapsed(false);
+    setRightOpen(true);
   }, []);
   const closeNpaTab = useCallback((id) => {
     setNpaTabs(prev => {
       const idx = prev.findIndex(t => t.id === id);
       if (idx === -1) return prev;
       const next = prev.filter(t => t.id !== id);
+      if (next.length === 0) setNpaCollapsed(true);
       setActiveNpaTabId(curr => {
         if (curr !== id) return curr;
         const newActive = next[idx] || next[idx - 1] || next[0] || null;
@@ -10005,6 +10027,22 @@ const App=()=>{
         {leftOpen && !isMobile && <Handle onMD={startDrag('l')}/>}
         {/* EDITOR */}
         <div id="superdoc-wrapper" className="superdoc-workspace-wrapper myz-editor-wrapper">
+          {/* Тонкая плашка над редактором: имя файла + управление боковой панелью */}
+          <div className="myz-editor-titlebar">
+            <div className="myz-editor-titlebar-left">
+              {tabs.find(t=>t.id===activeTab) ? (
+                <><Ico k="file" sz={11} col="var(--muted)"/>
+                <span className="myz-editor-titlebar-name">{tabs.find(t=>t.id===activeTab)?.name}</span>
+                {tabs.find(t=>t.id===activeTab)?.mod && <span className="myz-editor-titlebar-dot">●</span>}</>
+              ) : <span className="myz-editor-titlebar-name" style={{color:'var(--muted)'}}>Редактор</span>}
+            </div>
+            <div className="myz-editor-titlebar-right">
+              <button type="button" onClick={()=>setRightOpen(p=>!p)} title={rightOpen?'Скрыть боковую панель':'Показать боковую панель'} className="myz-panel-icon-btn">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+              </button>
+              {activeTab && <button type="button" onClick={()=>closeTab(activeTab)} title="Закрыть вкладку" className="myz-panel-icon-btn"><Ico k="x" sz={11}/></button>}
+            </div>
+          </div>
           {_superDocSlot}
           {OO_MODE && <OOEditorSlot activeTab={activeTab} tabFileIds={tabFileIds} tabs={tabs} onError={(msg)=>addToast('warning',msg)}/>}
         </div>
@@ -10014,15 +10052,8 @@ const App=()=>{
           style={!isMobile ? {width:rightOpen?rightW:0} : undefined}>
           {rightOpen && (
             <div id="rp" className="myz-right-panel-inner">
-              {npaCollapsed && (
-                <button type="button" className="myz-pane-tab" onClick={()=>setNpaCollapsed(false)}
-                  title="Развернуть НПА" aria-label="Развернуть НПА">
-                  <Ico k="book" sz={12} col="var(--primary)"/>
-                  <span>{tr('pane_npa')}</span>
-                  <span className="myz-pane-tab-chev">▾</span>
-                </button>
-              )}
-              {!npaCollapsed && (
+              {/* NPA pane — только когда есть открытые вкладки и не свёрнута */}
+              {!npaCollapsed && npaTabs.length > 0 && (
                 <div style={{
                   height: chatCollapsed ? '100%' : (rightSplit+'%'),
                   flex: chatCollapsed ? '1 1 0' : '0 0 auto',
@@ -10035,19 +10066,25 @@ const App=()=>{
                     activeNpaTabId={activeNpaTabId}
                     onSwitchNpaTab={setActiveNpaTabId}
                     onCloseNpaTab={closeNpaTab}
-                    onClose={()=>setRightOpen(false)}
+                    onClose={()=>{setNpaTabs([]);setActiveNpaTabId(null);setNpaCollapsed(true);}}
                     onCollapse={collapseNpa}
+                    onExpand={()=>setChatCollapsed(true)}
                     onNav={openNpa}
                   />
                 </div>
               )}
-              {!isMobile && !npaCollapsed && !chatCollapsed && <Handle vert onMD={startDrag('rv')}/>}
+              {/* Ручка вертикального ресайза — только когда обе пане видны */}
+              {!isMobile && !npaCollapsed && npaTabs.length > 0 && !chatCollapsed && <Handle vert onMD={startDrag('rv')}/>}
+              {/* Chat pane */}
               {!chatCollapsed && (
                 <div className="myz-chat-pane">
-                  <AIChat onToast={addToast} onCollapse={collapseChat} onOpenArticle={(art)=>{setNpa(art);setHilite(art);setRightOpen(true);setNpaCollapsed(false);setTimeout(()=>setHilite(null),2200);addToast('book','Ст. '+art);}}/>
+                  <AIChat onToast={addToast} onCollapse={collapseChat}
+                    onExpand={npaTabs.length > 0 ? ()=>setNpaCollapsed(true) : undefined}
+                    onOpenArticle={(art)=>{setNpa(art);setHilite(art);setRightOpen(true);setNpaCollapsed(false);setTimeout(()=>setHilite(null),2200);addToast('book','Ст. '+art);}}/>
                 </div>
               )}
-              {chatCollapsed && (
+              {/* Кнопка восстановления чата — только когда НПА видно */}
+              {chatCollapsed && npaTabs.length > 0 && (
                 <button type="button" className="myz-pane-tab" onClick={()=>setChatCollapsed(false)}
                   title="Развернуть ИИ-чат" aria-label="Развернуть ИИ-чат">
                   <Ico k="sparkles" sz={12} col="var(--accent)"/>

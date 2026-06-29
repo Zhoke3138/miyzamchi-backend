@@ -5290,6 +5290,47 @@ body.dk .myz-doc-type-btn:not(:disabled):hover {
   position: relative; /* stacking context — abs/sticky дети не вылезают за границу */
 }
 
+/* ── Editor titlebar (thin strip above SuperDoc) ────────────────── */
+.myz-editor-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px 0 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  gap: 6px;
+}
+.myz-editor-titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.myz-editor-titlebar-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.myz-editor-titlebar-dot {
+  color: var(--accent);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.myz-editor-titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 /* ── Right panel inner — NPA + Chat stacked ─────────────────────── */
 .myz-right-panel-inner {
   height: 100%;
