@@ -5948,13 +5948,13 @@ const NPAView=({art,onClose,onNav,onCollapse,npaTabs=[],activeNpaTabId=null,onSw
       <div className="myz-npa-panel-header">
         <div className="myz-npa-panel-header-left">
           <Ico k="book" sz={16} col="var(--accent)" />
-          <span className="myz-npa-panel-label">Просмотр НПА</span>
+          <span className="myz-npa-panel-label">НПА</span>
         </div>
         <NpaHeaderActions onCollapse={onCollapse} onClose={onClose}/>
       </div>
       <div className="myz-npa-empty">
-        <Ico k="book" sz={36} col="var(--accent-edge)"/>
-        <span className="myz-npa-empty-text">{'\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u041d\u041f\u0410 \u0438\u043b\u0438 \u0441\u0442\u0430\u0442\u044c\u044e \u0432 \u043c\u0435\u043d\u044e \u0441\u043b\u0435\u0432\u0430 \u0434\u043b\u044f \u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440\u0430'}</span>
+        <Ico k="book" sz={28} col="var(--accent-edge)"/>
+        <span className="myz-npa-empty-text">{'Выберите НПА в меню слева'}</span>
       </div>
     </div>
   );
@@ -10052,11 +10052,11 @@ const App=()=>{
           style={!isMobile ? {width:rightOpen?rightW:0} : undefined}>
           {rightOpen && (
             <div id="rp" className="myz-right-panel-inner">
-              {/* NPA pane — только когда есть открытые вкладки и не свёрнута */}
-              {!npaCollapsed && npaTabs.length > 0 && (
+              {/* NPA pane — видна когда не свёрнута (даже без вкладок — показывает пустое состояние) */}
+              {!npaCollapsed && (
                 <div style={{
-                  height: chatCollapsed ? '100%' : (rightSplit+'%'),
                   flex: chatCollapsed ? '1 1 0' : '0 0 auto',
+                  height: chatCollapsed ? '100%' : (rightSplit+'%'),
                   overflow:'hidden',
                   minHeight:0
                 }}>
@@ -10073,18 +10073,18 @@ const App=()=>{
                   />
                 </div>
               )}
-              {/* Ручка вертикального ресайза — только когда обе пане видны */}
-              {!isMobile && !npaCollapsed && npaTabs.length > 0 && !chatCollapsed && <Handle vert onMD={startDrag('rv')}/>}
+              {/* Ручка вертикального ресайза — только когда обе секции видны */}
+              {!isMobile && !npaCollapsed && !chatCollapsed && <Handle vert onMD={startDrag('rv')}/>}
               {/* Chat pane */}
               {!chatCollapsed && (
                 <div className="myz-chat-pane">
                   <AIChat onToast={addToast} onCollapse={collapseChat}
-                    onExpand={npaTabs.length > 0 ? ()=>setNpaCollapsed(true) : undefined}
+                    onExpand={()=>setNpaCollapsed(true)}
                     onOpenArticle={(art)=>{setNpa(art);setHilite(art);setRightOpen(true);setNpaCollapsed(false);setTimeout(()=>setHilite(null),2200);addToast('book','Ст. '+art);}}/>
                 </div>
               )}
-              {/* Кнопка восстановления чата — только когда НПА видно */}
-              {chatCollapsed && npaTabs.length > 0 && (
+              {/* Кнопка восстановления чата — всегда когда чат свёрнут */}
+              {chatCollapsed && (
                 <button type="button" className="myz-pane-tab" onClick={()=>setChatCollapsed(false)}
                   title="Развернуть ИИ-чат" aria-label="Развернуть ИИ-чат">
                   <Ico k="sparkles" sz={12} col="var(--accent)"/>
