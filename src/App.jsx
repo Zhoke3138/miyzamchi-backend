@@ -7820,6 +7820,8 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand})=>{
     });
   };
 
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   const newCase=()=>{
     const n= (chats?.length||0)+1;
     const c={id:uid(),title:`Дело ${n}`,createdAt:Date.now(),messages:[]};
@@ -7828,8 +7830,37 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand})=>{
     saveIdeChats(next);
     setActiveId(c.id);
     saveIdeActive(c.id);
+    setHistoryOpen(false);
     onToast&&onToast('plus','Новое дело');
   };
+
+  const clearChat=()=>{
+    if(thinking) stop();
+    updateChatMessages(()=>[]);
+    setAgentSteps([]);
+    setStreamStatus('');
+    onToast&&onToast('trash','Чат очищен');
+  };
+
+  const deleteChat=(id)=>{
+    const next=(chats||[]).filter(c=>c.id!==id);
+    if(!next.length){
+      const created={id:uid(),title:'Дело 1',createdAt:Date.now(),messages:[]};
+      setChats([created]);saveIdeChats([created]);
+      setActiveId(created.id);saveIdeActive(created.id);
+    } else {
+      setChats(next);saveIdeChats(next);
+      if(activeId===id){setActiveId(next[0].id);saveIdeActive(next[0].id);}
+    }
+  };
+
+  // Закрытие истории по клику вне панели
+  useEffect(()=>{
+    if(!historyOpen) return;
+    const h=(e)=>{if(!e.target.closest('.myz-history-panel'))setHistoryOpen(false);};
+    document.addEventListener('mousedown',h);
+    return()=>document.removeEventListener('mousedown',h);
+  },[historyOpen]);
 
   const stop=()=>{
     try{abortRef.current?.abort()}catch(e){}
@@ -8647,6 +8678,50 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand})=>{
           </div>
         </div>
         <div className="myz-chat-header-right">
+          {/* Очистить текущий чат */}
+          <button type="button" onClick={clearChat} title="Очистить чат" aria-label="Очистить чат" className="myz-panel-icon-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+            </svg>
+          </button>
+          {/* История чатов */}
+          <div className="myz-history-panel" style={{position:'relative'}}>
+            <button type="button" onClick={()=>setHistoryOpen(p=>!p)} title="История чатов" aria-label="История чатов"
+              className={`myz-panel-icon-btn${historyOpen?' myz-panel-icon-btn--active':''}`}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+            </button>
+            {historyOpen && (
+              <div className="myz-history-dropdown">
+                <div className="myz-history-dropdown-header">
+                  <span>История чатов</span>
+                  <button type="button" onClick={newCase} className="myz-history-new-btn">+ Новый</button>
+                </div>
+                <div className="myz-history-list">
+                  {(chats||[]).map(c=>{
+                    const isActive=c.id===activeChat.id;
+                    const dateStr=c.createdAt?new Date(c.createdAt).toLocaleDateString('ru',{day:'2-digit',month:'2-digit',year:'2-digit'}):'';
+                    const msgCount=(c.messages||[]).filter(m=>m.role==='user').length;
+                    return(
+                      <div key={c.id} className={`myz-history-item${isActive?' myz-history-item--active':''}`}
+                        onClick={()=>{setActiveId(c.id);saveIdeActive(c.id);setHistoryOpen(false);}}>
+                        <div className="myz-history-item-body">
+                          <span className="myz-history-item-title">{c.title||'Без названия'}</span>
+                          <span className="myz-history-item-meta">{dateStr}{msgCount>0?` · ${msgCount} вопр.`:''}</span>
+                        </div>
+                        <button type="button" className="myz-history-item-del"
+                          onClick={e=>{e.stopPropagation();deleteChat(c.id);}}
+                          title="Удалить чат" aria-label="Удалить">
+                          <Ico k="x" sz={9}/>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
           {onExpand && (
             <button type="button" onClick={onExpand} title="Расширить чат" aria-label="Расширить чат" className="myz-panel-icon-btn">
               <IcoExpand/>
