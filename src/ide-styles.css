@@ -3955,7 +3955,7 @@ body.dk .analyze-accordion-content {
 /* ═══════════ ANALYZE DOCS MODE (2026-05-30) ═══════════
    Drag&Drop вкладка "Анализ Документов" — заменяет CompareMode.
    1 файл → /api/analyze-document. 2 файла → /api/compare. */
-.ad-root{ display:flex; flex-direction:column; gap:var(--s-3); padding:var(--s-1); animation:fadeIn .25s ease; }
+.ad-root{ display:flex; flex-direction:column; gap:var(--s-3); padding:var(--s-1); animation:fadeIn .25s ease; max-width:820px; margin:0 auto; width:100%; }
 
 /* ── Двух-колоночная зона drop slots ───────────────────────────── */
 .ad-slots{
@@ -6560,6 +6560,9 @@ body.dk .myz-lang-btn--active {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
+  max-width: 820px;
+  margin: 0 auto;
+  width: 100%;
 }
 .myz-doc-type-list {
   display: grid;
