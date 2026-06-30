@@ -6764,8 +6764,8 @@ body.dk .myz-lang-btn--active {
 }
 /* Fullscreen chat: messages wider than input */
 .myz-chat-panel--fullscreen .myz-chat-scroll {
-  padding-left:  max(var(--s-3h), calc((100% - 900px) / 2));
-  padding-right: max(var(--s-3h), calc((100% - 900px) / 2));
+  padding-left:  max(var(--s-3h), calc((100% - 820px) / 2));
+  padding-right: max(var(--s-3h), calc((100% - 820px) / 2));
 }
 
 /* ════════════════════════════════════════════════════════════════════
