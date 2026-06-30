@@ -7866,7 +7866,11 @@ body.dk .myz-insert-btn {
 }
 .myz-rp-handle:hover,
 .myz-rp-handle[data-resize-handle-active] {
-  background: var(--primary);
+  background: #3A3A3C;
+}
+body.dk .myz-rp-handle:hover,
+body.dk .myz-rp-handle[data-resize-handle-active] {
+  background: #5A5A5E;
 }
 /* horizontal handle (splits editor / right-panel) */
 .myz-rp-handle--h {
