@@ -8688,17 +8688,11 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
           </div>
         </div>
         <div className="myz-chat-header-right">
-          {/* Очистить текущий чат */}
-          <button type="button" onClick={clearChat} title="Очистить чат" aria-label="Очистить чат" className="myz-panel-icon-btn">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
-            </svg>
-          </button>
           {/* История чатов */}
           <div className="myz-history-panel" style={{position:'relative'}}>
             <button type="button" onClick={()=>setHistoryOpen(p=>!p)} title="История чатов" aria-label="История чатов"
-              className={`myz-panel-icon-btn${historyOpen?' myz-panel-icon-btn--active':''}`}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              className={`myz-panel-icon-btn myz-chat-hdr-btn${historyOpen?' myz-panel-icon-btn--active':''}`}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
               </svg>
             </button>
@@ -8732,13 +8726,19 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
               </div>
             )}
           </div>
+          {/* Новый чат */}
+          <button type="button" onClick={newCase} title="Новый чат" aria-label="Новый чат" className="myz-panel-icon-btn myz-chat-hdr-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+          </button>
           {onExpand && (
-            <button type="button" onClick={onExpand} title="Расширить чат" aria-label="Расширить чат" className="myz-panel-icon-btn">
+            <button type="button" onClick={onExpand} title="Расширить чат" aria-label="Расширить чат" className="myz-panel-icon-btn myz-chat-hdr-btn">
               <IcoExpand/>
             </button>
           )}
           {onCollapse && (
-            <button type="button" onClick={onCollapse} title="Свернуть чат" aria-label="Свернуть ИИ-чат" className="myz-panel-icon-btn">
+            <button type="button" onClick={onCollapse} title="Свернуть чат" aria-label="Свернуть ИИ-чат" className="myz-panel-icon-btn myz-chat-hdr-btn">
               <IcoMinimize/>
             </button>
           )}

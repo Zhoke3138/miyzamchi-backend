@@ -6252,6 +6252,26 @@ body.dk .myz-lang-btn--active {
   color: var(--text);
 }
 
+/* Bigger, darker buttons specifically in the chat header */
+.myz-chat-hdr-btn {
+  width: 28px !important;
+  height: 28px !important;
+  border-radius: 6px !important;
+  color: var(--text) !important;
+  background: color-mix(in srgb, var(--text) 8%, transparent) !important;
+  border: 1px solid var(--border) !important;
+  box-sizing: border-box;
+}
+.myz-chat-hdr-btn:hover {
+  background: color-mix(in srgb, var(--text) 16%, transparent) !important;
+  color: var(--text) !important;
+}
+.myz-chat-hdr-btn.myz-panel-icon-btn--active {
+  background: var(--accent-soft) !important;
+  color: var(--accent-strong) !important;
+  border-color: var(--accent-soft) !important;
+}
+
 /* ── History dropdown ─────────────────────────────────────────── */
 .myz-history-dropdown {
   position: absolute;
