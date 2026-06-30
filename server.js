@@ -1271,8 +1271,10 @@ const systemInstruction = [
     "- Пользователь просит проверить, разобрать или найти ошибки в документе → НЕ анализируй переданный текст. Ответь:",
     "  «Для профессиональной проверки документа обратитесь к юристу или адвокату. Я могу рассказать, какие пункты в таких документах чаще всего нарушают нормы КР, или объяснить конкретную норму, которая вас интересует.»",
     "",
-    "## Режим 4 — Вопрос вне компетенции",
-    "- Если вопрос не касается законодательства КР и не является простым общением: «Этот вопрос выходит за рамки моей специализации. Я работаю только с законодательством Кыргызской Республики.»",
+    "## Режим 4 — Вопрос вне юридической сферы",
+    "- Если вопрос не касается законодательства КР (кулинария, технологии, общие знания) — всё равно отвечай коротко и полезно из своих знаний.",
+    "- В конце одной строкой добавь: «Если у вас есть вопрос по законодательству КР — я готов помочь.»",
+    "- НЕ говори «выходит за рамки» и не отказывай от ответа.",
     "",
     "---",
     "",
@@ -2269,13 +2271,43 @@ function sanitizeHistory(history) {
         .filter(msg => msg?.role && msg?.parts?.[0]?.text?.trim())
         .map(msg => ({ role: msg.role, parts: [{ text: msg.parts[0].text }] }));
 
-    clean = clean.slice(-10);
+    // Max 4 turns (8 messages) to keep context tight
+    clean = clean.slice(-8);
+
+    while (clean.length > 0 && clean[0].role !== 'user') {
+        clean.shift();
+    }
+
+    // Trim by total chars — avoid bloated prompts (max ~5000 chars of history)
+    let totalChars = 0;
+    const charTrimmed = [];
+    for (let i = clean.length - 1; i >= 0; i--) {
+        const len = (clean[i].parts?.[0]?.text || '').length;
+        if (totalChars + len > 5000) break;
+        totalChars += len;
+        charTrimmed.unshift(clean[i]);
+    }
+    clean = charTrimmed.length > 0 ? charTrimmed : clean.slice(-2);
 
     while (clean.length > 0 && clean[0].role !== 'user') {
         clean.shift();
     }
 
     return clean;
+}
+
+// Builds enriched retrieval query by combining current message with prior user context.
+// Helps follow-up questions ("а если договор?", "уточни про сроки") find better results.
+function buildContextualQuery(message, history) {
+    if (!Array.isArray(history) || history.length === 0) return message;
+    const prevTexts = history
+        .filter(m => m.role === 'user')
+        .slice(-2)
+        .map(m => (m.parts?.[0]?.text || '').slice(0, 200))
+        .filter(Boolean);
+    if (!prevTexts.length) return message;
+    const combined = `${prevTexts.join(' ')} ${message}`.trim();
+    return combined.slice(0, 500);
 }
 
 // --- Форматирование контекста: НПА и Инструкции в отдельных секциях ---
@@ -2600,8 +2632,16 @@ function quickClassify(message) {
     const trimmed = String(message).trim();
     const lower = trimmed.toLowerCase();
 
-    // Casual — приветствие/болтовня (уже есть отдельная функция)
+    // Casual — приветствие/болтовня
     if (isCasualMessage(trimmed)) return 'casual';
+
+    // Явно неюридические темы: кулинария, технологии, география, математика и т.п.
+    // Условие: НЕ содержит ни одного юридического маркера КР
+    const hasLegalHint = /(закон|право|суд|кр|кыргыз|договор|иск|статья|ст\.|кодекс|нпа|норм|юрид|адвокат|нотариус|регистр|лицензи|налог|штраф|пеня|претензи|обжалован|апелляц)/i.test(lower);
+    if (!hasLegalHint) {
+        const nonLegal = /^(как\s+(приготовить|сделать|испечь|варить)|рецепт|погода\s+в|курс\s+(доллар|евро|валют)|столица\s+\w+|население\s+\w+|переведи\s+(с|на)\s+\w+|что\s+такое\s+(javascript|python|html|css|ai|нейросет|машинное|программир)|сколько\s+стоит\s+(iphone|samsung|телефон))/i.test(lower);
+        if (nonLegal) return 'nolegal';
+    }
 
     // Triggers — индикаторы реальной ситуации юриста (complex)
     const complexTriggers = /(как\s+(мне|нам|быть)|что\s+делать|помог|вправ|можно\s+ли|правомер|оспорить|обжалов|подал\s+в\s+суд|подавать\s+иск|взыскать|выселить|расторгн|спор[еауы]|конфликт|истец|ответчик|претензи|составь|напиши|сформируй|подгот)/i;
@@ -2610,7 +2650,7 @@ function quickClassify(message) {
     // SIMPLE — короткие справочные запросы
     const hasStatueRef = /(ст(атья|\.)\s*[\d¹²³⁴⁵⁶⁷⁸⁹⁰]+|статья\s+\d+|ст\.?\s*\d+)/i.test(trimmed);
     const isTermLookup = /^(что\s+(такое|значит|есть|подразумевает)|объясни|расшифруй|определ[иь]|растолкуй)/i.test(trimmed);
-    const isShortGeneric = trimmed.length < 60 && !hasComplexTriggers;
+    const isShortGeneric = trimmed.length < 80 && !hasComplexTriggers;
 
     if (!hasComplexTriggers && hasStatueRef && trimmed.length < 200) return 'simple';
     if (isTermLookup && trimmed.length < 150) return 'simple';
@@ -2625,24 +2665,29 @@ function quickClassify(message) {
 }
 
 async function llmClassify(message) {
-    const systemPrompt = `Ты — классификатор юридических запросов КР. По тексту вопроса юриста определи тип:
-- "simple"  — справочный запрос: что значит термин, какая статья, краткое объяснение нормы, цифра-факт (срок, госпошлина, размер штрафа)
-- "complex" — реальная ситуация юриста с действиями: что делать в конфликте, как защитить позицию, как взыскать, как обжаловать, составить документ, оценить риски
+    const systemPrompt = `Ты — классификатор запросов для юридического ИИ Кыргызской Республики.
+По тексту (в т.ч. с опечатками и разговорным стилем) определи тип:
+- "simple"  — справочный запрос о законах КР: термин, статья, срок, госпошлина, размер штрафа, объяснение нормы
+- "complex" — реальная ситуация требующая правового анализа: конфликт, иск, обжалование, оценка рисков, составление документа
+- "nolegal" — вопрос НЕ связан с правом и законами КР: кулинария, технологии, иностранные языки, физика, математика, бытовые советы
 
+ВАЖНО: вопрос с опечатками но юридическим смыслом — "simple" или "complex", НЕ "nolegal".
 Отвечаешь СТРОГО JSON без markdown без пояснений.`;
     const userPrompt = `Вопрос: "${message}"
 
-Формат: {"type": "simple"} или {"type": "complex"}`;
+Формат: {"type": "simple"} или {"type": "complex"} или {"type": "nolegal"}`;
     try {
         const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
         const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
         const m = cleaned.match(/\{[\s\S]*\}/);
         if (!m) return 'complex';
         const parsed = JSON.parse(m[0]);
-        return parsed.type === 'simple' ? 'simple' : 'complex';
+        if (parsed.type === 'simple') return 'simple';
+        if (parsed.type === 'nolegal') return 'nolegal';
+        return 'complex';
     } catch (e) {
         console.error('[LLM-Classify] failed:', e.message);
-        return 'complex'; // safe default — лучше глубокий поиск чем поверхностный
+        return 'complex'; // safe default
     }
 }
 
@@ -2746,12 +2791,13 @@ async function classifyUserIntent(query) {
 async function handleSimpleConsultation(message, history, res, userQuery = null) {
     const userQ = (userQuery && userQuery.trim()) || message;
     const cleanHistory = sanitizeHistory(history);
+    // Follow-up RAG: обогащаем retrieval-запрос контекстом предыдущих сообщений
+    const retrievalQ = buildContextualQuery(userQ, cleanHistory);
 
-    sendStep(res, { id: 'classify', status: 'success', text: 'Простой справочный запрос', reason: 'Использую быстрый путь поиска' });
     sendStep(res, { id: 'retrieve', status: 'loading', text: 'Ищу релевантные статьи НПА' });
     sendStatus(res, '🔎 Ищу релевантные статьи...');
 
-    const retrieval = await adaptiveRetrieval(userQ, 'thinking', null, { queryType: 'npa', npaQuota: 10 });
+    const retrieval = await adaptiveRetrieval(retrievalQ, 'thinking', null, { queryType: 'npa', npaQuota: 10 });
     const { core = [], context = [], all = [] } = retrieval;
 
     sendStep(res, {
@@ -3077,6 +3123,8 @@ function formatLayeredContext({ specMatches, genMatches, procMatches, liabMatche
 async function handleDeepThinking(message, history, res, userQuery = null) {
     const userQ = (userQuery && userQuery.trim()) || message;
     const cleanHistory = sanitizeHistory(history);
+    // Follow-up RAG: обогащаем запрос контекстом предыдущих сообщений
+    const retrievalQ = buildContextualQuery(userQ, cleanHistory);
 
     // Шаг 0: классификация сложности (Gemini Flash Lite, ~1-2с)
     sendStep(res, { id: 'classify', status: 'loading', text: 'Оцениваю сложность вопроса...' });
@@ -3085,9 +3133,9 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
     const layerIds = LEVEL_LAYER_IDS[level];
     sendStep(res, { id: 'classify', status: 'success', text: `${lm.emoji} ${lm.label} — ${layerIds.length} слоёв`, reason: `Уровень ${level}/4` });
 
-    // Retrieval: только нужные слои в параллели
+    // Retrieval: только нужные слои в параллели (используем enriched query)
     const { specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches } =
-        await deepRetrievalChain(userQ, res, layerIds);
+        await deepRetrievalChain(retrievalQ, res, layerIds);
 
     const allMatches = [...specMatches, ...genMatches, ...procMatches, ...liabMatches, ...bylawMatches, ...rightsMatches, ...defMatches, ...evMatches];
 
@@ -3096,6 +3144,16 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
         res.write(`data: ${JSON.stringify({ text: 'К сожалению, в моей текущей базе НПА нет информации по этому вопросу. Рекомендую обратиться к юристу или сверить с cbd.minjust.gov.kg.' })}\n\n`);
         return;
     }
+
+    // Preview-текст: эмитируем до запуска Gemini — текст появляется сразу,
+    // ThinkingBox схлопывается, пользователь видит прогресс без паузы на TTFT.
+    const layerNames = [
+        specMatches.length   && `спец. нормы: ${specMatches.length}`,
+        genMatches.length    && `общие: ${genMatches.length}`,
+        procMatches.length   && `процессуальные: ${procMatches.length}`,
+        liabMatches.length   && `ответственность: ${liabMatches.length}`,
+    ].filter(Boolean).join(', ');
+    res.write(`data: ${JSON.stringify({ text: `*Найдено ${allMatches.length} норм (${layerNames || 'по теме'}).* Анализирую...\n\n` })}\n\n`);
 
     // Этап 9: финальный синтез с layered context
     sendStep(res, { id: 'synthesize', status: 'loading', text: 'Формирую итоговую консультацию' });
@@ -4356,13 +4414,19 @@ app.post('/api/chat', requireClientToken, async (req, res) => {
         else if (mode === 'thinking') {
             const casual = isCasualMessage(message);
             if (casual || skipRetrieval) {
-                console.log(`Режим: ${skipRetrieval ? 'skipRetrieval' : 'приветствие'} — Pinecone пропущен (Thinking)`);
+                console.log(`Режим: ${skipRetrieval ? 'skipRetrieval' : 'приветствие'} — retrieval пропущен (Thinking)`);
                 await handleFast(message, history, { core: [], context: [], all: [] }, res);
             } else {
                 sendStep(res, { id: 'classify', status: 'loading', text: 'Определяю тип запроса' });
                 const queryForClassify = (userQuery && userQuery.trim()) || message;
                 const queryType = await classifyQuery(queryForClassify);
-                if (queryType === 'simple') {
+                if (queryType === 'nolegal') {
+                    // Не юридический вопрос — отвечаем напрямую без RAG
+                    sendStep(res, { id: 'classify', status: 'success', text: 'Общий вопрос — отвечаю без поиска НПА' });
+                    console.log(`[ROUTER] nolegal → handleFast (no RAG, query: "${queryForClassify.slice(0, 60)}")`);
+                    await handleFast(message, history, { core: [], context: [], all: [] }, res);
+                } else if (queryType === 'simple') {
+                    sendStep(res, { id: 'classify', status: 'success', text: 'Справочный запрос — быстрый поиск' });
                     await handleSimpleConsultation(message, history, res, userQuery);
                 } else {
                     sendStep(res, { id: 'classify', status: 'success', text: 'Сложный запрос — запускаю глубокий анализ' });
