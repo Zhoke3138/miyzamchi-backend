@@ -5127,7 +5127,7 @@ body.dk .myz-doc-type-btn:not(:disabled):hover {
 .myz-menubar {
   height: 72px;
   flex-shrink: 0;
-  display: flex;
+  display: none !important;
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--s-2h) 0 var(--s-1h);
@@ -5228,7 +5228,36 @@ body.dk .myz-doc-type-btn:not(:disabled):hover {
 .myz-actbar-top-icon {
   margin-bottom: 10px;
   color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
+/* Compact lang buttons stacked vertically inside actbar */
+.myz-actbar-lang {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+.myz-actbar-lang-btn {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 2px;
+  width: 36px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  letter-spacing: .04em;
+  transition: background .15s, color .15s;
+  text-align: center;
+}
+.myz-actbar-lang-btn:hover { background: var(--hover); color: var(--text); }
+.myz-actbar-lang-btn--active { background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; }
 .myz-actbar-indicator {
   position: absolute;
   left: 0;

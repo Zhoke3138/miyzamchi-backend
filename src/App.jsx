@@ -4114,7 +4114,8 @@ const DocGenPanel=({onClose,onToast,onAction})=>{
 };
 
 /* ═══ Activity Bar ═══ */
-const ActBar=({active,onSet,onSettings})=>{
+const ActBar=({active,onSet,onSettings,dark,onDark})=>{
+  const {lang,setLang}=useI18n();
   const items=[
     {id:'explorer',k:'home',label:'Мои файлы'},
     {id:'law',k:'book',label:'Навигатор'},
@@ -4125,7 +4126,7 @@ const ActBar=({active,onSet,onSettings})=>{
   ];
   return(
     <nav className="global-nav myz-actbar" aria-label="Навигация рабочих областей">
-      <div className="myz-actbar-top-icon"><Ico k="shield" sz={22}/></div>
+      <div className="myz-actbar-top-icon"><LogoIcon sz={30}/></div>
       {items.map(it=>{
         const on=active===it.id;
         return(
@@ -4137,8 +4138,16 @@ const ActBar=({active,onSet,onSettings})=>{
         );
       })}
       <div className="flex-spacer"/>
-      <button type="button" title="Пользователи" aria-label="Пользователи" className="btn myz-actbar-item myz-actbar-item--off">
-        <Ico k="users" sz={21}/>
+      <div className="myz-actbar-lang">
+        {LANGS.map(l=>(
+          <button key={l} type="button" onClick={()=>setLang(l)} title={l.toUpperCase()}
+            className={`myz-actbar-lang-btn${lang===l?' myz-actbar-lang-btn--active':''}`}>
+            {l.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      <button type="button" title={dark?'Светлая тема':'Тёмная тема'} onClick={onDark} className="btn myz-actbar-item myz-actbar-item--off">
+        <Ico k={dark?'sun':'moon'} sz={18}/>
       </button>
       <button type="button" title="Настройки аккаунта" aria-label="Настройки аккаунта" onClick={onSettings} className="btn myz-actbar-item myz-actbar-item--off">
         <Ico k="settings" sz={21}/>
@@ -10148,7 +10157,7 @@ const App=()=>{
         </div>
       )}
       <div className="myz-workspace-row">
-        <ActBar active={actPanel} onSet={handleActPanel} onSettings={()=>setShowSettings(p=>!p)}/>
+        <ActBar active={actPanel} onSet={handleActPanel} onSettings={()=>setShowSettings(p=>!p)} dark={dark} onDark={toggleTheme}/>
         {/* LEFT PANEL — desktop: inline; mobile: fixed overlay */}
         <div className={`myz-panel-left${isMobile?' myz-panel-left--mobile':''}${leftOpen?' myz-panel-left--open':''}`}
           style={!isMobile ? {width:leftOpen?leftW:0} : undefined}>
