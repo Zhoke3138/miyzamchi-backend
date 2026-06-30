@@ -6275,64 +6275,89 @@ body.dk .myz-lang-btn--active {
 /* ── History dropdown ─────────────────────────────────────────── */
 .myz-history-dropdown {
   position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  width: 280px;
+  top: calc(100% + 8px);
+  right: -8px;
+  width: 300px;
   background: var(--bg-panel);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.1);
   z-index: 9999;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
-.myz-history-dropdown-header {
+
+/* Tab row */
+.myz-hist-tabs-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px 8px;
-  border-bottom: 1px solid var(--border-color);
+  gap: 2px;
+  padding: 8px 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.myz-hist-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  padding: 6px 4px;
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .04em;
-}
-.myz-history-new-btn {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: 5px;
-  padding: 3px 9px;
-  font-size: 11px;
-  font-weight: 600;
   cursor: pointer;
-  transition: opacity .15s;
+  transition: color .15s, background .15s;
+  letter-spacing: -.01em;
+  text-align: center;
 }
-.myz-history-new-btn:hover { opacity: .85; }
+.myz-hist-tab:hover { color: var(--text); }
+.myz-hist-tab--active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-bottom: 2px solid var(--text);
+}
+
+/* List */
 .myz-history-list {
   overflow-y: auto;
-  max-height: 340px;
+  max-height: 320px;
   padding: 4px 0;
 }
+.myz-hist-empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* Items */
 .myz-history-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
+  gap: 8px;
+  padding: 8px 12px;
   cursor: pointer;
   transition: background .12s;
-  border-radius: 0;
 }
-.myz-history-item:hover { background: var(--hover); }
-.myz-history-item--active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.myz-history-item:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.myz-history-item--active {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+.myz-history-item--active .myz-history-item-title { font-weight: 600; }
+.myz-history-item--noclk { cursor: default; }
+.myz-history-item--noclk:hover { background: transparent; }
+.myz-hist-item-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
 .myz-history-item-body {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 .myz-history-item-title {
   font-size: 12px;
@@ -6351,7 +6376,7 @@ body.dk .myz-lang-btn--active {
   border: none;
   color: var(--muted);
   cursor: pointer;
-  padding: 2px;
+  padding: 3px;
   border-radius: 3px;
   display: flex;
   align-items: center;
@@ -6361,7 +6386,7 @@ body.dk .myz-lang-btn--active {
   flex-shrink: 0;
 }
 .myz-history-item:hover .myz-history-item-del { opacity: 1; }
-.myz-history-item-del:hover { background: var(--hover); color: var(--text); }
+.myz-history-item-del:hover { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
 
 /* ── Hero PromptBox — compact textarea height ─────────────────────── */
 .myz-hero-input-wrap .myz-pb-textarea {

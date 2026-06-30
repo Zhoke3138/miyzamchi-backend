@@ -24,6 +24,8 @@ let _tid=0;
 const IDE_MODE_KEY='miyzamchy_ide_mode';
 const IDE_CHATS_KEY='miyzamchy_ide_chats';
 const IDE_ACTIVE_KEY='miyzamchy_ide_active_chat_id';
+const IDE_ANALYZE_HIST_KEY='miyzamchi_analyze_hist';
+const IDE_DOCS_HIST_KEY='miyzamchi_docs_hist';
 
 const uid=()=>('c_'+Math.random().toString(36).slice(2,10)+'_'+Date.now().toString(36));
 
@@ -110,6 +112,10 @@ const loadIdeChats=()=>{
     });
 };
 const saveIdeChats=(arr)=>{try{localStorage.setItem(IDE_CHATS_KEY,JSON.stringify(arr||[]))}catch(e){}};
+const loadAnalyzeHist=()=>safeJson(localStorage.getItem(IDE_ANALYZE_HIST_KEY)||'[]',[]);
+const saveAnalyzeHist=(arr)=>{try{localStorage.setItem(IDE_ANALYZE_HIST_KEY,JSON.stringify((arr||[]).slice(0,50)))}catch(e){}};
+const loadDocsHist=()=>safeJson(localStorage.getItem(IDE_DOCS_HIST_KEY)||'[]',[]);
+const saveDocsHist=(arr)=>{try{localStorage.setItem(IDE_DOCS_HIST_KEY,JSON.stringify((arr||[]).slice(0,50)))}catch(e){}};
 
 // Утилита: полная очистка истории IDE (вызвать из консоли / привязать к кнопке)
 window.clearAllIdeHistory = () => {
@@ -747,6 +753,18 @@ const AnalyzeDocsMode = () => {
     }, 100);
     return () => clearInterval(id);
   }, [running, tele.startedAt]);
+
+  // ── Сохранение в историю анализов при завершении ──────────────
+  const _prevAnalyzeRunning = useRef(false);
+  useEffect(() => {
+    if (_prevAnalyzeRunning.current && !running && tableRows.length > 0) {
+      const names = slots.filter(s => s.name).map(s => s.name).filter(Boolean);
+      const entry = { id: uid(), names: names.length ? names : ['Документ'], date: Date.now(), rowCount: tableRows.length };
+      saveAnalyzeHist([entry, ...loadAnalyzeHist()]);
+      try { window.dispatchEvent(new Event('miyzamchi:hist-updated')); } catch(_) {}
+    }
+    _prevAnalyzeRunning.current = running;
+  }, [running]);
 
   const readyCount = slots.filter(s => s.status === 'ready').length;
   const loadingCount = slots.filter(s => s.status === 'loading').length;
@@ -1704,6 +1722,15 @@ const CreateDocMode = ({ onToast }) => {
   const [deepBusy, setDeepBusy]   = useState(false);  // идёт глубокая проверка
   const listRef = useRef(null);
   useEffect(() => { const el = listRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages, busy]);
+
+  useEffect(() => {
+    if (genDone && docType) {
+      const label = (DOC_TYPES.find(d => d.k === docType)||{}).label || 'Документ';
+      const entry = { id: uid(), label, docType, date: Date.now() };
+      saveDocsHist([entry, ...loadDocsHist()]);
+      try { window.dispatchEvent(new Event('miyzamchi:hist-updated')); } catch(_) {}
+    }
+  }, [genDone]);
 
   const pickType = (t) => {
     setDocType(t); setStep('chat'); setReady(false); setGenDone(false); setGenReview(null);
@@ -7830,10 +7857,23 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
   };
 
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [histTab, setHistTab] = useState('chats');
+  const [analyzeHist, setAnalyzeHist] = useState(() => loadAnalyzeHist());
+  const [docsHist, setDocsHist] = useState(() => loadDocsHist());
+
+  useEffect(() => {
+    const refresh = () => { setAnalyzeHist(loadAnalyzeHist()); setDocsHist(loadDocsHist()); };
+    window.addEventListener('miyzamchi:hist-updated', refresh);
+    return () => window.removeEventListener('miyzamchi:hist-updated', refresh);
+  }, []);
+
+  useEffect(() => {
+    if (historyOpen) { setAnalyzeHist(loadAnalyzeHist()); setDocsHist(loadDocsHist()); }
+  }, [historyOpen]);
 
   const newCase=()=>{
     const n= (chats?.length||0)+1;
-    const c={id:uid(),title:`Дело ${n}`,createdAt:Date.now(),messages:[]};
+    const c={id:uid(),title:`Чат ${n}`,createdAt:Date.now(),messages:[]};
     const next=[c,...(chats||[])];
     setChats(next);
     saveIdeChats(next);
@@ -8698,30 +8738,73 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
             </button>
             {historyOpen && (
               <div className="myz-history-dropdown">
-                <div className="myz-history-dropdown-header">
-                  <span>История чатов</span>
-                  <button type="button" onClick={newCase} className="myz-history-new-btn">+ Новый</button>
+                <div className="myz-hist-tabs-row">
+                  {[['chats','Чаты'],['analyze','Анализы'],['docs','Документы']].map(([k,l])=>(
+                    <button key={k} type="button" onClick={()=>setHistTab(k)}
+                      className={`myz-hist-tab${histTab===k?' myz-hist-tab--active':''}`}>{l}</button>
+                  ))}
                 </div>
                 <div className="myz-history-list">
-                  {(chats||[]).map(c=>{
-                    const isActive=c.id===activeChat.id;
-                    const dateStr=c.createdAt?new Date(c.createdAt).toLocaleDateString('ru',{day:'2-digit',month:'2-digit',year:'2-digit'}):'';
-                    const msgCount=(c.messages||[]).filter(m=>m.role==='user').length;
-                    return(
-                      <div key={c.id} className={`myz-history-item${isActive?' myz-history-item--active':''}`}
-                        onClick={()=>{setActiveId(c.id);saveIdeActive(c.id);setHistoryOpen(false);}}>
-                        <div className="myz-history-item-body">
-                          <span className="myz-history-item-title">{c.title||'Без названия'}</span>
-                          <span className="myz-history-item-meta">{dateStr}{msgCount>0?` · ${msgCount} вопр.`:''}</span>
-                        </div>
-                        <button type="button" className="myz-history-item-del"
-                          onClick={e=>{e.stopPropagation();deleteChat(c.id);}}
-                          title="Удалить чат" aria-label="Удалить">
-                          <Ico k="x" sz={9}/>
-                        </button>
-                      </div>
-                    );
-                  })}
+                  {histTab==='chats' && (
+                    (chats||[]).length===0
+                      ? <div className="myz-hist-empty">Нет сохранённых чатов</div>
+                      : (chats||[]).map(c=>{
+                          const isActive=c.id===activeChat.id;
+                          const dateStr=c.createdAt?new Date(c.createdAt).toLocaleDateString('ru',{day:'2-digit',month:'2-digit',year:'2-digit'}):'';
+                          const msgCount=(c.messages||[]).filter(m=>m.role==='user').length;
+                          return(
+                            <div key={c.id} className={`myz-history-item${isActive?' myz-history-item--active':''}`}
+                              onClick={()=>{setActiveId(c.id);saveIdeActive(c.id);setHistoryOpen(false);}}>
+                              <div className="myz-history-item-body">
+                                <span className="myz-history-item-title">{c.title||'Чат'}</span>
+                                <span className="myz-history-item-meta">{dateStr}{msgCount>0?` · ${msgCount} вопр.`:''}</span>
+                              </div>
+                              <button type="button" className="myz-history-item-del"
+                                onClick={e=>{e.stopPropagation();deleteChat(c.id);}}
+                                title="Удалить чат" aria-label="Удалить">
+                                <Ico k="x" sz={9}/>
+                              </button>
+                            </div>
+                          );
+                        })
+                  )}
+                  {histTab==='analyze' && (
+                    analyzeHist.length===0
+                      ? <div className="myz-hist-empty">Анализы появятся здесь после проверки документов</div>
+                      : analyzeHist.map(a=>{
+                          const dateStr=a.date?new Date(a.date).toLocaleDateString('ru',{day:'2-digit',month:'2-digit',year:'2-digit'}):'';
+                          const names=(a.names||[]).join(', ')||'Документ';
+                          return(
+                            <div key={a.id} className="myz-history-item myz-history-item--noclk">
+                              <div className="myz-hist-item-icon">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                              </div>
+                              <div className="myz-history-item-body">
+                                <span className="myz-history-item-title" title={names}>{names.length>32?names.slice(0,32)+'…':names}</span>
+                                <span className="myz-history-item-meta">{dateStr}{a.rowCount>0?` · ${a.rowCount} позиций`:''}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                  )}
+                  {histTab==='docs' && (
+                    docsHist.length===0
+                      ? <div className="myz-hist-empty">Созданные документы появятся здесь</div>
+                      : docsHist.map(d=>{
+                          const dateStr=d.date?new Date(d.date).toLocaleDateString('ru',{day:'2-digit',month:'2-digit',year:'2-digit'}):'';
+                          return(
+                            <div key={d.id} className="myz-history-item myz-history-item--noclk">
+                              <div className="myz-hist-item-icon">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                              </div>
+                              <div className="myz-history-item-body">
+                                <span className="myz-history-item-title">{d.label||'Документ'}</span>
+                                <span className="myz-history-item-meta">{dateStr}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                  )}
                 </div>
               </div>
             )}
