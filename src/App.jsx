@@ -9493,7 +9493,7 @@ const App=()=>{
 
   const[dark,setDark]=useState(()=>localStorage.getItem('myz-dk')==='1');
   const[tt,setTt]=useState(false);
-  const[leftW,setLeftW]=useState(238);const[rightW,setRightW]=useState(340);const[rightSplit,setRightSplit]=useState(55);
+  const[leftW,setLeftW]=useState(238);const[rightW,setRightW]=useState(()=>Math.round(Math.max(320,window.innerWidth*0.40)));const[rightSplit,setRightSplit]=useState(55);
   const[npaCollapsed,setNpaCollapsed]=useState(true);const[chatCollapsed,setChatCollapsed]=useState(false);
   // Начальный layout: чат на весь экран, редактор скрыт до открытия документа
   const[leftOpen,setLeftOpen]=useState(false);const[rightOpen,setRightOpen]=useState(true);const[splitActive,setSplitActive]=useState(false);
@@ -9614,6 +9614,14 @@ const App=()=>{
   const[docGenSelCoords,setDocGenSelCoords]=useState({x:0,y:0});
   const[tweaks,setTweaks]=useState({accent:'#5C66DE'});
   const[tabs,setTabs]=useState([]);
+  // При первом открытии документа из fullscreen-чата — восстановить комфортный сплит 60/40
+  const prevTabsLen=useRef(0);
+  useEffect(()=>{
+    if(prevTabsLen.current===0&&tabs.length>0){
+      setRightW(Math.round(Math.max(320,window.innerWidth*0.40)));
+    }
+    prevTabsLen.current=tabs.length;
+  },[tabs.length]);
   const[activeTab,setActiveTab]=useState(null);const[ctxMenu,setCtxMenu]=useState(null);const[toasts,setToasts]=useState([]);
   // OO mode: карта tabId → fileId (для ONLYOFFICE)
   const[tabFileIds,setTabFileIds]=useState({});
@@ -9816,7 +9824,7 @@ const App=()=>{
       const{type,sx,lw,rw,rs,sy,x,y}=pending;
       pending=null;
       if(type==='l')setLeftW(Math.max(160,Math.min(420,lw+x-sx)));
-      if(type==='r')setRightW(Math.max(220,Math.min(640,rw-(x-sx))));
+      if(type==='r')setRightW(Math.max(240,Math.min(800,rw-(x-sx))));
       if(type==='rv'){const delta=((y-sy)/window.innerHeight)*100;setRightSplit(Math.max(20,Math.min(80,rs+delta)));}
     };
     const move=e=>{
