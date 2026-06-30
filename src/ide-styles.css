@@ -6754,7 +6754,14 @@ body.dk .myz-lang-btn--active {
 /* ════════════════════════════════════════════════════════════════════
    CHAT SCROLL AREA — messages viewport
    ════════════════════════════════════════════════════════════════════ */
-.myz-chat-scroll { flex: 1; overflow-y: auto; padding: var(--s-3h); }
+.myz-chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding-top: var(--s-3h);
+  padding-bottom: var(--s-3h);
+  padding-left:  max(var(--s-3h), calc((100% - 720px) / 2));
+  padding-right: max(var(--s-3h), calc((100% - 720px) / 2));
+}
 
 /* ════════════════════════════════════════════════════════════════════
    HERO MODE — first-open centered layout (like Claude.ai / ChatGPT)
@@ -6765,7 +6772,7 @@ body.dk .myz-lang-btn--active {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0;
+  padding: 0 !important;
 }
 .myz-hero-center {
   display: flex;
@@ -6859,10 +6866,13 @@ body.dk .myz-lang-btn--active {
    INPUT AREA — bottom bar containing textarea + controls
    ════════════════════════════════════════════════════════════════════ */
 .myz-input-area {
-  padding: var(--s-2) var(--s-2h);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--bg-bar);
+  padding-top: var(--s-2);
+  padding-bottom: var(--s-2);
+  padding-left:  max(var(--s-2h), calc((100% - 720px) / 2));
+  padding-right: max(var(--s-2h), calc((100% - 720px) / 2));
 }
 
 /* ── Incognito anonymise toggle ──────────────────────────────────── */
