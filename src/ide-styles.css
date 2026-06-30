@@ -6762,6 +6762,11 @@ body.dk .myz-lang-btn--active {
   padding-left:  max(var(--s-3h), calc((100% - 720px) / 2));
   padding-right: max(var(--s-3h), calc((100% - 720px) / 2));
 }
+/* Fullscreen chat: messages wider than input */
+.myz-chat-panel--fullscreen .myz-chat-scroll {
+  padding-left:  max(var(--s-3h), calc((100% - 900px) / 2));
+  padding-right: max(var(--s-3h), calc((100% - 900px) / 2));
+}
 
 /* ════════════════════════════════════════════════════════════════════
    HERO MODE — first-open centered layout (like Claude.ai / ChatGPT)

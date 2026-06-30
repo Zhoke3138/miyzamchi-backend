@@ -7310,7 +7310,7 @@ const anonymizeText = (t) => {
     .replace(/[А-ЯЁ][а-яё]+\s+[А-ЯЁ]\.\s*[А-ЯЁ]\./g, '[ФИО СКРЫТО]')
     .replace(/[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+/g, '[ФИО СКРЫТО]');
 };
-const AIChat=({onToast,onOpenArticle,onCollapse,onExpand})=>{
+const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
   const {tr} = useI18n();
   const [incognito, setIncognito] = useState(false);
   const [deepModalOpen, setDeepModalOpen] = useState(false);
@@ -8647,7 +8647,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand})=>{
   },[stick,scrollToBottom,activeChat.chat?.messages,thinking,streamStatus]);
 
   return(
-    <div className={`myz-chat-panel${heroMode?' myz-chat-panel--hero':''}`}>
+    <div className={`myz-chat-panel${heroMode?' myz-chat-panel--hero':''}${fullscreen&&!heroMode?' myz-chat-panel--fullscreen':''}`}>
       <div className="myz-chat-header">
         <div className="myz-chat-header-left">
           {/* Переключатель режима Чат / Агент — пилюля с двумя сегментами */}
@@ -10183,6 +10183,7 @@ const App=()=>{
               {!chatCollapsed && (
                 <div className="myz-chat-pane">
                   <AIChat onToast={addToast} onCollapse={collapseChat}
+                    fullscreen={tabs.length === 0}
                     onExpand={()=>setNpaCollapsed(true)}
                     onOpenArticle={(art)=>{setNpa(art);setHilite(art);setRightOpen(true);setNpaCollapsed(false);setTimeout(()=>setHilite(null),2200);addToast('book','Ст. '+art);}}/>
                 </div>
