@@ -7844,12 +7844,13 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
   },[isNearBottom]);
 
   const updateChatMessages=(updater)=>{
+    const field=agent?'agentMessages':'messages';
     setChats(prev=>{
       const list=[...(prev||[])];
       const idx=list.findIndex(c=>c.id===activeChat.id);
       if(idx<0) return prev;
-      const cur={...list[idx],messages:[...(list[idx].messages||[])]};
-      cur.messages=updater(cur.messages);
+      const cur={...list[idx],[field]:[...(list[idx][field]||[])]};
+      cur[field]=updater(cur[field]);
       list[idx]=cur;
       saveIdeChats(list);
       return list;
@@ -7859,7 +7860,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
   const autoTitleChat=(userText,attName)=>{
     const cur=activeChat.chat;
     if(!cur) return;
-    if((cur.messages||[]).length>0) return;
+    if((cur.messages||[]).length>0||(cur.agentMessages||[]).length>0) return;
     if(!/^(Чат|Дело)\s*\d*$/.test((cur.title||'').trim())) return;
     let title='';
     if(attName){
@@ -8034,7 +8035,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
       let gotAnyText = false;
       await streamChat({
         message: messageToSend,
-        history: (activeChat.chat?.messages || []).map(m=>({role:m.role==='ai'?'model':'user',parts:[{text:String(m.text||'')}]})),
+        history: (activeChat.chat?.[agent?'agentMessages':'messages'] || []).map(m=>({role:m.role==='ai'?'model':'user',parts:[{text:String(m.text||'')}]})),
         mode: mode,
         agentMode: agent,
         userQuery: agent ? userQuery : null,    // ▸ короткий запрос для прицельного RAG-retrieval
@@ -8366,7 +8367,8 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
     // Локальный флаг автосворачивания ThinkingBox на первом content-чанке (chat-режим)
     let collapsedByContent = false;
 
-    const history=(activeChat.chat?.messages||[])
+    const _histField=agent?'agentMessages':'messages';
+    const history=(activeChat.chat?.[_histField]||[])
       .filter(m=>m.role==='user'||m.role==='ai')
       .map(m=>({role:m.role==='ai'?'model':'user',parts:[{text:String(m.text||'')}]}));
 
@@ -8576,7 +8578,8 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
   // editor.doc.trackChanges.decide(accept) — жёлтый/зелёный фон исчезает, текст
   // становится постоянным. Команда уже применена авто-превью при ответе агента.
   const handleApplyCmd=(msgId,cmdIdx,cmd)=>{
-    const msg=(activeChat.chat?.messages||[]).find(x=>x.id===msgId);
+    const _f=agent?'agentMessages':'messages';
+    const msg=(activeChat.chat?.[_f]||[]).find(x=>x.id===msgId);
     const ids=(msg && msg.changeIds && msg.changeIds[cmdIdx]) || [];
     let ok=true;
     ids.forEach(id=>{ if(!decideTrackedChange(id,'accept')) ok=false; });
@@ -8588,7 +8591,8 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
   // ОТКЛОНИТЬ правку (Reject): откатываем tracked change(s) через decide(reject) —
   // зелёная вставка убирается, исходный текст восстанавливается.
   const handleRejectCmd=(msgId,cmdIdx)=>{
-    const msg=(activeChat.chat?.messages||[]).find(x=>x.id===msgId);
+    const _f2=agent?'agentMessages':'messages';
+    const msg=(activeChat.chat?.[_f2]||[]).find(x=>x.id===msgId);
     const ids=(msg && msg.changeIds && msg.changeIds[cmdIdx]) || [];
     ids.forEach(id=>decideTrackedChange(id,'reject'));
     updateChatMessages(mm=>mm.map(x=>x.id===msgId?{...x,appliedCmds:{...(x.appliedCmds||{}),[cmdIdx]:'rejected'}}:x));
@@ -8710,7 +8714,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
     );
   };
 
-  const messages=activeChat.chat?.messages||[];
+  const messages=agent?(activeChat.chat?.agentMessages||[]):(activeChat.chat?.messages||[]);
   const exchanges=[];let ii=0;
   while(ii<messages.length){
     if(messages[ii].role==='user'){exchanges.push({user:messages[ii],ai:messages[ii+1]||null});ii+=2}else ii++;
@@ -8718,7 +8722,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
   const heroMode = chatMode !== 'documents' && exchanges.length === 0 && !thinking && agentSteps.length === 0;
   useEffect(()=>{
     if(stick) scrollToBottom(false);
-  },[stick,scrollToBottom,activeChat.chat?.messages,thinking,streamStatus]);
+  },[stick,scrollToBottom,activeChat.chat?.messages,activeChat.chat?.agentMessages,thinking,streamStatus]);
 
   return(
     <div className={`myz-chat-panel${heroMode?' myz-chat-panel--hero':''}${fullscreen&&!heroMode?' myz-chat-panel--fullscreen':''}`}>
