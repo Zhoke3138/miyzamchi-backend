@@ -4505,19 +4505,17 @@ body.dk .analyze-accordion-content {
 }
 .myz-editor-wrapper .superdoc-toolbar-container {
     flex-shrink: 0;
-    height: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
 }
-/* Все вложенные элементы тулбара — любой уровень вложенности.
-   Нужно чтобы flex-контейнер (каким бы классом он ни назывался в Vue)
-   переносил кнопки на новую строку при нехватке ширины. */
-.myz-editor-wrapper .superdoc-toolbar-container *:not(button):not(input):not(select):not(svg):not(span):not(i) {
-    flex-wrap: wrap !important;
-    white-space: normal !important;
-    height: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
+.myz-editor-wrapper .superdoc-toolbar-container::-webkit-scrollbar {
+    height: 3px;
+}
+.myz-editor-wrapper .superdoc-toolbar-container::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 2px;
 }
 .myz-editor-wrapper .superdoc-editor-container {
     flex: 1;
