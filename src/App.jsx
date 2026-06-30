@@ -8444,11 +8444,6 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
         },
         onSources:(sources)=>{
           updateChatMessages(m=>m.map(x=>x.id===aiId?{...x,sources:sources||[]}:x));
-          const nums=extractArticleNumbers(sources||[]);
-          if(nums.length){
-            const n=nums[0];
-            onOpenArticle&&onOpenArticle(n);
-          }
         },
         onMetadata:(metadata)=>{
           updateChatMessages(m=>m.map(x=>x.id===aiId?{...x,metadata:metadata||[]}:x));
