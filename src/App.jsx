@@ -8725,7 +8725,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
   },[stick,scrollToBottom,activeChat.chat?.messages,activeChat.chat?.agentMessages,thinking,streamStatus]);
 
   return(
-    <div className={`myz-chat-panel${heroMode?' myz-chat-panel--hero':''}${fullscreen&&!heroMode?' myz-chat-panel--fullscreen':''}`}>
+    <div className={`myz-chat-panel${heroMode?' myz-chat-panel--hero':''}${fullscreen&&!heroMode?' myz-chat-panel--fullscreen':''}${agent?' myz-chat-panel--agent':''}`}>
       <div className="myz-chat-header">
         <div className="myz-chat-header-left">
           {/* Переключатель режима Чат / Агент — пилюля с двумя сегментами */}

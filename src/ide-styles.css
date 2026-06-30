@@ -3412,10 +3412,10 @@ button:focus-visible,.btn:focus-visible{
   z-index:9998;
   display:flex; flex-direction:column; align-items:center; gap:8px;
   padding:14px 8px 14px 6px;
-  background:linear-gradient(180deg, rgba(92,102,222,.95), rgba(72,82,200,.95));
+  background:#1C1C1E;
   color:#fff; border:none;
   border-radius:0 12px 12px 0;
-  box-shadow:0 4px 18px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.05);
+  box-shadow:0 4px 18px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.07);
   cursor:pointer;
   font-family:var(--font-sans);
   font-size:11px; font-weight:600;
@@ -3426,7 +3426,7 @@ button:focus-visible,.btn:focus-visible{
 }
 .ag-left-tab:hover{
   padding-left:10px;
-  background:linear-gradient(180deg, rgba(102,112,232,1), rgba(82,92,210,1));
+  background:#2C2C2E;
 }
 .ag-left-tab.open{
   transform:translateY(-50%) translateX(320px);
@@ -3436,7 +3436,7 @@ button:focus-visible,.btn:focus-visible{
 }
 @keyframes agTabPulse{
   0%, 100%{ box-shadow:0 4px 18px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.05); }
-  50%     { box-shadow:0 4px 22px rgba(92,102,222,.9), 0 0 0 2px rgba(92,102,222,.6); }
+  50%     { box-shadow:0 6px 24px rgba(0,0,0,.5), 0 0 0 2px rgba(255,255,255,.12); }
 }
 .ag-left-tab .ag-tab-ico{
   writing-mode:horizontal-tb;
@@ -3472,8 +3472,8 @@ button:focus-visible,.btn:focus-visible{
   position:fixed; left:0; top:0;
   width:320px; height:100vh;
   z-index:9997;
-  background:rgba(11,17,32,.96);
-  border-right:1px solid rgba(92,102,222,.35);
+  background:rgba(18,18,20,.97);
+  border-right:1px solid rgba(255,255,255,.09);
   box-shadow:6px 0 26px rgba(0,0,0,.5);
   backdrop-filter:blur(10px);
   -webkit-backdrop-filter:blur(10px);
@@ -3484,7 +3484,7 @@ button:focus-visible,.btn:focus-visible{
 }
 .ag-left-drawer.open{ transform:translateX(0); }
 .ag-left-drawer::-webkit-scrollbar{ width:6px; }
-.ag-left-drawer::-webkit-scrollbar-thumb{ background:rgba(92,102,222,.4); border-radius:3px; }
+.ag-left-drawer::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.2); border-radius:3px; }
 
 /* Полупрозрачный backdrop для клика-вне */
 .ag-drawer-backdrop{
@@ -3862,10 +3862,10 @@ body.dk .cmp-risk-card{ background:rgba(229,72,77,.16); color:#fda4a4; }
   background: var(--hover);
 }
 .analyze-row.expanded {
-  background: rgba(92, 102, 222, 0.04);
+  background: color-mix(in srgb, var(--text) 5%, var(--bg-panel));
 }
 body.dk .analyze-row.expanded {
-  background: rgba(92, 102, 222, 0.12);
+  background: color-mix(in srgb, var(--text) 8%, var(--bg-panel));
 }
 .analyze-cell {
   padding: 10px 12px;
@@ -4646,31 +4646,33 @@ body.dk .analyze-accordion-content {
 
 /* ── User message bubble ─────────────────────────────────────────── */
 .myz-user-bubble {
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
-  border: 1px solid rgba(255,255,255,.18);
+  background: #EBEBED;
+  border: 1px solid rgba(0,0,0,.08);
   border-radius: 16px 16px 4px 16px;
   padding: 11px 16px;
   font-size: var(--text-md);
   line-height: var(--lh-relaxed);
-  color: #fff;
+  color: var(--text-main);
   font-weight: 500;
-  box-shadow:
-    0 4px 16px var(--accent-glow),
-    0 1px 3px rgba(0,0,0,.12),
-    inset 0 1px 0 rgba(255,255,255,.18);
+  box-shadow: 0 1px 3px rgba(0,0,0,.07);
   letter-spacing: -.012em;
   font-family: var(--font-sans);
   word-break: break-word;
   position: relative;
 }
-/* Subtle inner highlight to give it depth */
-.myz-user-bubble::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(180deg, rgba(255,255,255,.08) 0%, transparent 50%);
-  pointer-events: none;
+/* Agent mode: slightly darker user bubble */
+.myz-chat-panel--agent .myz-user-bubble {
+  background: #D4D4D8;
+  border-color: rgba(0,0,0,.12);
+}
+body.dk .myz-user-bubble {
+  background: #2A2A2E;
+  border-color: rgba(255,255,255,.08);
+  color: #F4F4F6;
+}
+body.dk .myz-chat-panel--agent .myz-user-bubble {
+  background: #36363C;
+  border-color: rgba(255,255,255,.1);
 }
 
 /* ── AI response wrapper ─────────────────────────────────────────── */
@@ -5491,13 +5493,17 @@ body.dk .myz-doc-type-btn:not(:disabled):hover {
 .myz-create-bubble--user {
   align-self: flex-end;
   border-radius: 12px 12px 4px 12px;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--accent-strong) 100%);
-  border: 1px solid rgba(255,255,255,.18);
-  color: #fff;
+  background: #D4D4D8;
+  border: 1px solid rgba(0,0,0,.1);
+  color: var(--text-main);
   font-weight: 500;
   letter-spacing: -.008em;
-  box-shadow: 0 3px 14px var(--accent-glow), 0 1px 3px rgba(0,0,0,.12),
-    inset 0 1px 0 rgba(255,255,255,.12);
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+body.dk .myz-create-bubble--user {
+  background: #36363C;
+  border-color: rgba(255,255,255,.09);
+  color: #F4F4F6;
 }
 .myz-create-bubble--ai {
   align-self: flex-start;
@@ -5507,19 +5513,23 @@ body.dk .myz-doc-type-btn:not(:disabled):hover {
   color: var(--text-main);
 }
 
-/* ── Generate/Fix CTA button — primary gradient full-width ────── */
+/* ── Generate/Fix CTA button — dark full-width ────── */
 .myz-gen-cta-btn {
   width: 100%;
   padding: var(--s-2h);
   border-radius: var(--radius-sm);
   border: none;
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  background: #1C1C1E;
   color: #fff;
   font-weight: 600;
   font-size: var(--text-sm);
   cursor: pointer;
   font-family: var(--font-sans);
-  transition: opacity .15s, transform .12s;
+  transition: opacity .15s, transform .12s, background .15s;
+}
+body.dk .myz-gen-cta-btn {
+  background: #F4F4F6;
+  color: #1C1C1E;
 }
 .myz-gen-cta-btn:disabled {
   background: var(--hover);
@@ -6615,15 +6625,19 @@ body.dk .myz-lang-btn--active {
   padding: var(--s-1h) var(--s-3h);
   border: none;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  background: #1C1C1E;
   color: #fff;
   font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: var(--font-sans);
-  transition: opacity .15s, transform .1s;
+  transition: opacity .15s, transform .1s, background .15s;
 }
-.myz-insert-btn:hover { opacity: .9; transform: translateY(-1px); }
+body.dk .myz-insert-btn {
+  background: #F4F4F6;
+  color: #1C1C1E;
+}
+.myz-insert-btn:hover { opacity: .85; transform: translateY(-1px); }
 .myz-insert-btn:active { opacity: 1; transform: translateY(0); }
 
 /* ════════════════════════════════════════════════════════════════════
