@@ -9933,6 +9933,31 @@ const App=()=>{
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, tabs.find(t => t.id === activeTab)?.buffer]);
 
+  // Скрываем кнопку "Editing ▼" (режим правок SuperDoc) — она не нужна юристам,
+  // и при wrap уходит вниз. Ищем по тексту через MutationObserver.
+  useEffect(() => {
+    const hideEditingBtn = () => {
+      const container = document.getElementById('superdoc-wrapper');
+      if (!container) return;
+      container.querySelectorAll('button, [role="button"], [role="menuitem"]').forEach(el => {
+        const txt = el.textContent?.trim().toLowerCase() || '';
+        if (txt === 'editing' || txt === 'suggesting' || txt === 'viewing' ||
+            txt.startsWith('editing') || txt.startsWith('suggesting')) {
+          el.style.display = 'none';
+          // скрываем и родителя если он содержит только эту кнопку
+          if (el.parentElement && el.parentElement.children.length === 1) {
+            el.parentElement.style.display = 'none';
+          }
+        }
+      });
+    };
+    const obs = new MutationObserver(hideEditingBtn);
+    const container = document.getElementById('superdoc-wrapper');
+    if (container) obs.observe(container, { childList: true, subtree: true });
+    hideEditingBtn();
+    return () => obs.disconnect();
+  }, [activeTab]);
+
   // ── Auth gate: все хуки уже вызваны выше, здесь безопасны conditional returns ──
   // Шаг 0: env vars не вошли в сборку — блокируем доступ, нет тихого bypass.
   if(!_SUPA_URL||!_SUPA_KEY) return(

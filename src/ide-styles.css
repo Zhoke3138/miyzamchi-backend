@@ -4620,7 +4620,14 @@ body.dk .analyze-accordion-content {
 .sd-popover.track-changes,
 [class*="track-changes-commands"],
 [class*="track-changes-popover"],
-[class*="trackChangesPopover"] {
+[class*="trackChangesPopover"],
+/* Editing/Suggesting/Viewing mode switcher — не нужен, скрываем */
+[class*="editing-mode"],
+[class*="editingMode"],
+[class*="review-mode"],
+[class*="reviewMode"],
+.sd-editing-mode-btn,
+.superdoc-editing-mode {
     display: none !important;
     visibility: hidden !important;
     pointer-events: none !important;
