@@ -4505,21 +4505,15 @@ body.dk .analyze-accordion-content {
 }
 .myz-editor-wrapper .superdoc-toolbar-container {
     flex-shrink: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-color) transparent;
+    height: auto !important;   /* расти в высоту при переносе строки */
+    max-height: none !important;
+    overflow: visible;
 }
-.myz-editor-wrapper .superdoc-toolbar-container::-webkit-scrollbar { height: 3px; }
-.myz-editor-wrapper .superdoc-toolbar-container::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 2px;
-}
-/* Fallback: если toolbar-container не тот элемент — ловим superdoc-wrapper */
-.myz-editor-wrapper .superdoc-wrapper {
-    overflow-x: auto;
-    scrollbar-width: thin;
-    scrollbar-color: transparent transparent;
+/* flex-wrap ТОЛЬКО на самом flex-контейнере тулбара — 1-2 уровня вглубь.
+   Не трогаем дочерние кнопки/иконки (там нет height/overflow) */
+.myz-editor-wrapper .superdoc-toolbar-container > *,
+.myz-editor-wrapper .superdoc-toolbar-container > * > * {
+    flex-wrap: wrap !important;
 }
 .myz-editor-wrapper .superdoc-editor-container {
     flex: 1;
