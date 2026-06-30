@@ -6067,14 +6067,13 @@ body.dk .myz-actbar-item--on {
   flex-direction: row;
   align-items: center;
   gap: 5px;
-  padding: 6px 12px;
-  flex: 1;
+  padding: 6px 14px;
+  flex: 0 0 auto;
   border-radius: 8px;
   border: none;
   cursor: pointer;
   font-family: var(--font-sans);
   transition: background .08s, color .08s;
-  min-width: 0;
   white-space: nowrap;
 }
 .myz-chat-mode-tab-top {
@@ -6734,7 +6733,7 @@ body.dk .myz-lang-btn--active {
   gap: 8px;
   transition: background-color .3s ease, border-color .3s ease;
 }
-.myz-chat-header-left  { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.myz-chat-header-left  { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 0; }
 .myz-chat-header-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -6742,7 +6741,7 @@ body.dk .myz-lang-btn--active {
    ════════════════════════════════════════════════════════════════════ */
 .myz-mode-pill {
   display: flex;
-  flex: 1;
+  flex: 0 0 auto;
   padding: 3px;
   gap: 2px;
   border-radius: 10px;
@@ -6798,14 +6797,6 @@ body.dk .myz-lang-btn--active {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-/* Hero mode: mode pill doesn't need to stretch full width */
-.myz-chat-panel--hero .myz-chat-header-left {
-  flex: 0 0 auto;
-}
-.myz-chat-panel--hero .myz-mode-pill {
-  flex: unset;
-  width: auto;
 }
 
 /* ════════════════════════════════════════════════════════════════════
