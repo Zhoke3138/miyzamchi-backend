@@ -3653,8 +3653,8 @@ const TREE=[{id:'codes',icon:'book',label:'КОДЕКСЫ КР',sub:'ГК, УК,
 /* ═══ Handle ═══ */
 const Handle=({onMD,vert})=>{
   const[hov,setHov]=useState(false);const[act,setAct]=useState(false);
-  return(<div onMouseDown={onMD} onMouseUp={()=>setAct(false)} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>{setHov(false);setAct(false)}} style={{[vert?'width':'height']:'100%',[vert?'height':'width']:4,flexShrink:0,cursor:vert?'row-resize':'col-resize',zIndex:10,display:'flex',alignItems:'center',justifyContent:'center',background:act?'var(--accent)':hov?'var(--accent)':'var(--border)',transition:'background .15s',boxShadow:act?'0 0 10px var(--accent-glow)':'none'}}>
-    <div style={{[vert?'width':'height']:20,[vert?'height':'width']:2,background:(hov||act)?'rgba(255,255,255,.4)':'transparent',borderRadius:1}}/>
+  return(<div onMouseDown={onMD} onMouseUp={()=>setAct(false)} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>{setHov(false);setAct(false)}} style={{[vert?'width':'height']:'100%',[vert?'height':'width']:4,flexShrink:0,cursor:vert?'row-resize':'col-resize',zIndex:10,display:'flex',alignItems:'center',justifyContent:'center',background:act?'#3A3A3C':hov?'#3A3A3C':'var(--border)',transition:'background .15s',boxShadow:'none'}}>
+    <div style={{[vert?'width':'height']:20,[vert?'height':'width']:2,background:(hov||act)?'rgba(255,255,255,.5)':'transparent',borderRadius:1}}/>
   </div>);
 };
 
