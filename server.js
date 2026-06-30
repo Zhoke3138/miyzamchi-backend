@@ -3116,23 +3116,351 @@ function formatLayeredContext({ specMatches, genMatches, procMatches, liabMatche
         .join('\n\n══════════════════════════════════\n\n');
 }
 
-// Оркестратор: адаптивный 1-8 слойный retrieval + финальный синтез по консультант-промпту.
-// Сначала Gemini Flash Lite классифицирует сложность (1-4) → выбирается набор слоёв.
-// Подходит для любого юридического вопроса без приложенного документа.
+// ════════════════════════════════════════════════════════════════════
+// MULTI-QUESTION DECOMPOSITION — обнаружение, декомпозиция, параллельный RAG
+// Запускается ТОЛЬКО внутри handleDeepThinking (после classifyQuery→'complex').
+// Простые вопросы ('simple') сюда не попадают.
+// ════════════════════════════════════════════════════════════════════
+
+// Определяет есть ли несколько самостоятельных правовых подвопросов.
+// Использует LLM (Flash Lite) — надёжнее regex для коротких многовопросных запросов.
+async function detectMultiQuestion(userQ) {
+    const systemPrompt = `Ты — анализатор юридических запросов Кыргызской Республики.
+Определи: содержит ли запрос несколько САМОСТОЯТЕЛЬНЫХ правовых подвопросов,
+каждый из которых требует поиска по РАЗНЫМ нормам закона.
+
+МНОГОВОПРОСНЫЕ (isMulti: true):
+• "Можно ли уволить за опоздание и какой штраф?" → увольнение (ТК) + штраф (КоАО) — разные нормы
+• "1. Вправе ли инспектор? 2. Законно ли доначисление?" → 2 независимых вопроса
+• "Объясни сроки, пошлину и порядок подачи иска" → 3 независимых правовых аспекта
+
+НЕ МНОГОВОПРОСНЫЕ (isMulti: false):
+• "Какой срок исковой давности по трудовым спорам?" — один вопрос
+• "Расскажи всё о расторжении договора аренды" — одна тема
+• "Инспектор провёл проверку и доначислил налог. Правомерны ли его действия?" — один вопрос (одна цепочка событий)
+• Длинное описание ситуации с ОДНИМ итоговым вопросом — один вопрос
+
+ВАЖНО:
+- Факты дела (кто, когда, что случилось) — это КОНТЕКСТ, не подвопросы
+- Длина текста ≠ многовопросность
+- Если все части ведут к одной норме/одному выводу → isMulti: false
+- Максимум 5 подвопросов
+
+Отвечай ТОЛЬКО JSON, без markdown:`;
+    const userPrompt = `Запрос: """${userQ.slice(0, 1500)}"""
+
+{
+  "isMulti": boolean,
+  "passport": "2-3 предложения с общими фактами дела (пусто если нет)",
+  "subQuestions": [
+    { "text": "самостоятельная формулировка подвопроса", "domain": "tax|labor|civil|criminal|admin|other" }
+  ]
+}`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
+        const fi = cleaned.indexOf('{');
+        const li = cleaned.lastIndexOf('}');
+        if (fi < 0 || li <= fi) return { isMulti: false, passport: '', subQuestions: [] };
+        const parsed = JSON.parse(cleaned.slice(fi, li + 1));
+        if (!parsed.isMulti || !Array.isArray(parsed.subQuestions) || parsed.subQuestions.length < 2) {
+            return { isMulti: false, passport: '', subQuestions: [] };
+        }
+        return {
+            isMulti: true,
+            passport: String(parsed.passport || '').slice(0, 600),
+            subQuestions: parsed.subQuestions.slice(0, 5).map(sq => ({
+                text: String(sq.text || '').slice(0, 400),
+                domain: String(sq.domain || 'other')
+            }))
+        };
+    } catch (e) {
+        console.error('[MultiQ-Detect] failed:', e.message);
+        return { isMulti: false, passport: '', subQuestions: [] };
+    }
+}
+
+// Генерирует запросы для поиска исключений из найденных норм.
+async function generateExceptionQueries(subQText, foundArticles) {
+    const articleList = foundArticles.slice(0, 5)
+        .map(m => [m.metadata?.npa_title, m.metadata?.article_title].filter(Boolean).join(' — '))
+        .filter(Boolean).join('; ');
+    const systemPrompt = `Ты — юридический поисковый эксперт КР. Отвечаешь ТОЛЬКО JSON-массивом.`;
+    const userPrompt = `По вопросу: "${subQText.slice(0, 300)}"
+Найдены нормы: ${articleList || 'нет данных'}
+
+Сгенерируй 3 точечных поисковых запроса для векторного поиска по НПА КР,
+направленных на поиск ИСКЛЮЧЕНИЙ из найденных правил, ограничений их применения
+и специальных случаев когда общее правило не работает.
+
+["запрос 1", "запрос 2", "запрос 3"]`;
+    try {
+        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
+        const fi = cleaned.indexOf('[');
+        const li = cleaned.lastIndexOf(']');
+        if (fi < 0 || li <= fi) return [];
+        const parsed = JSON.parse(cleaned.slice(fi, li + 1));
+        return Array.isArray(parsed)
+            ? parsed.slice(0, 4).map(q => String(q).slice(0, 250)).filter(Boolean)
+            : [];
+    } catch (e) {
+        console.error('[MultiQ-ExcQueries] failed:', e.message);
+        return [];
+    }
+}
+
+// Второй проход Pinecone — ищет исключения и ограничения из найденных норм.
+async function exceptionsRetrieval(subQText, foundArticles) {
+    const exQueries = await generateExceptionQueries(subQText, foundArticles);
+    if (!exQueries.length) return [];
+    const results = await Promise.allSettled(
+        exQueries.map(q => adaptiveRetrieval(q, 'fast', null, { queryType: 'npa', npaQuota: 3 }))
+    );
+    const seen = new Set();
+    const out = [];
+    for (const r of results) {
+        if (r.status !== 'fulfilled') continue;
+        for (const m of r.value?.all || []) {
+            const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
+            if (key !== '|' && !seen.has(key)) { seen.add(key); out.push(m); }
+        }
+    }
+    return out;
+}
+
+// Умный выбор слоёв по правовому домену подвопроса.
+const DOMAIN_LAYER_IDS = {
+    tax:      [1, 2, 3, 4, 5],
+    labor:    [1, 2, 3, 4, 6],
+    civil:    [1, 2, 3, 4, 7],
+    criminal: [1, 2, 3, 8],
+    admin:    [1, 3, 4],
+    other:    [1, 2, 3, 4, 5, 6, 7, 8]
+};
+
+// Полный RAG-пайплайн для одного подвопроса: reformulate → retrieval → exceptions.
+// НЕ эмитит SSE-шаги — родительский handleMultiQuestionRAG управляет ими.
+async function runSubQuestionPipeline(passport, subQ) {
+    const enrichedQ = passport
+        ? `[Контекст дела: ${passport.slice(0, 300)}] ${subQ.text}`
+        : subQ.text;
+    const layerIds = DOMAIN_LAYER_IDS[subQ.domain] || DOMAIN_LAYER_IDS.other;
+    const activeCfgs = LAYER_CONFIGS.filter(c => layerIds.includes(c.id));
+
+    // Реформулировка: enriched запрос → 8 поисковых стратегий
+    const queries = await reformulateQueries(enrichedQ);
+    const ctxPrefix = queries.topic ? `[Контекст: ${queries.topic.slice(0, 160)}] ` : '';
+    const wrap = q => ctxPrefix + q;
+
+    // Параллельный retrieval по выбранным слоям (без SSE-шагов)
+    const results = await Promise.allSettled(
+        activeCfgs.map(cfg =>
+            adaptiveRetrieval(wrap(queries[cfg.queryKey]), cfg.mode, null, { queryType: 'npa', npaQuota: cfg.quota })
+        )
+    );
+
+    const seen = new Set();
+    const mainMatches = [];
+    activeCfgs.forEach((cfg, i) => {
+        const r = results[i];
+        if (r.status !== 'fulfilled') return;
+        for (const m of r.value?.all || []) {
+            const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
+            if (key !== '|' && !seen.has(key)) { seen.add(key); mainMatches.push(m); }
+        }
+    });
+
+    // Второй проход: исключения из найденных норм
+    const excMatches = await exceptionsRetrieval(subQ.text, mainMatches);
+
+    return { subQ, mainMatches, excMatches };
+}
+
+// Форматирует результаты всех подвопросов в структурированный контекст для синтеза.
+function formatMultiQContext(subResults) {
+    return subResults.map((sr, idx) => {
+        const { subQ, mainMatches, excMatches } = sr;
+        const fmtMatch = (m, tag) => {
+            const md = m.metadata || {};
+            return `  [${tag} — ${md.npa_title} | ${md.article_title}]\n  ${(md.full_text || '').slice(0, 1200)}`;
+        };
+        const mainSection = mainMatches.length > 0
+            ? mainMatches.map(m => fmtMatch(m, 'НОРМА')).join('\n\n')
+            : '  [Нормы по данному подвопросу не найдены в базе]';
+        const excSection = excMatches.length > 0
+            ? excMatches.map(m => fmtMatch(m, 'ИСКЛЮЧЕНИЕ')).join('\n\n')
+            : '  [Исключения из найденных норм в базе не обнаружены]';
+        return `╔══ ПОДВОПРОС ${idx + 1}: ${subQ.text}\n\n▌ ПРИМЕНИМЫЕ НОРМЫ:\n${mainSection}\n\n▌ ИСКЛЮЧЕНИЯ И ОГРАНИЧЕНИЯ:\n${excSection}\n╚${'═'.repeat(60)}`;
+    }).join('\n\n');
+}
+
+// Оркестратор Multi-Q: параллельный RAG по каждому подвопросу → синтез.
+async function handleMultiQuestionRAG(message, history, res, userQ, mqResult, cleanHistory) {
+    const { passport, subQuestions } = mqResult;
+
+    // Шаги для каждого подвопроса (UI видит их в ThinkingBox)
+    subQuestions.forEach((sq, i) => {
+        sendStep(res, {
+            id: `subq_${i + 1}`,
+            status: 'loading',
+            text: `🔍 Вопрос ${i + 1}: ${sq.text.slice(0, 90)}${sq.text.length > 90 ? '...' : ''}`
+        });
+    });
+
+    // Все подвопросы — параллельно
+    const settled = await Promise.allSettled(
+        subQuestions.map(sq => runSubQuestionPipeline(passport, sq))
+    );
+
+    const resolved = [];
+    settled.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+            resolved.push(r.value);
+            const { mainMatches, excMatches } = r.value;
+            sendStep(res, {
+                id: `subq_${i + 1}`,
+                status: 'success',
+                text: `Вопрос ${i + 1}: ${mainMatches.length} норм + ${excMatches.length} исключений`
+            });
+        } else {
+            console.error(`[MultiQ] subq ${i + 1} failed:`, r.reason?.message);
+            sendStep(res, { id: `subq_${i + 1}`, status: 'error', text: `Вопрос ${i + 1}: ошибка поиска` });
+        }
+    });
+
+    if (resolved.length === 0) {
+        sendStep(res, { id: 'synthesize', status: 'warning', text: 'Нормы не найдены ни по одному подвопросу' });
+        res.write(`data: ${JSON.stringify({ text: 'К сожалению, не удалось найти нормы ни по одному из подвопросов. Рекомендую cbd.minjust.gov.kg.' })}\n\n`);
+        return;
+    }
+
+    const totalMain = resolved.reduce((s, r) => s + r.mainMatches.length, 0);
+    const totalExc  = resolved.reduce((s, r) => s + r.excMatches.length,  0);
+    sendStep(res, { id: 'exceptions', status: 'success', text: `Исключения проверены: ${totalExc} найдено` });
+
+    // Preview-текст перед стартом Gemini
+    res.write(`data: ${JSON.stringify({ text: `*Найдено ${totalMain} норм + ${totalExc} исключений по ${resolved.length} подвопросам.* Синтезирую структурированный ответ...\n\n` })}\n\n`);
+
+    sendStep(res, { id: 'synthesize', status: 'loading', text: `Синтезирую ответ по ${resolved.length} подвопросам` });
+    sendStatus(res, '✍️ Синтезирую структурированный ответ...');
+
+    const multiQContext = formatMultiQContext(resolved);
+    const passportSection = passport ? `\nКонтекст дела: ${passport}\n` : '';
+    const subQList = subQuestions.map((sq, i) => `${i + 1}. ${sq.text}`).join('\n');
+
+    const systemPrompt = BASE_CONSULTANT_PROMPT + `
+
+═══ РЕЖИМ МУЛЬТИВОПРОСНОГО АНАЛИЗА ═══
+${passportSection}
+Вопрос содержит ${subQuestions.length} самостоятельных подвопросов:
+${subQList}
+
+Ниже — нормы, найденные ОТДЕЛЬНО по каждому подвопросу через независимый RAG-поиск.
+Каждый блок содержит НОРМЫ и ИСКЛЮЧЕНИЯ/ОГРАНИЧЕНИЯ.
+
+СТРУКТУРА ОТВЕТА (строго по этому шаблону):
+## По вопросу 1: [точная формулировка]
+**Норма:** [что нашли]
+**Исключения:** [что нашли, или "Исключения в базе не обнаружены"]
+**Вывод:** [конкретный вывод по данному подвопросу]
+
+## По вопросу 2: [точная формулировка]
+...
+
+## Итоговое заключение
+[Краткое резюме по всему делу — что законно, что нет, рекомендации]
+
+═══ СТРОГИЕ ПРАВИЛА АНТИГАЛЛЮЦИНАЦИИ ═══
+1. ПОРОГИ И ЦИФРЫ: Если найдена норма-правило, но конкретный порог/процент/сумма/срок
+   в найденных статьях ОТСУТСТВУЕТ — пиши явно:
+   «Норма о [правиле] найдена (ст. X НК/ГК/ТК КР), однако конкретный порог
+   в базе не обнаружен — требуется ручная проверка оригинала на cbd.minjust.gov.kg»
+
+2. ИСКЛЮЧЕНИЯ: После каждого правила — проверь блок ИСКЛЮЧЕНИЯ.
+   Если тег "[Исключения... не обнаружены]" → пиши:
+   «Исключения из данного правила в базе не обнаружены — рекомендуется ручная проверка»
+
+3. КОЛЛИЗИИ НОРМ: Если нормы двух статей противоречат — изложи обе и напиши:
+   «Коллизия норм — применяется принцип lex specialis / lex posterior»
+
+4. АБСОЛЮТНЫЙ ЗАПРЕТ: Никакие конкретные цифры, проценты, сроки из обучающих данных —
+   только то что явно написано в найденных статьях.
+
+5. НОРМЫ НЕ НАЙДЕНЫ: Если по конкретному подвопросу блок пустой → честно:
+   «По данному вопросу нормы в базе не найдены. Рекомендую cbd.minjust.gov.kg»
+
+НЕ СМЕШИВАЙ нормы из разных подвопросов.`;
+
+    const finalPrompt = `Исходный вопрос: "${userQ}"\n${passportSection}\n${multiQContext}`;
+
+    try {
+        await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res);
+        sendStep(res, { id: 'synthesize', status: 'success', text: 'Структурированный анализ готов' });
+
+        // Источники из всех подвопросов (до 15 уникальных)
+        const seenSrc = new Set();
+        const sourcesArr = [];
+        for (const sr of resolved) {
+            for (const m of [...sr.mainMatches, ...sr.excMatches]) {
+                const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
+                if (key !== '|' && !seenSrc.has(key)) {
+                    seenSrc.add(key);
+                    sourcesArr.push(m);
+                    if (sourcesArr.length >= 15) break;
+                }
+            }
+            if (sourcesArr.length >= 15) break;
+        }
+        const sources = sourcesArr.map(m => `${m.metadata?.npa_title || 'НПА'} — ${m.metadata?.article_title || ''}`);
+        const metadata = sourcesArr.map(m => ({
+            npa_title:    m.metadata?.npa_title    || '',
+            article_title: m.metadata?.article_title || '',
+            full_text:    m.metadata?.full_text    || ''
+        }));
+        if (sources.length > 0) res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
+    } catch (err) {
+        console.error('[MultiQ] synthesis failed:', err.message);
+        sendStep(res, { id: 'synthesize', status: 'error', text: 'Ошибка синтеза' });
+        try {
+            await streamGeminiResponse(getNextKey(), BASE_CONSULTANT_PROMPT, finalPrompt, cleanHistory, res);
+        } catch (e2) {
+            res.write(`data: ${JSON.stringify({ text: '\n\n⚠️ Серверы временно перегружены. Повторите запрос через минуту.' })}\n\n`);
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DEEP THINKING — адаптивный RAG (1-8 слоёв) + Multi-Q decomposition
+// Для complex-запросов. Simple-запросы → handleSimpleConsultation.
+// ════════════════════════════════════════════════════════════════════
 async function handleDeepThinking(message, history, res, userQuery = null) {
     const userQ = (userQuery && userQuery.trim()) || message;
     const cleanHistory = sanitizeHistory(history);
-    // Follow-up RAG: обогащаем запрос контекстом предыдущих сообщений
     const retrievalQ = buildContextualQuery(userQ, cleanHistory);
 
-    // Шаг 0: классификация сложности (Gemini Flash Lite, ~1-2с)
-    sendStep(res, { id: 'classify', status: 'loading', text: 'Оцениваю сложность вопроса...' });
+    // Шаг 0: одновременно анализируем структуру вопроса (multi-Q?) и сложность.
+    // detectMultiQuestion использует Flash Lite (~1.5с) — дешевле, чем потерянное качество.
+    sendStep(res, { id: 'classify', status: 'loading', text: 'Анализирую структуру вопроса...' });
+    const mqResult = await detectMultiQuestion(userQ);
+
+    if (mqResult.isMulti && mqResult.subQuestions.length >= 2) {
+        // Multi-Q путь: отдельный RAG на каждый подвопрос + поиск исключений
+        sendStep(res, {
+            id: 'classify',
+            status: 'success',
+            text: `📋 Обнаружено ${mqResult.subQuestions.length} подвопросов — параллельный поиск`,
+            reason: mqResult.passport ? `Фабула: ${mqResult.passport.slice(0, 100)}…` : null
+        });
+        return handleMultiQuestionRAG(message, history, res, userQ, mqResult, cleanHistory);
+    }
+
+    // Single-Q путь: классификация сложности → адаптивный N-слойный retrieval
     const level = await classifyComplexity(userQ);
     const lm = LEVEL_META[level];
     const layerIds = LEVEL_LAYER_IDS[level];
     sendStep(res, { id: 'classify', status: 'success', text: `${lm.emoji} ${lm.label} — ${layerIds.length} слоёв`, reason: `Уровень ${level}/4` });
 
-    // Retrieval: только нужные слои в параллели (используем enriched query)
     const { specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches } =
         await deepRetrievalChain(retrievalQ, res, layerIds);
 
@@ -3144,41 +3472,74 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
         return;
     }
 
-    // Preview-текст: эмитируем до запуска Gemini — текст появляется сразу,
-    // ThinkingBox схлопывается, пользователь видит прогресс без паузы на TTFT.
-    const layerNames = [
-        specMatches.length   && `спец. нормы: ${specMatches.length}`,
-        genMatches.length    && `общие: ${genMatches.length}`,
-        procMatches.length   && `процессуальные: ${procMatches.length}`,
-        liabMatches.length   && `ответственность: ${liabMatches.length}`,
-    ].filter(Boolean).join(', ');
-    res.write(`data: ${JSON.stringify({ text: `*Найдено ${allMatches.length} норм (${layerNames || 'по теме'}).* Анализирую...\n\n` })}\n\n`);
+    // Exceptions retrieval: второй проход для поиска исключений из найденных норм
+    sendStep(res, { id: 'exceptions', status: 'loading', text: 'Проверяю исключения из найденных норм...' });
+    const excMatches = await exceptionsRetrieval(userQ, allMatches);
+    sendStep(res, {
+        id: 'exceptions',
+        status: 'success',
+        text: excMatches.length > 0 ? `Найдено исключений: ${excMatches.length}` : 'Исключений в базе не обнаружено'
+    });
 
-    // Этап 9: финальный синтез с layered context
+    // Preview-текст: до старта Gemini — ThinkingBox схлопывается, пользователь видит прогресс
+    const layerNames = [
+        specMatches.length && `спец. нормы: ${specMatches.length}`,
+        genMatches.length  && `общие: ${genMatches.length}`,
+        procMatches.length && `процессуальные: ${procMatches.length}`,
+        liabMatches.length && `ответственность: ${liabMatches.length}`,
+    ].filter(Boolean).join(', ');
+    res.write(`data: ${JSON.stringify({ text: `*Найдено ${allMatches.length} норм (${layerNames || 'по теме'})${excMatches.length ? ` + ${excMatches.length} исключений` : ''}.* Анализирую...\n\n` })}\n\n`);
+
     sendStep(res, { id: 'synthesize', status: 'loading', text: 'Формирую итоговую консультацию' });
     sendStatus(res, '✍️ Формирую итоговую консультацию...');
 
-    const layeredContext = formatLayeredContext({ specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches });
+    // Объединяем основные нормы и исключения в layered context
+    const excSeen = new Set(allMatches.map(m => `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`));
+    const newExcMatches = excMatches.filter(m => {
+        const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
+        return key !== '|' && !excSeen.has(key);
+    });
+    const layeredContext = formatLayeredContext({
+        specMatches, genMatches, procMatches, liabMatches,
+        bylawMatches, rightsMatches, defMatches, evMatches
+    });
+    const excContext = newExcMatches.length > 0
+        ? '\n\n══════ ⚠️ ИСКЛЮЧЕНИЯ И ОГРАНИЧЕНИЯ (второй проход RAG) ══════\n\n' +
+          newExcMatches.map(m => {
+              const md = m.metadata || {};
+              return `[ИСКЛЮЧЕНИЕ — ${md.npa_title} | ${md.article_title}]\n${md.full_text || ''}`;
+          }).join('\n\n---\n\n')
+        : '\n\n══════ ⚠️ ИСКЛЮЧЕНИЯ (второй проход RAG) ══════\n\n[Исключения из найденных норм в базе не обнаружены]';
 
     const isL4 = detectL4Request(userQ);
     const schema = buildThinkingSchema(level);
     let systemPrompt = BASE_CONSULTANT_PROMPT + `
 
-═══ ИЕРАРХИЧЕСКИЙ КОНТЕКСТ (${layerIds.length} СЛОЁВ) ═══
+═══ ИЕРАРХИЧЕСКИЙ КОНТЕКСТ (${layerIds.length} СЛОЁВ + ИСКЛЮЧЕНИЯ) ═══
 Контекст ниже разделён на слои — используй ВСЕ доступные слои для ответа.
 Все номера статей бери ТОЛЬКО из переданного контекста — никогда из памяти.
 
-${schema}`;
+${schema}
+
+═══ АНТИГАЛЛЮЦИНАЦИЯ — НЕПОЛНЫЕ ДАННЫЕ ═══
+1. ПОРОГИ И ЦИФРЫ: Если найдена общая норма, но конкретный порог/процент/сумма/срок
+   в переданных статьях ОТСУТСТВУЕТ — пиши явно:
+   «Норма о [правиле] найдена, однако конкретный порог в базе не обнаружен —
+   требуется ручная проверка оригинала НПА на cbd.minjust.gov.kg»
+2. ИСКЛЮЧЕНИЯ: В контексте есть блок "ИСКЛЮЧЕНИЯ И ОГРАНИЧЕНИЯ". Если он пустой —
+   напиши: «Исключения из данного правила в базе не обнаружены»
+3. КОЛЛИЗИИ: Если нормы противоречат — изложи обе и укажи:
+   «Коллизия норм — применяется lex specialis / lex posterior»
+4. АБСОЛЮТНЫЙ ЗАПРЕТ: Никакие конкретные цифры, сроки, проценты из обучающих данных.`;
     if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
     if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
 
-    const finalPrompt = `Вопрос пользователя: "${userQ}"\n\n${layeredContext}`;
+    const finalPrompt = `Вопрос пользователя: "${userQ}"\n\n${layeredContext}${excContext}`;
 
     try {
         await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res);
         sendStep(res, { id: 'synthesize', status: 'success', text: 'Консультация готова' });
 
-        // Источники: top из каждого слоя (8 слоёв, до 12 уникальных источников)
         const seenSrc = new Set();
         const pickN = (arr, n) => {
             const out = [];
@@ -3199,17 +3560,16 @@ ${schema}`;
             ...pickN(bylawMatches,  1),
             ...pickN(rightsMatches, 1),
             ...pickN(defMatches,    1),
-            ...pickN(evMatches,     1)
+            ...pickN(evMatches,     1),
+            ...pickN(newExcMatches, 2)
         ].slice(0, 12);
         const sources = sourcesArr.map(m => `${m.metadata?.npa_title || 'НПА'} — ${m.metadata?.article_title || ''}`);
         const metadata = sourcesArr.map(m => ({
-            npa_title: m.metadata?.npa_title || '',
+            npa_title:    m.metadata?.npa_title    || '',
             article_title: m.metadata?.article_title || '',
-            full_text: m.metadata?.full_text || ''
+            full_text:    m.metadata?.full_text    || ''
         }));
-        if (sources.length > 0) {
-            res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
-        }
+        if (sources.length > 0) res.write(`data: ${JSON.stringify({ sources, metadata })}\n\n`);
     } catch (err) {
         console.error('[DeepThinking] synthesis failed:', err.message);
         sendStep(res, { id: 'synthesize', status: 'error', text: 'Ошибка финального синтеза' });
