@@ -7747,7 +7747,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
     let list=chats||[];
     let id=activeId;
     if(!list.length){
-      const created={id:uid(),title:'Дело 1',createdAt:Date.now(),messages:[]};
+      const created={id:uid(),title:'Чат 1',createdAt:Date.now(),messages:[]};
       list=[created];
       id=created.id;
     }
@@ -7856,6 +7856,33 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
     });
   };
 
+  const autoTitleChat=(userText,attName)=>{
+    const cur=activeChat.chat;
+    if(!cur) return;
+    if((cur.messages||[]).length>0) return;
+    if(!/^(Чат|Дело)\s*\d*$/.test((cur.title||'').trim())) return;
+    let title='';
+    if(attName){
+      title=attName.replace(/\.(docx?|pdf|txt)$/i,'').trim();
+    } else {
+      title=(userText||'')
+        .replace(/\[Файл:[^\]]*\]/gi,'')
+        .replace(/\[Анализ[^\]]*\]/gi,'')
+        .replace(/\s+/g,' ')
+        .split('\n')[0].trim();
+    }
+    if(!title) return;
+    if(title.length>48) title=title.slice(0,48).trim()+'…';
+    setChats(prev=>{
+      const list=[...(prev||[])];
+      const idx=list.findIndex(c=>c.id===activeChat.id);
+      if(idx<0) return prev;
+      list[idx]={...list[idx],title};
+      saveIdeChats(list);
+      return list;
+    });
+  };
+
   const [historyOpen, setHistoryOpen] = useState(false);
   const [histTab, setHistTab] = useState('chats');
   const [analyzeHist, setAnalyzeHist] = useState(() => loadAnalyzeHist());
@@ -7880,7 +7907,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
     setActiveId(c.id);
     saveIdeActive(c.id);
     setHistoryOpen(false);
-    onToast&&onToast('plus','Новое дело');
+    onToast&&onToast('plus','Новый чат');
   };
 
   const clearChat=()=>{
@@ -7894,7 +7921,7 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
   const deleteChat=(id)=>{
     const next=(chats||[]).filter(c=>c.id!==id);
     if(!next.length){
-      const created={id:uid(),title:'Дело 1',createdAt:Date.now(),messages:[]};
+      const created={id:uid(),title:'Чат 1',createdAt:Date.now(),messages:[]};
       setChats([created]);saveIdeChats([created]);
       setActiveId(created.id);saveIdeActive(created.id);
     } else {
@@ -8237,6 +8264,9 @@ const AIChat=({onToast,onOpenArticle,onCollapse,onExpand,fullscreen})=>{
          largeAtt = { ...largeAtt, text: anonymizeText(largeAtt.text) };
       }
     }
+
+    // Автозаголовок чата по первому сообщению
+    autoTitleChat(userText, largeAtt?.name || null);
 
     // ─────────────────────────────────────────────────────────────────
     // ROUTER — три пути работы агента:
