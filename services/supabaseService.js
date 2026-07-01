@@ -124,7 +124,7 @@ async function searchSupabase(vector, queryText = '', topK = 10, categories = ['
         }
 
         const catLabel = categories && categories.length ? categories.join('+') : 'all';
-        console.log(`[Supabase] fetched=${rows.length} cat=${catLabel} → kept=${results.length} | query="${String(queryText||'').slice(0,45)}" | top1: "${results[0]?.metadata?.npa_title?.slice(0,35)}" ${results[0]?.metadata?.article_title?.slice(0,20)}`);
+        console.log(`[Supabase] fetched=${rows.length} cat=${catLabel} → kept=${results.length} | query="${String(queryText||'').slice(0,80)}" | top1: "${results[0]?.metadata?.npa_title?.slice(0,35)}" ${results[0]?.metadata?.article_title?.slice(0,20)}`);
         return results;
 
     } catch (err) {

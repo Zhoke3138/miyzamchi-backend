@@ -3249,10 +3249,17 @@ async function detectMultiQuestion(userQ) {
 }`;
     const userPrompt = `Запрос юриста: """${userQ.slice(0, 2500)}"""`;
     try {
+        // thinking: -1 = динамический бюджет (модель сама решает сколько думать).
+        // Для простой фабулы потратит ~500 токенов, для сложной ~3000.
+        // temperature: 1 — обязательно при thinking mode (API требование Gemini).
         const raw = await generateContentResilient({
             systemInstruction: systemPrompt,
             userPrompt,
-            generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+            generationConfig: {
+                temperature: 1,
+                maxOutputTokens: 8192,
+                thinkingConfig: { thinkingBudget: -1 }
+            },
             maxRetries: 3
         });
         const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
@@ -3534,8 +3541,12 @@ ${subQList}
 
     const finalPrompt = `Исходный вопрос: "${userQ}"\n${passportSection}\n${multiQContext}`;
 
+    // Финальный судья с thinking: модель «думает» перед стримингом —
+    // взвешивает нормы, замечает противоречия, строит структуру.
+    const JUDGE_THINKING_CFG = { temperature: 1, maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: -1 } };
+
     try {
-        await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res);
+        await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res, JUDGE_THINKING_CFG);
         sendStep(res, { id: 'synthesize', status: 'success', text: 'Структурированный анализ готов' });
 
         // Источники из всех подвопросов (до 15 уникальных)
@@ -3674,8 +3685,12 @@ ${schema}
 
     const finalPrompt = `Вопрос пользователя: "${userQ}"\n\n${layeredContext}${excContext}`;
 
+    // Финальный судья с thinking: модель «думает» перед стримингом —
+    // взвешивает нормы, замечает противоречия, строит точный ответ.
+    const JUDGE_THINKING_CFG = { temperature: 1, maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: -1 } };
+
     try {
-        await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res);
+        await streamGeminiResponse(getNextKey(), systemPrompt, finalPrompt, cleanHistory, res, JUDGE_THINKING_CFG);
         sendStep(res, { id: 'synthesize', status: 'success', text: 'Консультация готова' });
 
         const seenSrc = new Set();
