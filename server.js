@@ -676,7 +676,7 @@ async function getEmbeddingForSupabase(text, retryCount = 0, forceKey = null) {
 
 // --- ПОИСК (обёртка над Supabase, сохраняет имя для dep-injection в routes/analyze.js) ---
 // Сигнатура: (vector, queryText, topK) — queryText нужен для full-text части hybrid search
-async function searchPinecone(vector, queryText = '', topK = 25) {
+async function searchPinecone(vector, queryText = '', topK = 45) {
     return searchSupabase(vector, queryText, topK);
 }
 
@@ -773,11 +773,11 @@ function preprocessFtsText(text) {
 
 async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     // --- Квоты НПА + FAQ по режиму (hybrid = оба источника) ---
-    // Sniper RAG 3.0: чанки теперь части/пункты статей → нужно больше чанков для полного охвата.
+    // Sniper RAG 3.0: ТК вырос с 12k → 36k векторов (3x), значит topK × 3 от старых значений.
     const quotaDefaults = {
-        thinking: { npa: 10, faq: 4 },
-        agent:    { npa: 14, faq: 4 },
-        fast:     { npa: 8,  faq: 3 }
+        thinking: { npa: 18, faq: 4 },
+        agent:    { npa: 24, faq: 4 },
+        fast:     { npa: 15, faq: 3 }
     };
     const qd = quotaDefaults[mode] || quotaDefaults.fast;
 
@@ -802,7 +802,7 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     if (streamStatuses) sendStatus(res, 'Преобразую ваш вопрос в вектор...', '🧬');
 
     // --- Этап 2: Широкий поиск (тянем с запасом, чтобы набрать оба типа) ---
-    const rawK = Math.max(totalTarget * 3, 30);
+    const rawK = Math.max(totalTarget * 3, 60);
     if (streamStatuses) sendStatus(res, `Ищу в базе НПА и инструкции (тип: ${queryType})...`, '🔎');
     const embedding = await getEmbeddingForSupabase(expandedQuery);
     // FTS (query_text) получает чистый пользовательский вопрос без истории чата.
@@ -2618,8 +2618,8 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
         const isCasual = isCasualMessage(queryForEmbedding);
         if (!isCasual && intent === 'RAG_AGENT') {
             const qLen = queryForEmbedding.length;
-            const adaptiveMaxK = qLen > 200 ? 30 : qLen > 60 ? 20 : 14;
-            const adaptiveMinK = qLen > 200 ? 8  : qLen > 60 ? 5  : 4;
+            const adaptiveMaxK = qLen > 200 ? 50 : qLen > 60 ? 35 : 22;
+            const adaptiveMinK = qLen > 200 ? 12 : qLen > 60 ? 8  : 6;
             console.log(`[AGENT] Supabase retrieval: query=${qLen}ch → maxK=${adaptiveMaxK} minK=${adaptiveMinK}`);
             const retrieval = await adaptiveRetrieval(queryForEmbedding, 'agent', null, {
                 maxK: adaptiveMaxK, minK: adaptiveMinK
@@ -2883,7 +2883,7 @@ async function handleSimpleConsultation(message, history, res, userQuery = null)
     sendStatus(res, '🔎 Ищу релевантные статьи...');
 
     // ftsText: чистый userQ для GIN full-text search; retrievalQ (с историей) — только для вектора
-    const retrieval = await adaptiveRetrieval(retrievalQ, 'thinking', null, { queryType: 'npa', npaQuota: 15, ftsText: userQ });
+    const retrieval = await adaptiveRetrieval(retrievalQ, 'thinking', null, { queryType: 'npa', npaQuota: 30, ftsText: userQ });
     const { core = [], context = [], all = [] } = retrieval;
 
     sendStep(res, {
@@ -3050,16 +3050,16 @@ async function reformulateQueries(userMessage) {
 // Все retrieval идут параллельно — время ≈ max одного слоя
 // ════════════════════════════════════════════════════════════════════
 
-// Sniper RAG 3.0: чанки = части/пункты статей → квоты увеличены ~1.5x для полного охвата статьи
+// Sniper RAG 3.0: ТК 12k→36k (3x) → квоты ×3 от исходных для полного охвата статьи по частям
 const LAYER_CONFIGS = [
-    { id: 1, stepId: 'special',     key: 'specMatches',   queryKey: 'special',     quota: 6,  mode: 'fast',     stepText: 'Ищу специальные нормы по проблеме',    resultText: n => `Специальных норм: ${n}` },
-    { id: 2, stepId: 'general',     key: 'genMatches',    queryKey: 'general',     quota: 8,  mode: 'thinking', stepText: 'Проверяю общие положения Кодекса',      resultText: n => `Общих положений: ${n}` },
-    { id: 3, stepId: 'process',     key: 'procMatches',   queryKey: 'process',     quota: 6,  mode: 'thinking', stepText: 'Анализирую процессуальные требования',  resultText: n => `Процессуальных норм: ${n}` },
-    { id: 4, stepId: 'liability',   key: 'liabMatches',   queryKey: 'liability',   quota: 6,  mode: 'fast',     stepText: 'Ищу нормы об ответственности',          resultText: n => `Норм об ответственности: ${n}` },
-    { id: 5, stepId: 'bylaws',      key: 'bylawMatches',  queryKey: 'bylaws',      quota: 5,  mode: 'fast',     stepText: 'Проверяю подзаконные акты',             resultText: n => `Подзаконных актов: ${n}` },
-    { id: 6, stepId: 'rights',      key: 'rightsMatches', queryKey: 'rights',      quota: 5,  mode: 'fast',     stepText: 'Определяю права и обязанности сторон',  resultText: n => `Прав и обязанностей: ${n}` },
-    { id: 7, stepId: 'definitions', key: 'defMatches',    queryKey: 'definitions', quota: 4,  mode: 'fast',     stepText: 'Нахожу определения ключевых понятий',   resultText: n => `Определений понятий: ${n}` },
-    { id: 8, stepId: 'evidence',    key: 'evMatches',     queryKey: 'evidence',    quota: 4,  mode: 'fast',     stepText: 'Анализирую доказательственную базу',    resultText: n => `Доказательственных норм: ${n}` },
+    { id: 1, stepId: 'special',     key: 'specMatches',   queryKey: 'special',     quota: 12, mode: 'fast',     stepText: 'Ищу специальные нормы по проблеме',    resultText: n => `Специальных норм: ${n}` },
+    { id: 2, stepId: 'general',     key: 'genMatches',    queryKey: 'general',     quota: 15, mode: 'thinking', stepText: 'Проверяю общие положения Кодекса',      resultText: n => `Общих положений: ${n}` },
+    { id: 3, stepId: 'process',     key: 'procMatches',   queryKey: 'process',     quota: 12, mode: 'thinking', stepText: 'Анализирую процессуальные требования',  resultText: n => `Процессуальных норм: ${n}` },
+    { id: 4, stepId: 'liability',   key: 'liabMatches',   queryKey: 'liability',   quota: 12, mode: 'fast',     stepText: 'Ищу нормы об ответственности',          resultText: n => `Норм об ответственности: ${n}` },
+    { id: 5, stepId: 'bylaws',      key: 'bylawMatches',  queryKey: 'bylaws',      quota: 9,  mode: 'fast',     stepText: 'Проверяю подзаконные акты',             resultText: n => `Подзаконных актов: ${n}` },
+    { id: 6, stepId: 'rights',      key: 'rightsMatches', queryKey: 'rights',      quota: 9,  mode: 'fast',     stepText: 'Определяю права и обязанности сторон',  resultText: n => `Прав и обязанностей: ${n}` },
+    { id: 7, stepId: 'definitions', key: 'defMatches',    queryKey: 'definitions', quota: 9,  mode: 'fast',     stepText: 'Нахожу определения ключевых понятий',   resultText: n => `Определений понятий: ${n}` },
+    { id: 8, stepId: 'evidence',    key: 'evMatches',     queryKey: 'evidence',    quota: 9,  mode: 'fast',     stepText: 'Анализирую доказательственную базу',    resultText: n => `Доказательственных норм: ${n}` },
 ];
 
 // Наборы слоёв для каждого уровня сложности
@@ -3331,7 +3331,7 @@ async function exceptionsRetrieval(subQText, foundArticles, passport = '') {
     const exQueries = await generateExceptionQueries(subQText, foundArticles, passport);
     if (!exQueries.length) return [];
     const results = await Promise.allSettled(
-        exQueries.map(q => adaptiveRetrieval(q, 'fast', null, { queryType: 'npa', npaQuota: 5 }))
+        exQueries.map(q => adaptiveRetrieval(q, 'fast', null, { queryType: 'npa', npaQuota: 9 }))
     );
     const seen = new Set();
     const out = [];
