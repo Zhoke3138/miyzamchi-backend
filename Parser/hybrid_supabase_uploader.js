@@ -171,13 +171,20 @@ async function main() {
                      || f;
 
             const existing = npaFileMap.get(key);
-            if (!existing || chunks.length > existing.chunks.length) {
-                if (existing) {
-                    console.log(`  ⚠️  Дубль НПА «${key}»: заменяем "${existing.filename}" (${existing.chunks.length} чанков) → "${f}" (${chunks.length} чанков)`);
-                }
-                npaFileMap.set(key, { filename: f, chunks });
+            if (!existing) {
+                const { mtimeMs } = await fs.stat(path.join(folderPath, f));
+                npaFileMap.set(key, { filename: f, chunks, mtimeMs });
             } else {
-                console.log(`  ⚠️  Дубль НПА «${key}»: пропускаем "${f}" (${chunks.length} чанков) — уже есть "${existing.filename}" (${existing.chunks.length} чанков)`);
+                const { mtimeMs } = await fs.stat(path.join(folderPath, f));
+                // Побеждает файл с бо́льшим числом чанков; при равенстве — более новый
+                const newWins = chunks.length > existing.chunks.length
+                    || (chunks.length === existing.chunks.length && mtimeMs > existing.mtimeMs);
+                if (newWins) {
+                    console.log(`  ⚠️  Дубль НПА «${key}»: заменяем "${existing.filename}" (${existing.chunks.length} чанков) → "${f}" (${chunks.length} чанков${chunks.length === existing.chunks.length ? ', новее' : ''})`);
+                    npaFileMap.set(key, { filename: f, chunks, mtimeMs });
+                } else {
+                    console.log(`  ⚠️  Дубль НПА «${key}»: пропускаем "${f}" (${chunks.length} чанков) — уже есть "${existing.filename}" (${existing.chunks.length} чанков)`);
+                }
             }
         }
 
