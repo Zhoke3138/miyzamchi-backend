@@ -2296,16 +2296,30 @@ function sanitizeHistory(history) {
 }
 
 // Builds enriched retrieval query by combining current message with prior user context.
-// ВАЖНО: история сжимается до 400 символов, но текущий вопрос НЕ обрезается —
-// фабула дела может быть 1300+ символов и должна попасть в reformulateQueries целиком.
+// Помогает follow-up вопросам ("а срок?", "уточни про штраф") найти правильный контекст.
+//
+// ВАЖНО — когда НЕ добавлять историю:
+// 1. Явная ссылка на статью/кодекс: "статья 117 НК КР" — история "отравляет" вектор
+//    предыдущим запросом (напр. "статья 117" → следующий "статья 1" = ищет у 117).
+// 2. Длинный самодостаточный вопрос (>120 символов) — контекст уже встроен в текст.
+// История добавляется только для коротких уточняющих вопросов без явных ссылок.
 function buildContextualQuery(message, history) {
     if (!Array.isArray(history) || history.length === 0) return message;
+
+    // Явная ссылка на статью или кодекс → не добавляем историю
+    const hasExplicitRef = /(статья|ст\.)\s*\d+|(налоговый|гражданский|уголовный|трудовой|семейный|административный)\s+кодекс|\bнк\s+кр\b|\bгк\s+кр\b|\bтк\s+кр\b|\bупк\s+кр\b|\bкоао\s+кр\b/i.test(message);
+    if (hasExplicitRef) return message;
+
+    // Длинный вопрос самодостаточен — история только зашумит вектор
+    if (message.length > 120) return message;
+
     const prevTexts = history
         .filter(m => m.role === 'user')
         .slice(-2)
         .map(m => (m.parts?.[0]?.text || '').slice(0, 200))
         .filter(Boolean);
     if (!prevTexts.length) return message;
+    // История сжата до 400 символов; текущий вопрос добавляется без обрезки
     const historyContext = prevTexts.join(' ').slice(0, 400);
     return `${historyContext} ${message}`.trim();
 }
