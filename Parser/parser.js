@@ -51,6 +51,36 @@ function detectDomain(abbrev, npa_title) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ИЕРАРХИЯ НПА КР (по юридической силе, level 1 = высшая сила)
+// ═══════════════════════════════════════════════════════════════
+// Используется: npa_type в метаданных чанка, npa_hierarchy_level для
+// разрешения коллизий норм («lex superior»). ИИ обучается на этой иерархии.
+
+const NPA_TYPE_RULES = [
+    { re: /^конституци[яи]\s+кыргызской/i,                              type: 'конституция',                  level: 1 },
+    { re: /конституционный\s+закон/i,                                   type: 'конституционный_закон',        level: 2 },
+    { re: /кодекс/i,                                                     type: 'кодекс',                       level: 3 },
+    { re: /закон\s+кыргызской|^закон\s+кр/i,                           type: 'закон',                        level: 4 },
+    { re: /нормативный\s+указ\s+президента|указ\s+президента/i,        type: 'указ_президента',               level: 5 },
+    { re: /постановление\s+жогорку\s+кенеша/i,                         type: 'постановление_жк',              level: 6 },
+    { re: /постановление\s+(кабинета\s+министров|правительства)/i,     type: 'постановление_правительства',   level: 7 },
+    { re: /постановление/i,                                              type: 'постановление',                level: 7 },
+    { re: /приказ/i,                                                     type: 'приказ',                       level: 8 },
+    { re: /инструкци[яи]/i,                                             type: 'инструкция',                   level: 9 },
+    { re: /правил[а-я]/i,                                               type: 'правила',                      level: 9 },
+    { re: /положени[ея]/i,                                              type: 'положение',                    level: 9 },
+    { re: /регламент/i,                                                  type: 'регламент',                    level: 9 },
+    { re: /устав/i,                                                      type: 'устав',                        level: 9 },
+];
+
+function detectNpaType(npa_title) {
+    for (const { re, type, level } of NPA_TYPE_RULES) {
+        if (re.test(npa_title)) return { type, level };
+    }
+    return { type: 'иное', level: 10 };
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ═══════════════════════════════════════════════════════════════
 
@@ -108,7 +138,7 @@ function buildId(abbrev, article_num_str, part_base, item_base, subitem_base) {
     return id;
 }
 
-function makeTextToEmbed(abbrev, hierarchy, article_title, parent_context, element_type, part_base, part_total, full_text) {
+function makeTextToEmbed(abbrev, npa_type, hierarchy, article_title, parent_context, element_type, part_base, part_total, full_text) {
     const typeLabel = part_base != null
         ? `${element_type} ${part_base} из ${part_total ?? '?'}`
         : element_type;
@@ -120,14 +150,15 @@ function makeTextToEmbed(abbrev, hierarchy, article_title, parent_context, eleme
     const body = full_text.startsWith(article_title)
         ? full_text.slice(article_title.length).trimStart()
         : full_text;
-    return `[${abbrev}] ${hierarchy}\n${ctx}\nТип: ${typeLabel}\nТекст: ${body || full_text}`.trim();
+    // npa_type в заголовке вектора — ИИ знает юридическую силу документа
+    return `[${abbrev} | ${npa_type}] ${hierarchy}\n${ctx}\nТип: ${typeLabel}\nТекст: ${body || full_text}`.trim();
 }
 
 // ═══════════════════════════════════════════════════════════════
 // 3. СОЗДАНИЕ ЧАНКА
 // ═══════════════════════════════════════════════════════════════
 
-function createChunk(s, npa_title, adoption_date, abbrev, domain) {
+function createChunk(s, npa_title, adoption_date, abbrev, domain, npa_type, npa_hierarchy_level) {
     return {
         id:              buildId(abbrev, s.article_num_str, s.part_base, s.item_base, s.subitem_base),
         article_num_str: s.article_num_str,
@@ -143,12 +174,14 @@ function createChunk(s, npa_title, adoption_date, abbrev, domain) {
             npa_title,
             adoption_date,
             abbrev,
-            domain,                              // FIX: поле domain теперь присутствует
+            domain,
+            npa_type,                            // вид НПА: кодекс / закон / указ_президента / ...
+            npa_hierarchy_level,                 // юридическая сила: 1=Конституция ... 10=иное
             hierarchy_path:  s.hierarchy,
-            article_title:   s.article_title,    // FIX: добавлено для поиска по названию статьи
+            article_title:   s.article_title,
             parent_context:  s.parent_context,
             element_type:    s.element_type,
-            part_total:      null                 // заполняется во 2-м проходе
+            part_total:      null                // заполняется во 2-м проходе
         }
     };
 }
@@ -164,7 +197,8 @@ async function processFile(filename) {
         console.log(`\n🤖 Анализ шапки: ${filename}...`);
         const { npa_title, adoption_date, abbrev } = await extractMetadataWithGemini(rawText);
         const domain = detectDomain(abbrev, npa_title);
-        console.log(`   → "${npa_title}" [${abbrev}] domain:${domain}`);
+        const { type: npa_type, level: npa_hierarchy_level } = detectNpaType(npa_title);
+        console.log(`   → "${npa_title}" [${abbrev}] type:${npa_type}(${npa_hierarchy_level}) domain:${domain}`);
 
         const html = convertSuperscripts((await mammoth.convertToHtml({ path: inputPath })).value);
         const $    = cheerio.load(html);
@@ -224,7 +258,7 @@ async function processFile(filename) {
             // ── Финализация предыдущего буфера ───────────────────────────────────
             if (newLevel && s.text_buffer) {
                 if (isStandalone(s.text_buffer)) {
-                    chunks.push(createChunk(s, npa_title, adoption_date, abbrev, domain));
+                    chunks.push(createChunk(s, npa_title, adoption_date, abbrev, domain, npa_type, npa_hierarchy_level));
                 } else {
                     // Короткий фрагмент клеим к parent_context следующего чанка
                     s.parent_context += '\n' + s.text_buffer;
@@ -264,7 +298,7 @@ async function processFile(filename) {
 
         // Финализируем последний буфер
         if (s.text_buffer && isStandalone(s.text_buffer)) {
-            chunks.push(createChunk(s, npa_title, adoption_date, abbrev, domain));
+            chunks.push(createChunk(s, npa_title, adoption_date, abbrev, domain, npa_type, npa_hierarchy_level));
         }
 
         // ── Проход 2: подсчёт part_total + финальный text_to_embed ──────────────
@@ -280,6 +314,7 @@ async function processFile(filename) {
             c.metadata.part_total   = pt;
             c.content.text_to_embed = makeTextToEmbed(
                 c.metadata.abbrev,
+                c.metadata.npa_type,
                 c.metadata.hierarchy_path,
                 c.metadata.article_title,
                 c.metadata.parent_context,
@@ -290,11 +325,12 @@ async function processFile(filename) {
             );
         }
 
-        // Сохраняем JSON
-        const safeName   = npa_title.replace(/[/\\:*?"<>|]/g, '_').substring(0, 50);
-        const outputPath = path.join(OUTPUT_DIR, `${safeName}.json`);
+        // Сохраняем JSON: имя = <вид_НПА>_<аббревиатура>_<название>.json
+        const abbrevSafe = abbrev.replace(/\s+/g, '-');
+        const safeName   = npa_title.replace(/[/\\:*?"<>|]/g, '_').substring(0, 40);
+        const outputPath = path.join(OUTPUT_DIR, `${npa_type}_${abbrevSafe}_${safeName}.json`);
         fs.writeFileSync(outputPath, JSON.stringify(chunks, null, 2), 'utf-8');
-        console.log(`✅ ${chunks.length} чанков → output/npa/${safeName}.json`);
+        console.log(`✅ ${chunks.length} чанков → output/npa/${npa_type}_${abbrevSafe}_${safeName}.json`);
         return { status: 'success', chunks: chunks.length };
 
     } catch (e) {
