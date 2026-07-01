@@ -676,7 +676,7 @@ async function getEmbeddingForSupabase(text, retryCount = 0, forceKey = null) {
 
 // --- ПОИСК (обёртка над Supabase, сохраняет имя для dep-injection в routes/analyze.js) ---
 // Сигнатура: (vector, queryText, topK) — queryText нужен для full-text части hybrid search
-async function searchPinecone(vector, queryText = '', topK = 15) {
+async function searchPinecone(vector, queryText = '', topK = 25) {
     return searchSupabase(vector, queryText, topK);
 }
 
@@ -773,10 +773,11 @@ function preprocessFtsText(text) {
 
 async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     // --- Квоты НПА + FAQ по режиму (hybrid = оба источника) ---
+    // Sniper RAG 3.0: чанки теперь части/пункты статей → нужно больше чанков для полного охвата.
     const quotaDefaults = {
-        thinking: { npa: 6, faq: 4 },
-        agent:    { npa: 8, faq: 4 },
-        fast:     { npa: 5, faq: 3 }
+        thinking: { npa: 10, faq: 4 },
+        agent:    { npa: 14, faq: 4 },
+        fast:     { npa: 8,  faq: 3 }
     };
     const qd = quotaDefaults[mode] || quotaDefaults.fast;
 
@@ -801,7 +802,7 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     if (streamStatuses) sendStatus(res, 'Преобразую ваш вопрос в вектор...', '🧬');
 
     // --- Этап 2: Широкий поиск (тянем с запасом, чтобы набрать оба типа) ---
-    const rawK = Math.max(totalTarget * 3, 20);
+    const rawK = Math.max(totalTarget * 3, 30);
     if (streamStatuses) sendStatus(res, `Ищу в базе НПА и инструкции (тип: ${queryType})...`, '🔎');
     const embedding = await getEmbeddingForSupabase(expandedQuery);
     // FTS (query_text) получает чистый пользовательский вопрос без истории чата.
@@ -1244,8 +1245,9 @@ const systemInstruction = [
     "",
     "# ИСТОЧНИКИ ЗНАНИЙ (строгий приоритет)",
     "Контекст может содержать два типа источников:",
-    "- **[⭐ КЛЮЧЕВАЯ / 📚 ВСПОМОГАТЕЛЬНАЯ] НОРМАТИВНЫЕ ПРАВОВЫЕ АКТЫ КР** — статьи законов, кодексов, постановлений. Это правовая основа.",
+    "- **[⭐ КЛЮЧЕВАЯ / 📚 ВСПОМОГАТЕЛЬНАЯ — Название НПА | тип]** — нормы НПА КР. Каждый блок: «Контекст нормы:» (путь раздел→статья→часть) + «Текст нормы:» (конкретная часть/пункт).",
     "- **[📋 ИНСТРУКЦИЯ]** — официальные инструкции и FAQ Тундук/ЦОН о практических процедурах, документах, стоимости.",
+    "- Тип НПА в скобках (кодекс / закон / указ_президента / правила) — иерархия юридической силы. При коллизии: кодекс > закон > подзаконный акт.",
     "",
     "1. **НПА — правовая основа:** Опирайся на НПА для ответа ЧТО говорит закон, какое ПРАВО есть у человека, какова ОТВЕТСТВЕННОСТЬ.",
     "2. **Инструкции — практика:** Используй инструкции для ответа КАК подать документы, КУДА обратиться, СКОЛЬКО стоит, КАКОЙ порядок действий.",
@@ -1256,8 +1258,9 @@ const systemInstruction = [
     "",
     "---",
     "",
-    "# ИЕРАРХИЯ ИСТОЧНИКОВ И АРГУМЕНТАЦИИ",
-    "Строй аргументацию сверху вниз: Кодекс КР (отрасль) → Специальный закон → Подзаконный акт.",
+    "# ИЕРАРХИЯ ИСТОЧНИКОВ И АРГУМЕНТАЦИИ (Lex Superior)",
+    "Строй аргументацию сверху вниз: Конституция → Кодекс КР → Специальный закон → Указ Президента → Постановление → Приказ → Правила/Положение.",
+    "Тип НПА указан в скобках каждого блока контекста. При противоречии норм разных уровней — норма высшей иерархии имеет приоритет.",
     "Отрасли: договоры/собственность → ГК КР; труд → ТК КР; семья → СК КР; налоги → НК КР; уголовное → УК+УПК КР; административное → КоАО КР.",
     "При коллизии норм: lex specialis (специальная норма) и lex posterior (более поздняя) имеют приоритет. Подробнее — в блоке принципов ниже.",
     "Пример цепочки: «Согласно [норма Кодекса]... В развитие этого [специальный закон]... Порядок определён [подзаконный акт]...»",
@@ -1574,10 +1577,15 @@ const AGENT_SYSTEM_PROMPT = `
 - Если ссылаешься на статью НПА — формулируй: «согласно ст. X Закона КР "..."» или «в соответствии с ч. Y ст. X ГК КР».
 
 ═══ ИСПОЛЬЗОВАНИЕ КОНТЕКСТА НПА ═══
-- Если в промпте есть блок «Контекст — N релевантных статей НПА КР» — это ЕДИНСТВЕННЫЙ источник правовой истины. Используй ТОЛЬКО эти статьи.
-- ⭐ КЛЮЧЕВЫЕ статьи — основной источник; 📚 ВСПОМОГАТЕЛЬНЫЕ — как смежные/процедурные нормы.
-- Цитируй точно: «согласно ст. X Закона КР "..."» — номер статьи и название НПА бери ИЗ КОНТЕКСТА, не из памяти.
-- Если контекста нет — НЕ упоминай конкретных номеров статей. Пиши «согласно действующему законодательству КР» или «в соответствии с соответствующими нормами УК/ГК/ТК КР».
+- Если в промпте есть блок «Контекст — N релевантных норм НПА КР» — это ЕДИНСТВЕННЫЙ источник правовой истины. Используй ТОЛЬКО эти нормы.
+- ⭐ КЛЮЧЕВЫЕ нормы — главный источник ответа; 📚 ВСПОМОГАТЕЛЬНЫЕ — смежный контекст.
+- ФОРМАТ КАЖДОЙ НОРМЫ: [УРОВЕНЬ — Название НПА | тип_НПА]\nКонтекст нормы: РАЗДЕЛ > Глава > Статья X > Часть Y\nТекст нормы: ...
+  • «Контекст нормы» — точная позиция в иерархии НПА (раздел, глава, статья, часть/пункт).
+  • «Текст нормы» — может быть одной частью или пунктом статьи, не всей статьёй.
+  • Тип в скобках (кодекс / закон / указ_президента / правила) — юридическая сила: кодекс > закон > подзаконный акт. При коллизии норм — выше та, у которой выше иерархия.
+- Цитируй точно: «согласно ч. Y ст. X [Акт КР]...» — номер статьи и часть бери ИЗ «Контекст нормы», текст — ИЗ «Текст нормы», из памяти — ЗАПРЕЩЕНО.
+- Если несколько чанков одной статьи (разные части) — синтезируй их в единый ответ, не цитируй каждую часть отдельно.
+- Если контекста нет — НЕ упоминай конкретных номеров статей. Пиши «согласно действующему законодательству КР».
 
 ═══ ПРИНЦИПЫ ПРАВА — ПРИМЕНЯЙ ПРИ АНАЛИЗЕ ═══
 При выявлении рисков в документе проверяй нарушение принципов:
@@ -2610,8 +2618,8 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
         const isCasual = isCasualMessage(queryForEmbedding);
         if (!isCasual && intent === 'RAG_AGENT') {
             const qLen = queryForEmbedding.length;
-            const adaptiveMaxK = qLen > 200 ? 22 : qLen > 60 ? 15 : 10;
-            const adaptiveMinK = qLen > 200 ? 6  : qLen > 60 ? 4  : 3;
+            const adaptiveMaxK = qLen > 200 ? 30 : qLen > 60 ? 20 : 14;
+            const adaptiveMinK = qLen > 200 ? 8  : qLen > 60 ? 5  : 4;
             console.log(`[AGENT] Supabase retrieval: query=${qLen}ch → maxK=${adaptiveMaxK} minK=${adaptiveMinK}`);
             const retrieval = await adaptiveRetrieval(queryForEmbedding, 'agent', null, {
                 maxK: adaptiveMaxK, minK: adaptiveMinK
@@ -2620,7 +2628,7 @@ async function handleAgent(message, history, res, retryCount = 0, userQuery = nu
             allMatches = all;
             if (all.length > 0) {
                 const formatted = formatContextWithHierarchy(core, context);
-                contextBlock = `\n\n═══ КОНТЕКСТ — ${all.length} релевантных статей НПА КР (используй для цитирования) ═══\n\n${formatted}\n\n═══ КОНЕЦ КОНТЕКСТА ═══\n`;
+                contextBlock = `\n\n═══ КОНТЕКСТ — ${all.length} релевантных норм НПА КР (части/пункты статей, используй для цитирования) ═══\n\n${formatted}\n\n═══ КОНЕЦ КОНТЕКСТА ═══\n`;
             }
         }
     } catch (retErr) {
@@ -2875,7 +2883,7 @@ async function handleSimpleConsultation(message, history, res, userQuery = null)
     sendStatus(res, '🔎 Ищу релевантные статьи...');
 
     // ftsText: чистый userQ для GIN full-text search; retrievalQ (с историей) — только для вектора
-    const retrieval = await adaptiveRetrieval(retrievalQ, 'thinking', null, { queryType: 'npa', npaQuota: 10, ftsText: userQ });
+    const retrieval = await adaptiveRetrieval(retrievalQ, 'thinking', null, { queryType: 'npa', npaQuota: 15, ftsText: userQ });
     const { core = [], context = [], all = [] } = retrieval;
 
     sendStep(res, {
@@ -2899,7 +2907,8 @@ async function handleSimpleConsultation(message, history, res, userQuery = null)
     let systemPrompt = BASE_CONSULTANT_PROMPT;
     if (isAcademicRequest(userQ)) systemPrompt += '\n\n' + ACADEMIC_PROMPT_ADDON;
     if (isL4) systemPrompt += '\n\n' + L4_WARNING_ADDON;
-    const prefix = `Контекст — ${all.length} релевантных статей НПА КР (⭐ ${core.length} ключевых + 📚 ${context.length} вспомогательных):`;
+    const prefix = `Контекст — ${all.length} релевантных норм НПА КР (⭐ ${core.length} ключевых + 📚 ${context.length} вспомогательных). Каждая норма = часть/пункт статьи (Sniper RAG):`;
+
     const finalPrompt = `Вопрос пользователя: "${userQ}"\n\n${prefix}\n\n${contextText}`;
 
     try {
@@ -3041,15 +3050,16 @@ async function reformulateQueries(userMessage) {
 // Все retrieval идут параллельно — время ≈ max одного слоя
 // ════════════════════════════════════════════════════════════════════
 
+// Sniper RAG 3.0: чанки = части/пункты статей → квоты увеличены ~1.5x для полного охвата статьи
 const LAYER_CONFIGS = [
-    { id: 1, stepId: 'special',     key: 'specMatches',   queryKey: 'special',     quota: 4, mode: 'fast',     stepText: 'Ищу специальные нормы по проблеме',    resultText: n => `Специальных норм: ${n}` },
-    { id: 2, stepId: 'general',     key: 'genMatches',    queryKey: 'general',     quota: 5, mode: 'thinking', stepText: 'Проверяю общие положения Кодекса',      resultText: n => `Общих положений: ${n}` },
-    { id: 3, stepId: 'process',     key: 'procMatches',   queryKey: 'process',     quota: 4, mode: 'thinking', stepText: 'Анализирую процессуальные требования',  resultText: n => `Процессуальных норм: ${n}` },
-    { id: 4, stepId: 'liability',   key: 'liabMatches',   queryKey: 'liability',   quota: 4, mode: 'fast',     stepText: 'Ищу нормы об ответственности',          resultText: n => `Норм об ответственности: ${n}` },
-    { id: 5, stepId: 'bylaws',      key: 'bylawMatches',  queryKey: 'bylaws',      quota: 3, mode: 'fast',     stepText: 'Проверяю подзаконные акты',             resultText: n => `Подзаконных актов: ${n}` },
-    { id: 6, stepId: 'rights',      key: 'rightsMatches', queryKey: 'rights',      quota: 3, mode: 'fast',     stepText: 'Определяю права и обязанности сторон',  resultText: n => `Прав и обязанностей: ${n}` },
-    { id: 7, stepId: 'definitions', key: 'defMatches',    queryKey: 'definitions', quota: 3, mode: 'fast',     stepText: 'Нахожу определения ключевых понятий',   resultText: n => `Определений понятий: ${n}` },
-    { id: 8, stepId: 'evidence',    key: 'evMatches',     queryKey: 'evidence',    quota: 3, mode: 'fast',     stepText: 'Анализирую доказательственную базу',    resultText: n => `Доказательственных норм: ${n}` },
+    { id: 1, stepId: 'special',     key: 'specMatches',   queryKey: 'special',     quota: 6,  mode: 'fast',     stepText: 'Ищу специальные нормы по проблеме',    resultText: n => `Специальных норм: ${n}` },
+    { id: 2, stepId: 'general',     key: 'genMatches',    queryKey: 'general',     quota: 8,  mode: 'thinking', stepText: 'Проверяю общие положения Кодекса',      resultText: n => `Общих положений: ${n}` },
+    { id: 3, stepId: 'process',     key: 'procMatches',   queryKey: 'process',     quota: 6,  mode: 'thinking', stepText: 'Анализирую процессуальные требования',  resultText: n => `Процессуальных норм: ${n}` },
+    { id: 4, stepId: 'liability',   key: 'liabMatches',   queryKey: 'liability',   quota: 6,  mode: 'fast',     stepText: 'Ищу нормы об ответственности',          resultText: n => `Норм об ответственности: ${n}` },
+    { id: 5, stepId: 'bylaws',      key: 'bylawMatches',  queryKey: 'bylaws',      quota: 5,  mode: 'fast',     stepText: 'Проверяю подзаконные акты',             resultText: n => `Подзаконных актов: ${n}` },
+    { id: 6, stepId: 'rights',      key: 'rightsMatches', queryKey: 'rights',      quota: 5,  mode: 'fast',     stepText: 'Определяю права и обязанности сторон',  resultText: n => `Прав и обязанностей: ${n}` },
+    { id: 7, stepId: 'definitions', key: 'defMatches',    queryKey: 'definitions', quota: 4,  mode: 'fast',     stepText: 'Нахожу определения ключевых понятий',   resultText: n => `Определений понятий: ${n}` },
+    { id: 8, stepId: 'evidence',    key: 'evMatches',     queryKey: 'evidence',    quota: 4,  mode: 'fast',     stepText: 'Анализирую доказательственную базу',    resultText: n => `Доказательственных норм: ${n}` },
 ];
 
 // Наборы слоёв для каждого уровня сложности
@@ -3321,7 +3331,7 @@ async function exceptionsRetrieval(subQText, foundArticles, passport = '') {
     const exQueries = await generateExceptionQueries(subQText, foundArticles, passport);
     if (!exQueries.length) return [];
     const results = await Promise.allSettled(
-        exQueries.map(q => adaptiveRetrieval(q, 'fast', null, { queryType: 'npa', npaQuota: 3 }))
+        exQueries.map(q => adaptiveRetrieval(q, 'fast', null, { queryType: 'npa', npaQuota: 5 }))
     );
     const seen = new Set();
     const out = [];
