@@ -2296,7 +2296,8 @@ function sanitizeHistory(history) {
 }
 
 // Builds enriched retrieval query by combining current message with prior user context.
-// Helps follow-up questions ("а если договор?", "уточни про сроки") find better results.
+// ВАЖНО: история сжимается до 400 символов, но текущий вопрос НЕ обрезается —
+// фабула дела может быть 1300+ символов и должна попасть в reformulateQueries целиком.
 function buildContextualQuery(message, history) {
     if (!Array.isArray(history) || history.length === 0) return message;
     const prevTexts = history
@@ -2305,8 +2306,8 @@ function buildContextualQuery(message, history) {
         .map(m => (m.parts?.[0]?.text || '').slice(0, 200))
         .filter(Boolean);
     if (!prevTexts.length) return message;
-    const combined = `${prevTexts.join(' ')} ${message}`.trim();
-    return combined.slice(0, 500);
+    const historyContext = prevTexts.join(' ').slice(0, 400);
+    return `${historyContext} ${message}`.trim();
 }
 
 // --- Форматирование контекста: НПА и Инструкции в отдельных секциях ---
@@ -3083,8 +3084,11 @@ async function deepRetrievalChain(userMessage, res, activeLayerIds = [1,2,3,4,5,
 function formatLayeredContext({ specMatches, genMatches, procMatches, liabMatches, bylawMatches, rightsMatches, defMatches, evMatches }) {
     const seen = new Set();
     const dedup = (m) => {
-        const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
-        if (!key || key === '|') return null;
+        // Деdup по уникальному ID чанка Supabase — позволяет нескольким чанкам
+        // одной статьи (разные куски длинной статьи) попасть в контекст.
+        // Это критично для статей где общее правило и исключение в разных чанках.
+        const key = m.id || `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
+        if (!key) return null;
         if (seen.has(key)) return null;
         seen.add(key);
         return m;
@@ -3181,17 +3185,19 @@ async function detectMultiQuestion(userQ) {
 }
 
 // Генерирует запросы для поиска исключений из найденных норм.
-async function generateExceptionQueries(subQText, foundArticles) {
+// passport — фабула дела, помогает генерировать точные запросы на исключения.
+async function generateExceptionQueries(subQText, foundArticles, passport = '') {
     const articleList = foundArticles.slice(0, 5)
         .map(m => [m.metadata?.npa_title, m.metadata?.article_title].filter(Boolean).join(' — '))
         .filter(Boolean).join('; ');
+    const passportLine = passport ? `\nФабула дела: "${passport.slice(0, 400)}"` : '';
     const systemPrompt = `Ты — юридический поисковый эксперт КР. Отвечаешь ТОЛЬКО JSON-массивом.`;
-    const userPrompt = `По вопросу: "${subQText.slice(0, 300)}"
+    const userPrompt = `Вопрос: "${subQText.slice(0, 300)}"${passportLine}
 Найдены нормы: ${articleList || 'нет данных'}
 
 Сгенерируй 3 точечных поисковых запроса для векторного поиска по НПА КР,
-направленных на поиск ИСКЛЮЧЕНИЙ из найденных правил, ограничений их применения
-и специальных случаев когда общее правило не работает.
+направленных на поиск ИСКЛЮЧЕНИЙ и ОГРАНИЧЕНИЙ из найденных норм,
+учитывая конкретные факты дела.
 
 ["запрос 1", "запрос 2", "запрос 3"]`;
     try {
@@ -3210,9 +3216,9 @@ async function generateExceptionQueries(subQText, foundArticles) {
     }
 }
 
-// Второй проход Pinecone — ищет исключения и ограничения из найденных норм.
-async function exceptionsRetrieval(subQText, foundArticles) {
-    const exQueries = await generateExceptionQueries(subQText, foundArticles);
+// Второй проход Supabase — ищет исключения и ограничения из найденных норм.
+async function exceptionsRetrieval(subQText, foundArticles, passport = '') {
+    const exQueries = await generateExceptionQueries(subQText, foundArticles, passport);
     if (!exQueries.length) return [];
     const results = await Promise.allSettled(
         exQueries.map(q => adaptiveRetrieval(q, 'fast', null, { queryType: 'npa', npaQuota: 3 }))
@@ -3222,8 +3228,8 @@ async function exceptionsRetrieval(subQText, foundArticles) {
     for (const r of results) {
         if (r.status !== 'fulfilled') continue;
         for (const m of r.value?.all || []) {
-            const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
-            if (key !== '|' && !seen.has(key)) { seen.add(key); out.push(m); }
+            const key = m.id || `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
+            if (key && !seen.has(key)) { seen.add(key); out.push(m); }
         }
     }
     return out;
@@ -3266,13 +3272,13 @@ async function runSubQuestionPipeline(passport, subQ) {
         const r = results[i];
         if (r.status !== 'fulfilled') return;
         for (const m of r.value?.all || []) {
-            const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
-            if (key !== '|' && !seen.has(key)) { seen.add(key); mainMatches.push(m); }
+            const key = m.id || `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
+            if (key && !seen.has(key)) { seen.add(key); mainMatches.push(m); }
         }
     });
 
-    // Второй проход: исключения из найденных норм
-    const excMatches = await exceptionsRetrieval(subQ.text, mainMatches);
+    // Второй проход: исключения из найденных норм (с фабулой дела для точных запросов)
+    const excMatches = await exceptionsRetrieval(subQ.text, mainMatches, passport);
 
     return { subQ, mainMatches, excMatches };
 }
@@ -3493,12 +3499,10 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
     sendStep(res, { id: 'synthesize', status: 'loading', text: 'Формирую итоговую консультацию' });
     sendStatus(res, '✍️ Формирую итоговую консультацию...');
 
-    // Объединяем основные нормы и исключения в layered context
-    const excSeen = new Set(allMatches.map(m => `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`));
-    const newExcMatches = excMatches.filter(m => {
-        const key = `${m.metadata?.npa_title || ''}|${m.metadata?.article_title || ''}`;
-        return key !== '|' && !excSeen.has(key);
-    });
+    // Объединяем основные нормы и исключения — деdup по chunk id,
+    // чтобы в exceptions попадали другие чанки той же статьи (могут содержать исключения).
+    const excSeen = new Set(allMatches.map(m => m.id).filter(Boolean));
+    const newExcMatches = excMatches.filter(m => m.id && !excSeen.has(m.id));
     const layeredContext = formatLayeredContext({
         specMatches, genMatches, procMatches, liabMatches,
         bylawMatches, rightsMatches, defMatches, evMatches
