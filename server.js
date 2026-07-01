@@ -757,6 +757,18 @@ function expandQueryAbbreviations(query) {
     return expandedQuery;
 }
 
+// Нормализует текст для PostgreSQL FTS (GIN-индекс):
+// "%" → "процент" (иначе PostgreSQL strips как спецсимвол),
+// "ст.117" → "статья 117" (to_tsvector понимает "статья" лучше "ст"),
+// убирает остальные спецсимволы которые FTS игнорирует.
+function preprocessFtsText(text) {
+    return (text || '')
+        .replace(/(\d+(?:[.,]\d+)?)\s*%/g, '$1 процент')   // 15% → 15 процент
+        .replace(/\bст\.?\s*(\d+)/gi, 'статья $1')          // ст.117 → статья 117
+        .replace(/[^\wа-яёА-ЯЁ\s]/g, ' ')                   // убираем спецсимволы
+        .replace(/\s+/g, ' ').trim();
+}
+
 async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     // --- Квоты НПА + FAQ по режиму (hybrid = оба источника) ---
     const quotaDefaults = {
@@ -794,7 +806,10 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     // Вектор использует enriched retrievalQ (история помогает понять тему follow-up),
     // но FTS по ключевым словам должен искать только то, что написал пользователь сейчас —
     // иначе история предыдущих запросов "засоряет" полнотекстовый индекс.
-    const ftsQuery = opts.ftsText ? expandQueryAbbreviations(opts.ftsText) : expandedQuery;
+    // preprocessFtsText: нормализует "%" → "процент", "ст.117" → "статья 117" —
+    // PostgreSQL FTS strips спецсимволы, числа с % теряются.
+    const rawFts = opts.ftsText ? expandQueryAbbreviations(opts.ftsText) : expandedQuery;
+    const ftsQuery = preprocessFtsText(rawFts);
     const rawMatches = await searchPinecone(embedding, ftsQuery, rawK);
 
     if (rawMatches.length === 0) {
@@ -2932,6 +2947,10 @@ async function reformulateQueries(userMessage) {
 1) короткую тему запроса (для удержания контекста во всех поисках)
 2) 8 коротких поисковых запросов для разных слоёв законодательства КР
 
+КРИТИЧНО — СОХРАНЯЙ КОНКРЕТНЫЕ ЧИСЛА: если в вопросе есть номер статьи ("статья 117"),
+ставка ("15%", "20%"), срок ("30 дней"), сумма — включай их в поисковые запросы.
+Векторный поиск лучше находит конкретные нормы когда знает точные параметры.
+
 ВАЖНО — принципо-ориентированный поиск (включай термины принципов в запросы):
 • Уголовное / действие закона во времени → «обратная сила уголовного закона», «nullum crimen sine lege», «улучшающий закон»
 • Уголовный процесс → «презумпция невиновности», «in dubio pro reo», «недопустимые доказательства», «право на защитника»
@@ -3195,35 +3214,47 @@ async function detectMultiQuestion(userQ) {
 Определи: содержит ли запрос несколько САМОСТОЯТЕЛЬНЫХ правовых подвопросов,
 каждый из которых требует поиска по РАЗНЫМ нормам закона.
 
-МНОГОВОПРОСНЫЕ (isMulti: true):
-• "Можно ли уволить за опоздание и какой штраф?" → увольнение (ТК) + штраф (КоАО) — разные нормы
-• "1. Вправе ли инспектор? 2. Законно ли доначисление?" → 2 независимых вопроса
-• "Объясни сроки, пошлину и порядок подачи иска" → 3 независимых правовых аспекта
+МНОГОВОПРОСНЫЕ (isMulti: true) — 3 главных паттерна:
+1. РАЗНЫЕ ПРАВОВЫЕ ПОСЛЕДСТВИЯ одного события:
+   Пример: налоговая проверка с доначислением →
+     подвопрос 1: "Правомерно ли проведение проверки?" (процессуальные нормы)
+     подвопрос 2: "Правомерно ли доначисление НДС 15%?" (материальные нормы НК)
+     подвопрос 3: "Как обжаловать Акт налоговой проверки?" (административные нормы)
+   → ТРИ разных нормативных блока, isMulti: true
+
+2. РАЗНЫЕ ПРАВОВЫЕ ТРЕБОВАНИЯ в одном запросе:
+   "Можно ли уволить за опоздание и какой штраф?" → ТК (увольнение) + КоАО (штраф)
+
+3. ЯВНАЯ НУМЕРАЦИЯ подвопросов: "1. Вправе ли? 2. Законно ли? 3. Как обжаловать?"
 
 НЕ МНОГОВОПРОСНЫЕ (isMulti: false):
 • "Какой срок исковой давности по трудовым спорам?" — один вопрос
 • "Расскажи всё о расторжении договора аренды" — одна тема
-• "Инспектор провёл проверку и доначислил налог. Правомерны ли его действия?" — один вопрос (одна цепочка событий)
-• Длинное описание ситуации с ОДНИМ итоговым вопросом — один вопрос
+• Факты + ОДИН итоговый вопрос ("правомерно ли это?") — один вопрос
 
-ВАЖНО:
-- Факты дела (кто, когда, что случилось) — это КОНТЕКСТ, не подвопросы
-- Длина текста ≠ многовопросность
-- Если все части ведут к одной норме/одному выводу → isMulti: false
-- Максимум 5 подвопросов
+ПРАВИЛО ОБЖАЛОВАНИЯ: если фабула содержит обжалование акта/решения/действий —
+это ВСЕГДА отдельный подвопрос (административные/процессуальные нормы отличаются
+от материальных норм по существу спора).
 
-Отвечай ТОЛЬКО JSON, без markdown:`;
-    const userPrompt = `Запрос: """${userQ.slice(0, 1500)}"""
+ПРАВИЛО ЧИСЕЛ: статья N кодекса, ставка %, размер штрафа — это параметры подвопроса,
+включай их в text подвопроса для точного поиска.
 
+Отвечай ТОЛЬКО JSON (без markdown, без пояснений):
 {
   "isMulti": boolean,
   "passport": "2-3 предложения с общими фактами дела (пусто если нет)",
   "subQuestions": [
-    { "text": "самостоятельная формулировка подвопроса", "domain": "tax|labor|civil|criminal|admin|other" }
+    { "text": "самостоятельная формулировка подвопроса с конкретными числами/статьями", "domain": "tax|labor|civil|criminal|admin|other" }
   ]
 }`;
+    const userPrompt = `Запрос юриста: """${userQ.slice(0, 2500)}"""`;
     try {
-        const raw = await callOnce(getNextKey(), systemPrompt, userPrompt, 1);
+        const raw = await generateContentResilient({
+            systemInstruction: systemPrompt,
+            userPrompt,
+            generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+            maxRetries: 3
+        });
         const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
         const fi = cleaned.indexOf('{');
         const li = cleaned.lastIndexOf('}');
@@ -3232,6 +3263,7 @@ async function detectMultiQuestion(userQ) {
         if (!parsed.isMulti || !Array.isArray(parsed.subQuestions) || parsed.subQuestions.length < 2) {
             return { isMulti: false, passport: '', subQuestions: [] };
         }
+        console.log(`[MultiQ-Detect] isMulti=true, ${parsed.subQuestions.length} подвопросов: ${parsed.subQuestions.map(s => s.text.slice(0, 50)).join(' | ')}`);
         return {
             isMulti: true,
             passport: String(parsed.passport || '').slice(0, 600),
@@ -3307,6 +3339,43 @@ const DOMAIN_LAYER_IDS = {
     other:    [1, 2, 3, 4, 5, 6, 7, 8]
 };
 
+// NPA Domain Allow-list: паттерны названий НПА для каждой правовой отрасли.
+// Используется для пост-фильтрации результатов Supabase — убирает явно нерелевантные НПА.
+// "always_keep" — процессуальные и конституционные нормы актуальны для любой отрасли.
+const NPA_DOMAIN_ALLOW = {
+    tax:      [/налогов/i, /акциз/i, /ндс/i, /финансов/i, /бюджет/i, /таможен/i, /патент/i],
+    labor:    [/трудов/i, /занятост/i, /профсоюз/i, /пенсионн/i, /социальн.*страхован/i],
+    civil:    [/гражданск/i, /семейн/i, /наследств/i, /жилищн/i, /земельн/i, /аренд/i, /ипотек/i],
+    criminal: [/уголовн/i],
+    admin:    [/административн/i, /государствен.*закупк/i, /нотариат/i, /лицензиров/i, /регистраци/i],
+};
+const NPA_ALWAYS_KEEP = [/процессуальн/i, /конституци/i, /арбитражн/i, /апелляц/i, /кодекс.*кр/i];
+
+// Мягкая пост-фильтрация: убирает явно нерелевантные НПА только если есть достаточно
+// результатов из целевого домена. Не применяется для домена 'other'.
+function filterByDomain(matches, domain) {
+    if (domain === 'other' || !NPA_DOMAIN_ALLOW[domain]) return matches;
+    const patterns = NPA_DOMAIN_ALLOW[domain];
+
+    const isRelevant = (m) => {
+        const npa = m.metadata?.npa_title || '';
+        return patterns.some(p => p.test(npa)) || NPA_ALWAYS_KEEP.some(p => p.test(npa));
+    };
+
+    const relevant = matches.filter(isRelevant);
+    const discarded = matches.filter(m => !isRelevant(m));
+
+    // Применяем фильтр только если в целевом домене достаточно результатов
+    if (relevant.length >= 3) {
+        if (discarded.length > 0) {
+            console.log(`[DomainFilter] domain=${domain} kept=${relevant.length} discarded=${discarded.length} (${discarded.map(m => (m.metadata?.npa_title||'').slice(0,40)).join(', ')})`);
+        }
+        return relevant;
+    }
+    // Недостаточно — возвращаем всё (лучше широко, чем пусто)
+    return matches;
+}
+
 // Полный RAG-пайплайн для одного подвопроса: reformulate → retrieval → exceptions.
 // НЕ эмитит SSE-шаги — родительский handleMultiQuestionRAG управляет ими.
 async function runSubQuestionPipeline(passport, subQ) {
@@ -3329,7 +3398,7 @@ async function runSubQuestionPipeline(passport, subQ) {
     );
 
     const seen = new Set();
-    const mainMatches = [];
+    let mainMatches = [];
     activeCfgs.forEach((cfg, i) => {
         const r = results[i];
         if (r.status !== 'fulfilled') return;
@@ -3338,6 +3407,9 @@ async function runSubQuestionPipeline(passport, subQ) {
             if (key && !seen.has(key)) { seen.add(key); mainMatches.push(m); }
         }
     });
+
+    // Пост-фильтрация: убираем явно нерелевантные НПА для конкретного домена
+    mainMatches = filterByDomain(mainMatches, subQ.domain);
 
     // Второй проход: исключения из найденных норм (с фабулой дела для точных запросов)
     const excMatches = await exceptionsRetrieval(subQ.text, mainMatches, passport);
