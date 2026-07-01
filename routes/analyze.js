@@ -868,7 +868,7 @@ ${TOOL_PROTOCOL_BLOCK}`;
                 applicableArticles.push({ npa_title: npa, article_title: articleTitle, full_text: full });
             }
             const ragContext = applicableArticles.length
-                ? applicableArticles.map((a, i) => `[${i + 1}] ${a.npa_title} — ${a.article_title}\n${a.full_text}`).join('\n\n')
+                ? applicableArticles.map((a, i) => `[${i + 1}] ${a.npa_title}\nСтатья: ${a.article_title}\n${a.full_text}`).join('\n\n')
                 : 'Релевантные статьи в базе НПА не найдены.';
 
             const prefetchUserPrompt = `КОНТЕКСТ ВСЕГО ДОКУМЕНТА: ${passport?.summary || passport?.title || 'Не указан'}

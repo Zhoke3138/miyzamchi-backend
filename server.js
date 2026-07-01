@@ -683,10 +683,12 @@ async function searchPinecone(vector, queryText = '', topK = 15) {
 // Все запросы идут в Supabase (единая база НПА + FAQ)
 function classifyQuerySource() { return 'supabase'; }
 
-// Категории FAQ/инструкций в поле category (npa_title) Supabase
+// Категории FAQ/инструкций: используем category из результата (новая схема),
+// с fallback на npa_title для старых записей.
 const FAQ_CATEGORY_KEYS = new Set(['instructions', 'instruction', 'faq', 'guide', 'guides']);
 function isMatchFaq(match) {
-    return FAQ_CATEGORY_KEYS.has((match.metadata?.npa_title || '').toLowerCase().trim());
+    return FAQ_CATEGORY_KEYS.has((match.category || '').toLowerCase().trim())
+        || FAQ_CATEGORY_KEYS.has((match.metadata?.npa_title || '').toLowerCase().trim());
 }
 
 // Классификатор типа запроса — определяет квоту НПА vs Инструкции
@@ -2394,20 +2396,19 @@ function formatContextWithHierarchy(core, context) {
     const npaItems = all.filter(m => !isMatchFaq(m));
     const faqItems = all.filter(m =>  isMatchFaq(m));
 
-    const fmtNpa = (m, i) => {
+    const fmtNpa = (m) => {
         const md = m.metadata || {};
         const tier = (m.score || 0) >= 0.70 ? '⭐ КЛЮЧЕВАЯ' : '📚 ВСПОМОГАТЕЛЬНАЯ';
-        return `[${tier} — ${md.npa_title} | ${md.article_title}]\nДокумент: ${md.npa_title}\nСтатья: ${md.article_title}\nТекст: ${md.full_text}`;
+        const typeTag = md.npa_type ? ` | ${md.npa_type}` : '';
+        // parent_context содержит полную цепочку иерархии: "РАЗДЕЛ > Глава\nСтатья > Часть"
+        const ctx = md.parent_context || md.article_title || '';
+        return `[${tier} — ${md.npa_title}${typeTag}]\nКонтекст нормы: ${ctx}\nТекст нормы: ${md.full_text}`;
     };
 
-    const fmtFaq = (m, i) => {
+    const fmtFaq = (m) => {
         const md = m.metadata || {};
-        // Срезаем служебные строки "Документ\n" и "Категория: ...\n"
-        const cleanText = (md.full_text || '')
-            .replace(/^Документ\s*\n?/i, '')
-            .replace(/^Категория:[^\n]*\n?/im, '')
-            .trim();
-        return `[📋 ИНСТРУКЦИЯ — ${md.article_title || 'Процедура'}]\nТекст: ${cleanText}`;
+        const ctx = md.parent_context || md.article_title || 'Процедура';
+        return `[📋 ИНСТРУКЦИЯ]\nКонтекст: ${ctx}\nТекст: ${md.full_text || ''}`;
     };
 
     const parts = [];
@@ -3191,10 +3192,8 @@ function formatLayeredContext({ specMatches, genMatches, procMatches, liabMatche
         .map(g => {
             const articles = g.matches.map(m => {
                 const md = m.metadata || {};
-                return `[${g.tag} — ${md.npa_title} | ${md.article_title}]
-Документ: ${md.npa_title}
-Статья: ${md.article_title}
-Текст: ${md.full_text}`;
+                const ctx = md.parent_context || md.article_title || '';
+                return `[${g.tag} — ${md.npa_title}]\nКонтекст нормы: ${ctx}\nТекст нормы: ${md.full_text}`;
             }).join('\n\n---\n\n');
             return `══════ ${g.label} ══════\n\n${articles}`;
         })
@@ -3360,12 +3359,20 @@ const NPA_ALWAYS_KEEP = [/процессуальн/i, /конституци/i, /
 
 // Мягкая пост-фильтрация: убирает явно нерелевантные НПА только если есть достаточно
 // результатов из целевого домена. Не применяется для домена 'other'.
+// Новая схема: используем metadata.domain напрямую (точно, без regex).
+// Fallback: regex по npa_title для старых записей без domain в metadata.
 function filterByDomain(matches, domain) {
     if (domain === 'other' || !NPA_DOMAIN_ALLOW[domain]) return matches;
     const patterns = NPA_DOMAIN_ALLOW[domain];
 
     const isRelevant = (m) => {
         const npa = m.metadata?.npa_title || '';
+        // Новая схема: domain поле в metadata (точное совпадение)
+        const mdDomain = m.metadata?.domain;
+        if (mdDomain && mdDomain !== 'other') {
+            return mdDomain === domain || NPA_ALWAYS_KEEP.some(p => p.test(npa));
+        }
+        // Fallback: regex по npa_title (старая схема без domain)
         return patterns.some(p => p.test(npa)) || NPA_ALWAYS_KEEP.some(p => p.test(npa));
     };
 
@@ -3430,7 +3437,8 @@ function formatMultiQContext(subResults) {
         const { subQ, mainMatches, excMatches } = sr;
         const fmtMatch = (m, tag) => {
             const md = m.metadata || {};
-            return `  [${tag} — ${md.npa_title} | ${md.article_title}]\n  ${(md.full_text || '').slice(0, 1200)}`;
+            const ctx = md.parent_context || md.article_title || '';
+            return `  [${tag} — ${md.npa_title}]\n  Контекст: ${ctx}\n  ${(md.full_text || '').slice(0, 1200)}`;
         };
         const mainSection = mainMatches.length > 0
             ? mainMatches.map(m => fmtMatch(m, 'НОРМА')).join('\n\n')
@@ -3656,7 +3664,8 @@ async function handleDeepThinking(message, history, res, userQuery = null) {
         ? '\n\n══════ ⚠️ ИСКЛЮЧЕНИЯ И ОГРАНИЧЕНИЯ (второй проход RAG) ══════\n\n' +
           newExcMatches.map(m => {
               const md = m.metadata || {};
-              return `[ИСКЛЮЧЕНИЕ — ${md.npa_title} | ${md.article_title}]\n${md.full_text || ''}`;
+              const ctx = md.parent_context || md.article_title || '';
+              return `[ИСКЛЮЧЕНИЕ — ${md.npa_title}]\nКонтекст: ${ctx}\n${md.full_text || ''}`;
           }).join('\n\n---\n\n')
         : '\n\n══════ ⚠️ ИСКЛЮЧЕНИЯ (второй проход RAG) ══════\n\n[Исключения из найденных норм в базе не обнаружены]';
 

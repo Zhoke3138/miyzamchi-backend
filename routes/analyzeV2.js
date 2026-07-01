@@ -1090,7 +1090,7 @@ ${tpl.courtDoc
       const plan = { facts: {}, subject_line: '', legal_questions: [], ...(factsRes || {}) };
 
       // Сводим находки всех агентов в общий пул (дедуп по статье; роль = специализация агента).
-      const pool = new Map(); // key npa|article → {npa_title, article_title, full_text, score, cats:Set}
+      const pool = new Map(); // key npa|article → {npa_title, article_title, parent_context, full_text, score, cats:Set}
       const addHits = (hits, cat) => {
         for (const h of (hits || [])) {
           const md = (h && h.metadata) || {};
@@ -1098,7 +1098,13 @@ ${tpl.courtDoc
           const key = `${md.npa_title}|${md.article_title}`;
           let rec = pool.get(key);
           if (!rec) {
-            rec = { npa_title: md.npa_title || '', article_title: md.article_title || '', full_text: String(md.full_text || ''), score: h.score || 0, cats: new Set() };
+            rec = {
+              npa_title:      md.npa_title      || '',
+              article_title:  md.article_title   || '',
+              parent_context: md.parent_context  || md.article_title || '',
+              full_text:      String(md.full_text || ''),
+              score: h.score || 0, cats: new Set()
+            };
             pool.set(key, rec);
           }
           rec.cats.add(cat);
@@ -1127,7 +1133,8 @@ ${tpl.courtDoc
         const lines = arr.map((a) => {
           refIdx += 1;
           articlesUsed.push([a.npa_title, a.article_title].filter(Boolean).join(' — '));
-          return `[${refIdx}] ${[a.npa_title, a.article_title].filter(Boolean).join(' — ')}\n${a.full_text}`;
+          const ctx = a.parent_context || a.article_title || '';
+          return `[${refIdx}] ${a.npa_title}\nКонтекст нормы: ${ctx}\nТекст нормы: ${a.full_text}`;
         });
         refParts.push(`=== ${CAT_LABEL[cat]} ===\n${lines.join('\n\n')}`);
       }
