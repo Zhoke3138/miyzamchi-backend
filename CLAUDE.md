@@ -388,13 +388,16 @@ CREATE INDEX IF NOT EXISTS idx_docs_item_base    ON documents (item_base);
 
 **Простые статьи без подчастей:**
 ```json
-{ "part_base": 1, "part_total": 1, "element_type": "статья_целиком", "item_base": null }
+{ "part_base": null, "part_total": 1, "element_type": "статья_целиком", "item_base": null }
 ```
+`part_base: null` (не 1) — у статьи без "Часть N" части нет фактически. Так производит парсер.
 
 **Подзаконные акты (без статей — Правила, Уставы):**
 ```json
 { "article_num_str": null, "article_base": null, "item_base": 14 }
 ```
+
+**Примечание по `full_text`:** парсер кладёт его в `content.full_text` (промежуточный JSON). Uploader маппит в плоскую колонку `content` (для GIN-индекса). В `metadata` JSONB `full_text` не дублируется — это нормально.
 
 ### Формула text_to_embed (что идёт в gemini-embedding-2)
 
