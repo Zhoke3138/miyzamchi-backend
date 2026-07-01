@@ -163,9 +163,11 @@ async function main() {
             }
             if (!chunks.length) continue;
 
-            // Ключ дедупликации НПА: abbrev из метаданных (или npa_title как fallback)
-            const key = chunks[0]?.metadata?.abbrev
-                     || chunks[0]?.metadata?.npa_title
+            // Ключ дедупликации НПА: npa_title — уникален для каждого документа.
+            // abbrev не подходит: ГК КР часть 1 и часть 2 имеют одинаковый abbrev,
+            // но разный npa_title → правильно считаются разными НПА.
+            const key = chunks[0]?.metadata?.npa_title
+                     || chunks[0]?.metadata?.abbrev
                      || f;
 
             const existing = npaFileMap.get(key);
