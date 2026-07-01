@@ -790,7 +790,12 @@ async function adaptiveRetrieval(query, mode, res = null, opts = {}) {
     const rawK = Math.max(totalTarget * 3, 20);
     if (streamStatuses) sendStatus(res, `Ищу в базе НПА и инструкции (тип: ${queryType})...`, '🔎');
     const embedding = await getEmbeddingForSupabase(expandedQuery);
-    const rawMatches = await searchPinecone(embedding, expandedQuery, rawK);
+    // FTS (query_text) получает чистый пользовательский вопрос без истории чата.
+    // Вектор использует enriched retrievalQ (история помогает понять тему follow-up),
+    // но FTS по ключевым словам должен искать только то, что написал пользователь сейчас —
+    // иначе история предыдущих запросов "засоряет" полнотекстовый индекс.
+    const ftsQuery = opts.ftsText ? expandQueryAbbreviations(opts.ftsText) : expandedQuery;
+    const rawMatches = await searchPinecone(embedding, ftsQuery, rawK);
 
     if (rawMatches.length === 0) {
         if (streamStatuses) sendStatus(res, 'База не вернула результатов', '⚠️');
@@ -2307,7 +2312,19 @@ function buildContextualQuery(message, history) {
     if (!Array.isArray(history) || history.length === 0) return message;
 
     // Явная ссылка на статью или кодекс → не добавляем историю
-    const hasExplicitRef = /(статья|ст\.)\s*\d+|(налоговый|гражданский|уголовный|трудовой|семейный|административный)\s+кодекс|\bнк\s+кр\b|\bгк\s+кр\b|\bтк\s+кр\b|\bупк\s+кр\b|\bкоао\s+кр\b/i.test(message);
+    // Покрывает: "статья N", "ст. N", "п. N ст. N", все аббревиатуры кодексов КР,
+    //            числовые follow-up "а 118?", "119 статья?" (≤20 символов + изолированное число)
+    const hasExplicitRef = (
+        /(статья|ст\.)\s*\d+/i.test(message) ||
+        /(налоговый|гражданский|уголовный|трудовой|семейный|административный|жилищный|земельный)\s+кодекс/i.test(message) ||
+        /\b(нк|гк|тк|упк|коао|жк|зк|кпк)\s+кр\b/i.test(message) ||
+        /\bкзот\b/i.test(message) ||
+        /\bконституци[яи]\s+кр\b/i.test(message) ||
+        // Очень короткий запрос с изолированным числом без временных слов: "а 118?", "119?"
+        (message.trim().length <= 20 &&
+         /^\s*(?:[а-яёА-ЯЁ]{1,3}\s+)?\d{1,4}\s*(?:ст(?:атья)?\.?\s*)?[?!.,]?\s*$/.test(message) &&
+         !/(?:лет|год|дн[её]|дня|месяц|неделя|час)/i.test(message))
+    );
     if (hasExplicitRef) return message;
 
     // Длинный вопрос самодостаточен — история только зашумит вектор
@@ -2811,7 +2828,8 @@ async function handleSimpleConsultation(message, history, res, userQuery = null)
     sendStep(res, { id: 'retrieve', status: 'loading', text: 'Ищу релевантные статьи НПА' });
     sendStatus(res, '🔎 Ищу релевантные статьи...');
 
-    const retrieval = await adaptiveRetrieval(retrievalQ, 'thinking', null, { queryType: 'npa', npaQuota: 10 });
+    // ftsText: чистый userQ для GIN full-text search; retrievalQ (с историей) — только для вектора
+    const retrieval = await adaptiveRetrieval(retrievalQ, 'thinking', null, { queryType: 'npa', npaQuota: 10, ftsText: userQ });
     const { core = [], context = [], all = [] } = retrieval;
 
     sendStep(res, {
