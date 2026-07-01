@@ -148,29 +148,40 @@ async function main() {
         const jsonFiles = files.filter(f => f.endsWith('.json'));
         if (!jsonFiles.length) continue;
 
-        // Загружаем все чанки из всех JSON файлов категории
-        let allData = [];
+        // Загружаем файлы, группируем по НПА (abbrev из первого чанка)
+        // Если один закон оказался в двух JSON-файлах — берём файл с бо́льшим числом чанков
+        const npaFileMap = new Map(); // abbrev → { filename, chunks[] }
+
         for (const f of jsonFiles) {
+            let chunks;
             try {
                 const raw = JSON.parse(await fs.readFile(path.join(folderPath, f), 'utf-8'));
-                allData = allData.concat(Array.isArray(raw) ? raw : [raw]);
+                chunks = Array.isArray(raw) ? raw : [raw];
             } catch (e) {
                 console.error(`  ⚠️  Ошибка чтения ${f}:`, e.message);
+                continue;
+            }
+            if (!chunks.length) continue;
+
+            // Ключ дедупликации НПА: abbrev из метаданных (или npa_title как fallback)
+            const key = chunks[0]?.metadata?.abbrev
+                     || chunks[0]?.metadata?.npa_title
+                     || f;
+
+            const existing = npaFileMap.get(key);
+            if (!existing || chunks.length > existing.chunks.length) {
+                if (existing) {
+                    console.log(`  ⚠️  Дубль НПА «${key}»: заменяем "${existing.filename}" (${existing.chunks.length} чанков) → "${f}" (${chunks.length} чанков)`);
+                }
+                npaFileMap.set(key, { filename: f, chunks });
+            } else {
+                console.log(`  ⚠️  Дубль НПА «${key}»: пропускаем "${f}" (${chunks.length} чанков) — уже есть "${existing.filename}" (${existing.chunks.length} чанков)`);
             }
         }
 
-        // ДЕДУПЛИКАЦИЯ по id среди загруженных JSON (убираем дубликаты из 138 НПА)
-        const beforeDedup = allData.length;
-        const deduped = new Map();
-        for (const item of allData) {
-            const key = String(item.id);
-            if (!deduped.has(key)) deduped.set(key, item);
-        }
-        allData = [...deduped.values()];
-        const removed = beforeDedup - allData.length;
-        if (removed > 0) {
-            console.log(`\n🔍 [${category}] Дедупликация: ${beforeDedup} → ${allData.length} (убрано ${removed} дублей)`);
-        }
+        let allData = [];
+        for (const { chunks } of npaFileMap.values()) allData = allData.concat(chunks);
+        console.log(`\n📂 [${category}] Уникальных НПА: ${npaFileMap.size} из ${jsonFiles.length} файлов → ${allData.length} чанков`);
 
         // DELTA: убираем уже загруженные в БД
         const existingIds = await fetchExistingIds(category);
