@@ -306,30 +306,163 @@
 
 ---
 
-## 📍 Последняя сессия / где остановились (29.06.2026, ночь)
+## 📍 Последняя сессия / где остановились (01.07.2026)
 
-**Что сделано в этой сессии:**
-- DocGen Генератор документов — интегрирован в левый сайдбар. Полный пайплайн работает.
-- SuperDoc layout — исправлен во всех режимах (`contained` prop + CSS flex-цепочка + убран conflicting overflow-y).
-- DocGen selection — выделение текста в SuperDoc теперь через `mouseup+30ms` (надёжно с ProseMirror).
+**Что сделано в сессии 29.06.2026:**
+- DocGen Генератор документов — интегрирован в левый сайдбар.
+- SuperDoc layout — исправлен (`contained` prop + CSS flex-цепочка).
+- DocGen selection — `mouseup+30ms` (надёжно с ProseMirror).
 
-**Деплой:** 3 коммита запушены в `main`, Render авто-деплоит фронтенд (~2-3 мин после push).
+**Что сделано в сессии 01.07.2026 (chat RAG + Sniper RAG):**
+- `feat(chat): thinking mode` — `thinkingBudget: -1` для `detectMultiQuestion`, `handleMultiQuestionRAG` и `handleDeepThinking`. Коммит `6eca1f4`.
+- `supabaseService.js` — log display slice 45→80.
+- Согласована и задокументирована архитектура **Sniper RAG 3.0** (см. секцию выше).
 
-**Коммиты этой сессии:**
-- `ca50563` — fix(superdoc): add contained prop + fix overflow, fix docgen selection
-- `b2b4c72` — fix(superdoc): flex layout chain for contained mode
-- `d7a8e2d` — fix(docgen): hybrid mouseup+selectionchange for reliable selection
+**Ожидаем от Антигравити:**
+1. SQL-миграция в Supabase (5 новых колонок + индексы — скрипт в секции Sniper RAG выше)
+2. Парсинг 138 НПА с новой схемой + загрузка в Supabase (1536d, `gemini-embedding-2`)
+3. После сидинга — сообщить Claude → он реализует `detectArticlePart()` в `server.js`
 
-**Осталось проверить:**
-1. Открыть https://miyzamchi-ceo.com.kg → убедиться что SuperDoc отображается корректно (лист в центре, тулбар сверху, прокрутка работает)
-2. DocGen: загрузить .docx шаблон → выделить слово → проверить появление кнопки «+ Переменная» → добавить → скачать Excel → загрузить данные → генерировать
-3. Smoke-тест продакшена с реальным договором
-4. Проверить все 12 типов документов в режиме «Создать» end-to-end
-5. Пользователь должен задать `VITE_CLIENT_TOKEN` в Render env (фронтенд-сервис `srv-d8lc3je7r5hc739snrf0`)
-
-**Шрифт Times New Roman:** полностью реализован через `<span>` во всех генерируемых блоках + CSS дефолт на `.ProseMirror`. Если где-то ещё видно Arial — проверить нет ли других мест вставки HTML в `App.jsx`.
+**Pending баги chat RAG (не срочно, после Sniper RAG):**
+- `generateExceptionQueries` генерирует FAQ-стиль → `kept=0` в exception retrieval. Нужно переписать промпт на NPA-стиль.
 
 **ONLYOFFICE:** заморожен. Детали в `ONLYOFFICE_STATE.md`.
+
+---
+
+## 🔬 SNIPER RAG 3.0 — Новая архитектура индексации (в разработке, 01.07.2026)
+
+**Статус:** Антигравити парсит и сеет. Claude ждёт — после сидинга реализует `detectArticlePart()` в `server.js`.
+
+**Суть:** уходим от article-level чанков к part/item/subitem-level. Вместо всей статьи 117 НК КР (3 страницы) → мелкие осмысленные части. Точечный SQL-перехват без векторного поиска для прямых запросов типа «статья 117 пункт 1 НК КР».
+
+### Базы данных
+
+| База | Модель | Размерность | Назначение |
+|---|---|---|---|
+| **Pinecone** | `gemini-embedding-001` | **768d** | Старый индекс (article-level). Пока работает. |
+| **Supabase** | `gemini-embedding-2` | **1536d** | Новый Sniper RAG индекс (part/item-level). Таблица `documents`. |
+
+### Схема таблицы `documents` в Supabase (SQL-миграция)
+
+```sql
+-- Запустить в Supabase → SQL Editor ДО загрузки данных
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS article_num_str TEXT;     -- "117", "101-1", NULL для подзаконных
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS article_base    INT;       -- 117, 101 (только число, для range-запросов)
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS part_base       INT;       -- 2, NULL если нет частей
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS item_base       INT;       -- 1, NULL если нет пунктов
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS subitem_base    TEXT;      -- "а", "б", NULL если нет подпунктов
+
+CREATE INDEX IF NOT EXISTS idx_docs_article_num  ON documents (article_num_str);
+CREATE INDEX IF NOT EXISTS idx_docs_article_base ON documents (article_base);
+CREATE INDEX IF NOT EXISTS idx_docs_part_base    ON documents (part_base);
+CREATE INDEX IF NOT EXISTS idx_docs_item_base    ON documents (item_base);
+```
+
+### Эталонный чанк (JSON)
+
+```json
+{
+  "id": "kg_nk_art-117_part-2_item-1",
+  "category": "npa",
+  "article_num_str": "117",
+  "article_base": 117,
+  "part_base": 2,
+  "item_base": 1,
+  "subitem_base": null,
+  "content": "1. Путем уплаты:\nа) в национальной валюте;\nб) в безналичной форме.",
+  "embedding": [...1536d...],
+  "metadata": {
+    "npa_title": "НАЛОГОВЫЙ КОДЕКС КЫРГЫЗСКОЙ РЕСПУБЛИКИ",
+    "npa_abbrev": "НК КР",
+    "domain": "tax",
+    "hierarchy_path": "Раздел III. Налоговое обязательство > Глава 17. Исполнение",
+    "article_title": "Статья 117. Способы исполнения налогового обязательства",
+    "parent_context": "Статья 117 > Часть 2. Исполнение в следующих формах:",
+    "element_type": "пункт",
+    "part_total": 4,
+    "full_text": "1. Путем уплаты:\nа) в национальной валюте;\nб) в безналичной форме."
+  }
+}
+```
+
+**Простые статьи без подчастей:**
+```json
+{ "part_base": 1, "part_total": 1, "element_type": "статья_целиком", "item_base": null }
+```
+
+**Подзаконные акты (без статей — Правила, Уставы):**
+```json
+{ "article_num_str": null, "article_base": null, "item_base": 14 }
+```
+
+### Формула text_to_embed (что идёт в gemini-embedding-2)
+
+```python
+text_to_embed = f"[{npa_abbrev}] {hierarchy_path}\n{article_title}\n{parent_context}\nТип: {element_type} {part_base} из {part_total}\nТекст: {full_text}"
+```
+
+### 5 критических правил для парсера (Антигравити)
+
+**1. Порог чанкинга — 120 символов:**
+Не создавать отдельный чанк если его `full_text` < 120 символов. Мелкие подпункты («а) в национальной валюте» — 25 символов) объединять с соседними в чанк родительского уровня.
+
+**2. Нормализация суперскриптов (КРИТИЧНО):**
+PDF парсит «статью 101¹» как `1011`, «109¹» как `1091`. Обязательный regex:
+```python
+# Паттерн: длинное число где последняя цифра — это реально надстрочный индекс
+# Список известных: 1011→101-1, 1091→109-1, 2301→230-1, 1971→197-1
+# Лучше: словарь всех статей-прим из НПА + regex для нормализации
+article_num_str = normalize_superscript(raw_number)  # "1011" → "101-1"
+```
+Без этого SQL-перехватчик по `article_num_str = '101-1'` ничего не найдёт.
+
+**3. Таблицы → строгий Markdown:**
+Любая таблица (ставки акцизов, коэффициенты, штрафы) парсится в Markdown:
+```
+| Товар | Ставка |
+|-------|--------|
+| Электронные сигареты | 100 сом/шт |
+```
+Иначе LLM галлюцинирует с цифрами.
+
+**4. hierarchy_path — полная цепочка:**
+Захватывать все уровни: `"Раздел VII > Глава 65 > Параграф 1"`. Для ГК КР бывает 4 уровня (Раздел > Глава > Параграф > Статья).
+
+**5. domain — значения:**
+`tax` | `civil` | `labor` | `criminal` | `admin` | `other`
+
+### Формат ID
+
+```
+Кодексы:       kg_nk_art-117_part-2_item-1_sub-a
+Без подпункта: kg_nk_art-117_part-2_item-1
+Без пункта:    kg_nk_art-117_part-2
+Без части:     kg_nk_art-117   (статья_целиком)
+Подзаконные:   kg_rules-thermal_item-14
+```
+
+### Что Claude реализует в server.js после сидинга
+
+Функция `detectArticlePart(query)` — regex-перехватчик:
+```
+"статья 117 пункт 1 НК КР"  → { article_num_str:'117', item_base:1, npa_hint:'НК КР' }
+"часть 2 статьи 117"         → { article_num_str:'117', part_base:2 }
+"статья 101-1"               → { article_num_str:'101-1' }
+"пункт 14 Правил"            → { item_base:14 }
+```
+
+SQL-запрос перехватчика (без векторного поиска, мгновенно):
+```sql
+SELECT * FROM documents
+WHERE article_num_str = '117'
+  AND item_base = 1;
+-- domain-фильтр НЕ нужен: article_num_str+item_base уже уникальны
+```
+
+Для семантических запросов («в какой валюте платить налоги») — обычный векторный поиск как сейчас.
+
+---
 
 ## Что НЕ надо предлагать
 - Перейти на ESM (проект CJS, всё работает)
